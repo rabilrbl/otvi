@@ -1,0 +1,24 @@
+[package]
+name = "otvi-server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+otvi-core = { path = "../otvi-core" }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = "0.9"
+
+axum = { version = "0.7", features = ["macros"] }
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json"] }
+tower-http = { version = "0.5", features = ["cors", "fs"] }
+uuid = { version = "1", features = ["v4"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"
+base64 = "0.22"
+rand = "0.9"
+url = "2"
+urlencoding = "2"

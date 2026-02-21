@@ -1,0 +1,205 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# JioTV Mobile – OTVI Provider Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# This config mirrors the JioTV Android mobile app's HTTP API.
+# Derived from the open-source JioTV-Go project:
+#   https://github.com/JioTV-Go/jiotv_go
+#
+# Auth flow:  Phone number → OTP → Verify → access/refresh/sso tokens
+# Channels:   GET channel list from CDN endpoint (no auth required for list)
+# Playback:   POST to get HLS manifest URL (requires auth tokens)
+#
+# Template variables used:
+#   {{input.phone}}         – raw phone number from user
+#   {{input.phone_b64}}     – base64-encoded phone number (auto-transformed)
+#   {{input.otp}}           – OTP entered by user
+#   {{stored.access_token}} – JWT-like access token from OTP verify
+#   {{stored.refresh_token}}– refresh token from OTP verify
+#   {{stored.sso_token}}    – SSO token from OTP verify
+#   {{stored.crm}}          – subscriber/CRM ID
+#   {{stored.unique_id}}    – unique user ID
+#   {{stored.device_id}}    – generated 16-char hex device ID
+#   {{device_id}}           – auto-generated per-session device ID
+# ─────────────────────────────────────────────────────────────────────────────
+
+provider:
+  name: "JioTV"
+  id: "jiotv-mobile"
+  logo: "https://jiotv.catchup.cdn.jio.com/dare_images/images/channel_logo_android-tv.png"
+
+defaults:
+  base_url: ""
+  headers:
+    User-Agent: "okhttp/4.2.2"
+    devicetype: "phone"
+    os: "android"
+
+# ── Authentication ──────────────────────────────────────────────────────────
+
+auth:
+  flows:
+    - id: "phone_otp"
+      name: "Jio Phone Number"
+      inputs:
+        - key: "phone"
+          label: "Jio Phone Number"
+          type: "tel"
+          required: true
+          # The phone number is base64-encoded before sending to JioTV API.
+          # This creates {{input.phone_base64}} alongside {{input.phone}}.
+          transform: "base64"
+      steps:
+        # ── Step 1: Send OTP ──
+        - name: "Send OTP"
+          request:
+            method: "POST"
+            path: "https://jiotvapi.media.jio.com/userservice/apis/v1/loginotp/send"
+            headers:
+              Content-Type: "application/json"
+              appname: "RJIL_JioTV"
+            body: |
+              {"number":"{{input.phone_base64}}"}
+          # JioTV returns 204 No Content on success (empty body)
+          success_status: 204
+          on_success:
+            extract: {}
+            prompt:
+              - key: "otp"
+                label: "Enter OTP sent to your phone"
+                type: "text"
+                required: true
+
+        # ── Step 2: Verify OTP ──
+        - name: "Verify OTP"
+          request:
+            method: "POST"
+            path: "https://jiotvapi.media.jio.com/userservice/apis/v1/loginotp/verify"
+            headers:
+              Content-Type: "application/json"
+              appname: "RJIL_JioTV"
+            body: |
+              {
+                "number": "{{input.phone_base64}}",
+                "otp": "{{input.otp}}",
+                "deviceInfo": {
+                  "consumptionDeviceName": "SM-G930F",
+                  "info": {
+                    "type": "android",
+                    "platform": {
+                      "name": "SM-G930F",
+                      "version": ""
+                    },
+                    "androidId": "{{stored.device_id}}"
+                  }
+                }
+              }
+          on_success:
+            extract:
+              access_token: "$.authToken"
+              refresh_token: "$.refreshToken"
+              sso_token: "$.ssoToken"
+              crm: "$.sessionAttributes.user.subscriberId"
+              unique_id: "$.sessionAttributes.user.unique"
+
+  logout:
+    request:
+      method: "POST"
+      path: "https://auth.media.jio.com/tokenservice/apis/v1/logout?langId=6"
+      headers:
+        Content-Type: "application/json; charset=utf-8"
+        Accept-Encoding: "gzip"
+        versionCode: "389"
+        accessToken: "{{stored.access_token}}"
+        uniqueid: "{{stored.unique_id}}"
+      body: |
+        {
+          "appName": "RJIL_JioTV",
+          "deviceId": "{{stored.device_id}}",
+          "refreshToken": "{{stored.refresh_token}}"
+        }
+
+  refresh:
+    request:
+      method: "POST"
+      path: "https://auth.media.jio.com/tokenservice/apis/v1/refreshtoken?langId=6"
+      headers:
+        Content-Type: "application/json; charset=utf-8"
+        versionCode: "389"
+        Host: "auth.media.jio.com"
+        accessToken: "{{stored.access_token}}"
+      body: |
+        {
+          "appName": "RJIL_JioTV",
+          "deviceId": "{{stored.device_id}}",
+          "refreshToken": "{{stored.refresh_token}}"
+        }
+    on_success:
+      extract:
+        access_token: "$.authToken"
+
+# ── Channel Browsing ────────────────────────────────────────────────────────
+
+channels:
+  list:
+    request:
+      method: "GET"
+      path: "https://jiotvapi.cdn.jio.com/apis/v3.0/getMobileChannelList/get/"
+      headers:
+        Accept: "application/json"
+        appkey: "NzNiMDhlYzQyNjJm"
+        lbcookie: "1"
+        usertype: "JIO"
+      params:
+        langId: "6"
+        os: "android"
+        devicetype: "phone"
+        usertype: "JIO"
+        version: "315"
+    response:
+      items_path: "$.result"
+      mapping:
+        id: "$.channel_id"
+        name: "$.channel_name"
+        logo: "$.logoUrl"
+        category: "$.channelCategoryId"
+        number: "$.channel_id"
+
+  # JioTV doesn't have a separate categories API; categories are IDs embedded
+  # in the channel objects.  We define static well-known categories here via
+  # a comment for reference (the server doesn't call this endpoint):
+  #
+  #  1: Entertainment   2: Movies   3: Sports    4: Lifestyle
+  #  5: Infotainment    6: News     7: Music     8: Devotional
+  #  9: Business       10: Kids    12: Educational
+
+# ── Stream Playback ─────────────────────────────────────────────────────────
+
+playback:
+  stream:
+    request:
+      method: "POST"
+      path: "https://jiotvapi.media.jio.com/playback/apis/v1.1/geturl?langId=6"
+      headers:
+        Content-type: "application/x-www-form-urlencoded"
+        appkey: "NzNiMDhlYzQyNjJm"
+        channel_id: "{{input.channel_id}}"
+        crmid: "{{stored.crm}}"
+        userId: "{{stored.crm}}"
+        deviceId: "{{stored.device_id}}"
+        isott: "false"
+        languageId: "6"
+        lbcookie: "1"
+        osVersion: "13"
+        subscriberId: "{{stored.crm}}"
+        uniqueId: "{{stored.unique_id}}"
+        usergroup: "tvYR7NSNn7rymo3F"
+        versionCode: "389"
+        accessToken: "{{stored.access_token}}"
+      body: "channel_id={{input.channel_id}}&stream_type=Seek"
+      body_encoding: "form"
+    response:
+      # HLS manifest URL
+      url: "$.bitrates.auto"
+      # JioTV always serves HLS (m3u8)
+      type: "hls"

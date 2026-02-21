@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OTVI – Open TV Interface</title>
+    <link data-trunk rel="css" href="style.css" />
+    <!-- HLS playback -->
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
+    <!-- DASH + DRM playback (Shaka Player) -->
+    <script src="https://cdn.jsdelivr.net/npm/shaka-player@4/dist/shaka-player.compiled.min.js"></script>
+  </head>
+  <body>
+    <script>
+      /* ── Thin JS bridge for the WASM frontend ──────────────────────── */
+      let _currentPlayer = null;
+
+      window.otviInitHls = function (videoId, url) {
+        window.otviDestroyPlayer();
+        const video = document.getElementById(videoId);
+        if (!video) return;
+
+        if (Hls.isSupported()) {
+          const hls = new Hls();
+          hls.loadSource(url);
+          hls.attachMedia(video);
+          hls.on(Hls.Events.MANIFEST_PARSED, () =>
+            video.play().catch(() => {}),
+          );
+          _currentPlayer = { type: "hls", instance: hls };
+        } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+          video.src = url;
+          video.play().catch(() => {});
+        }
+      };
+
+      window.otviInitDash = function (videoId, url, drmConfigJson) {
+        window.otviDestroyPlayer();
+        const video = document.getElementById(videoId);
+        if (!video) return;
+
+        shaka.polyfill.installAll();
+        const player = new shaka.Player(video);
+
+        if (drmConfigJson) {
+          try {
+            const drm = JSON.parse(drmConfigJson);
+            const servers = {};
+            if (drm.system === "widevine") {
+              servers["com.widevine.alpha"] = drm.license_url;
+            } else if (drm.system === "playready") {
+              servers["com.microsoft.playready"] = drm.license_url;
+            }
+            player.configure({ drm: { servers } });
+
+            if (drm.headers) {
+              player
+                .getNetworkingEngine()
+                .registerRequestFilter((type_, request) => {
+                  if (
+                    type_ === shaka.net.NetworkingEngine.RequestType.LICENSE
+                  ) {
+                    for (const [k, v] of Object.entries(drm.headers)) {
+                      request.headers[k] = v;
+                    }
+                  }
+                });
+            }
+          } catch (e) {
+            console.error("DRM config error:", e);
+          }
+        }
+
+        player
+          .load(url)
+          .then(() => video.play().catch(() => {}))
+          .catch(console.error);
+        _currentPlayer = { type: "dash", instance: player };
+      };
+
+      window.otviDestroyPlayer = function () {
+        if (_currentPlayer) {
+          _currentPlayer.instance.destroy();
+          _currentPlayer = null;
+        }
+      };
+    </script>
+  </body>
+</html>

@@ -1,0 +1,194 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# StreamMax TV – Example OTVI Provider Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# How to create your own provider YAML:
+#
+# 1. Open your TV provider's mobile app and capture network traffic with
+#    mitmproxy, Charles Proxy, or HTTP Toolkit.
+# 2. Identify the login, channel listing, and stream playback API calls.
+# 3. Copy this file, rename it, and replace the URLs, headers, and body
+#    templates with the values from your captures.
+# 4. Template variables:
+#      {{input.X}}    – user-entered form values (email, password, otp, …)
+#      {{stored.X}}   – values extracted from earlier API responses
+#      {{extract.X}}  – values extracted from the previous auth step
+#      {{uuid}}       – auto-generated UUID
+# 5. JSONPath-like dot notation is used for response extraction:
+#      $.data.token   – navigates into {"data": {"token": "…"}}
+# ─────────────────────────────────────────────────────────────────────────────
+
+provider:
+  name: "StreamMax TV"
+  id: "streammax"
+  logo: "https://placehold.co/200x80?text=StreamMax"
+
+# Default HTTP settings applied to every outbound request.
+# Tip: copy the User-Agent and custom headers from your app's traffic.
+defaults:
+  base_url: "https://api.streammax.example.com"
+  headers:
+    User-Agent: "StreamMaxTV/3.2.1 (Linux; Android 13; Pixel 7)"
+    X-App-Version: "3.2.1"
+    X-Platform: "android"
+    Accept: "application/json"
+    Content-Type: "application/json"
+
+# ── Authentication ──────────────────────────────────────────────────────────
+
+auth:
+  # You can define multiple login flows (email, phone, SSO, …)
+  flows:
+    # ── Email + Password ──
+    - id: "email_password"
+      name: "Email & Password"
+      inputs:
+        - key: "email"
+          label: "Email Address"
+          type: "email"
+          required: true
+        - key: "password"
+          label: "Password"
+          type: "password"
+          required: true
+      steps:
+        - name: "Sign In"
+          request:
+            method: "POST"
+            path: "/v2/auth/login"
+            body: |
+              {
+                "email": "{{input.email}}",
+                "password": "{{input.password}}",
+                "device_id": "{{uuid}}"
+              }
+          on_success:
+            extract:
+              access_token: "$.data.access_token"
+              refresh_token: "$.data.refresh_token"
+              user_name: "$.data.user.display_name"
+              user_id: "$.data.user.id"
+
+    # ── Phone + OTP (multi-step) ──
+    - id: "phone_otp"
+      name: "Phone Number"
+      inputs:
+        - key: "phone"
+          label: "Phone Number"
+          type: "tel"
+          required: true
+      steps:
+        - name: "Send Verification Code"
+          request:
+            method: "POST"
+            path: "/v2/auth/otp/send"
+            body: |
+              {
+                "phone_number": "{{input.phone}}",
+                "country_code": "+1"
+              }
+          on_success:
+            extract:
+              request_id: "$.data.request_id"
+            # Prompt the user for the OTP before continuing to step 2
+            prompt:
+              - key: "otp"
+                label: "Enter Verification Code"
+                type: "text"
+                required: true
+
+        - name: "Verify Code"
+          request:
+            method: "POST"
+            path: "/v2/auth/otp/verify"
+            body: |
+              {
+                "phone_number": "{{input.phone}}",
+                "code": "{{input.otp}}",
+                "request_id": "{{stored.request_id}}"
+              }
+          on_success:
+            extract:
+              access_token: "$.data.access_token"
+              refresh_token: "$.data.refresh_token"
+              user_name: "$.data.user.display_name"
+
+  # Logout endpoint (optional)
+  logout:
+    request:
+      method: "POST"
+      path: "/v2/auth/logout"
+      headers:
+        Authorization: "Bearer {{stored.access_token}}"
+
+  # Token refresh (optional – the server can call this automatically)
+  refresh:
+    request:
+      method: "POST"
+      path: "/v2/auth/token/refresh"
+      body: |
+        {
+          "refresh_token": "{{stored.refresh_token}}"
+        }
+    on_success:
+      extract:
+        access_token: "$.data.access_token"
+
+# ── Channel Browsing ────────────────────────────────────────────────────────
+
+channels:
+  list:
+    request:
+      method: "GET"
+      path: "/v2/channels"
+      headers:
+        Authorization: "Bearer {{stored.access_token}}"
+      params:
+        category: "{{input.category}}"
+        page: "{{input.page}}"
+        per_page: "50"
+    response:
+      # Path to the JSON array containing channel objects
+      items_path: "$.data.channels"
+      # Map provider field names → canonical OTVI field names
+      mapping:
+        id: "$.channel_id"
+        name: "$.title"
+        logo: "$.images.square"
+        category: "$.genre"
+        number: "$.lcn"
+        description: "$.synopsis"
+
+  categories:
+    request:
+      method: "GET"
+      path: "/v2/channels/categories"
+      headers:
+        Authorization: "Bearer {{stored.access_token}}"
+    response:
+      items_path: "$.data"
+      mapping:
+        id: "$.id"
+        name: "$.name"
+
+# ── Stream Playback ─────────────────────────────────────────────────────────
+
+playback:
+  stream:
+    request:
+      method: "GET"
+      path: "/v2/channels/{{input.channel_id}}/stream"
+      headers:
+        Authorization: "Bearer {{stored.access_token}}"
+    response:
+      # JSONPath to the manifest URL
+      url: "$.data.manifest_url"
+      # JSONPath to the stream type ("hls" or "dash")
+      type: "$.data.stream_format"
+      # DRM info (optional – omit this section for clear streams)
+      drm:
+        system: "$.data.drm.type"
+        license_url: "$.data.drm.license_server_url"
+        headers:
+          Authorization: "Bearer {{stored.access_token}}"
+          X-Custom-Data: "{{stored.user_id}}"
