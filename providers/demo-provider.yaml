@@ -1,0 +1,56 @@
+id: demo
+name: Demo TV Provider
+description: Example provider config that can be adapted from existing TV/mobile APIs.
+default_headers:
+  user-agent: OTVI/1.0
+login:
+  name: login
+  method: POST
+  url: https://httpbin.org/anything/login
+  headers:
+    x-client-id: "demo-client"
+  input_fields:
+    - key: identifier
+      label: Email or Phone
+      kind: text
+      placeholder: user@example.com or +15551234567
+    - key: password
+      label: Password / OTP
+      kind: password
+      placeholder: password or otp
+  body: |
+    {
+      "identifier": "{{identifier}}",
+      "secret": "{{password}}"
+    }
+  auth_token_path: /json/identifier
+logout:
+  name: logout
+  method: POST
+  url: https://httpbin.org/anything/logout
+  headers:
+    authorization: "Bearer {{auth_token}}"
+  body: |
+    {
+      "session": "{{session_id}}"
+    }
+browse_channels:
+  action:
+    name: browse_channels
+    method: GET
+    url: https://raw.githubusercontent.com/kamikazechaser/free-tv/master/free_tv_channels.json
+  response_mapping:
+    items_path: /channels
+    id_path: /id
+    name_path: /name
+    stream_url_path: /url
+    drm_license_url_path: /drm_license
+play_channel:
+  action:
+    name: play_channel
+    method: GET
+    url: https://httpbin.org/anything/play
+    query:
+      channel_id: "{{channel_id}}"
+  response_mapping:
+    stream_url_path: /args/channel_id
