@@ -56,13 +56,13 @@ pub fn ChannelsPage() -> impl IntoView {
     };
 
     view! {
-        <div class="container">
-            <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start">
+        <div class="max-w-7xl mx-auto px-6 py-8">
+            <div class="flex justify-between items-start mb-8">
                 <div>
-                    <h1>"Channels"</h1>
-                    <p>"Browse and pick a channel to watch"</p>
+                    <h1 class="text-3xl font-bold mb-1">"Channels"</h1>
+                    <p class="text-gray-400">"Browse and pick a channel to watch"</p>
                 </div>
-                <button class="btn btn-small btn-danger" on:click=on_logout>"Sign Out"</button>
+                <button class="px-3 py-1.5 text-sm rounded-lg border border-red-500 text-red-500 bg-transparent hover:bg-red-500/15 transition-colors cursor-pointer" on:click=on_logout>"Sign Out"</button>
             </div>
 
             // ── Category filter ──
@@ -73,10 +73,11 @@ pub fn ChannelsPage() -> impl IntoView {
                             return view! { <div></div> }.into_view();
                         }
                         view! {
-                            <div class="categories-bar">
+                            <div class="flex gap-2 flex-wrap mb-4">
                                 <button
-                                    class="cat-tag"
-                                    class:active=move || selected_category.get().is_empty()
+                                    class="px-4 py-1.5 rounded-full text-sm cursor-pointer transition-all border"
+                                    class=("bg-rose-500 text-white border-rose-500", move || selected_category.get().is_empty())
+                                    class=("bg-gray-900 text-gray-400 border-white/10 hover:bg-rose-500 hover:text-white hover:border-rose-500", move || !selected_category.get().is_empty())
                                     on:click=move |_| set_selected_category.set(String::new())
                                 >
                                     "All"
@@ -87,10 +88,12 @@ pub fn ChannelsPage() -> impl IntoView {
                                     children=move |cat| {
                                         let cat_id = cat.id.clone();
                                         let cat_id2 = cat.id.clone();
+                                        let cat_id3 = cat.id.clone();
                                         view! {
                                             <button
-                                                class="cat-tag"
-                                                class:active=move || selected_category.get() == cat_id
+                                                class="px-4 py-1.5 rounded-full text-sm cursor-pointer transition-all border"
+                                                class=("bg-rose-500 text-white border-rose-500", move || selected_category.get() == cat_id)
+                                                class=("bg-gray-900 text-gray-400 border-white/10 hover:bg-rose-500 hover:text-white hover:border-rose-500", move || selected_category.get() != cat_id3)
                                                 on:click=move |_| set_selected_category
                                                     .set(cat_id2.clone())
                                             >
@@ -106,17 +109,17 @@ pub fn ChannelsPage() -> impl IntoView {
             </Suspense>
 
             // ── Channel grid ──
-            <Suspense fallback=move || view! { <div class="loading">"Loading channels…"</div> }>
+            <Suspense fallback=move || view! { <div class="text-center py-12 text-gray-400">"Loading channels…"</div> }>
                 {let navigate = navigate.clone(); move || {
                     let pid = provider_id();
                     let navigate = navigate.clone();
                     channels.get().map(|result| match result {
                         Ok(data) if data.channels.is_empty() => {
-                            view! { <div class="loading">"No channels found."</div> }.into_view()
+                            view! { <div class="text-center py-12 text-gray-400">"No channels found."</div> }.into_view()
                         }
                         Ok(data) => {
                             view! {
-                                <div class="channels-grid">
+                                <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 mt-4">
                                     <For
                                         each=move || data.channels.clone()
                                         key=|ch| ch.id.clone()
@@ -126,7 +129,7 @@ pub fn ChannelsPage() -> impl IntoView {
                                             let navigate = navigate.clone();
                                             view! {
                                                 <div
-                                                    class="channel-card"
+                                                    class="bg-gray-900 border border-white/5 rounded-lg p-4 text-center hover:-translate-y-0.5 hover:border-rose-500 transition-all duration-150 cursor-pointer"
                                                     on:click=move |_| {
                                                         navigate(
                                                             &format!(
@@ -140,20 +143,20 @@ pub fn ChannelsPage() -> impl IntoView {
                                                         .logo
                                                         .clone()
                                                         .map(|url| {
-                                                            view! { <img src=url alt="logo" /> }
+                                                            view! { <img class="w-18 h-18 object-contain rounded mx-auto mb-2" src=url alt="logo" /> }
                                                         })}
-                                                    <div class="name">{&channel.name}</div>
+                                                    <div class="font-medium text-sm">{&channel.name}</div>
                                                     {channel
                                                         .number
                                                         .clone()
                                                         .map(|n| {
-                                                            view! { <div class="number">"CH " {n}</div> }
+                                                            view! { <div class="text-xs text-gray-400">"CH " {n}</div> }
                                                         })}
                                                     {channel
                                                         .category
                                                         .clone()
                                                         .map(|c| {
-                                                            view! { <div class="category">{c}</div> }
+                                                            view! { <div class="text-xs text-gray-400 mt-0.5">{c}</div> }
                                                         })}
                                                 </div>
                                             }
@@ -169,7 +172,7 @@ pub fn ChannelsPage() -> impl IntoView {
                                 let navigate = navigate.clone();
                                 navigate(&format!("/login/{pid}"), Default::default());
                             }
-                            view! { <div class="error-msg">{e}</div> }.into_view()
+                            view! { <div class="text-red-400 bg-red-400/10 px-4 py-3 rounded-lg my-4 text-sm">{e}</div> }.into_view()
                         },
                     })
                 }}

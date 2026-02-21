@@ -1,3 +1,4 @@
 /target
 sessions.json
 dist/
+node_modules/

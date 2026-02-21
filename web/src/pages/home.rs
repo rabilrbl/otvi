@@ -9,22 +9,22 @@ pub fn HomePage() -> impl IntoView {
     let providers = create_local_resource(|| (), |_| async move { api::fetch_providers().await });
 
     view! {
-        <div class="container">
-            <div class="page-header">
-                <h1>"Choose Your Provider"</h1>
-                <p>"Select a TV provider to sign in and start watching"</p>
+        <div class="max-w-7xl mx-auto px-6 py-8">
+            <div class="mb-8">
+                <h1 class="text-3xl font-bold mb-1">"Choose Your Provider"</h1>
+                <p class="text-gray-400">"Select a TV provider to sign in and start watching"</p>
             </div>
 
-            <Suspense fallback=move || view! { <div class="loading">"Loading providers…"</div> }>
+            <Suspense fallback=move || view! { <div class="text-center py-12 text-gray-400">"Loading providers…"</div> }>
                 {move || {
                     providers
                         .get()
                         .map(|result| match result {
                             Ok(list) if list.is_empty() => {
                                 view! {
-                                    <div class="loading">
+                                    <div class="text-center py-12 text-gray-400">
                                         "No providers configured. Add a YAML file to the "
-                                        <code>"providers/"</code>
+                                        <code class="bg-gray-800 px-1.5 py-0.5 rounded text-sm">"providers/"</code>
                                         " directory."
                                     </div>
                                 }
@@ -32,7 +32,7 @@ pub fn HomePage() -> impl IntoView {
                             }
                             Ok(list) => {
                                 view! {
-                                    <div class="providers-grid">
+                                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 mt-6">
                                         <For
                                             each=move || list.clone()
                                             key=|p| p.id.clone()
@@ -51,20 +51,20 @@ pub fn HomePage() -> impl IntoView {
                                                     .collect::<Vec<_>>()
                                                     .join(", ");
                                                 let badge = if has_session {
-                                                    view! { <div class="session-status signed-in">"Signed in ✓"</div> }.into_view()
+                                                    view! { <div class="text-sm text-emerald-400 mt-2 font-medium">"Signed in ✓"</div> }.into_view()
                                                 } else {
-                                                    view! { <div class="session-status">"Sign in →"</div> }.into_view()
+                                                    view! { <div class="text-sm text-gray-400 mt-2">"Sign in →"</div> }.into_view()
                                                 };
                                                 view! {
-                                                    <A href=href class="provider-card">
+                                                    <A href=href class="block bg-gray-900 border border-white/5 rounded-lg p-6 hover:-translate-y-1 hover:border-rose-500 transition-all duration-200 cursor-pointer">
                                                         {provider
                                                             .logo
                                                             .map(|url| {
-                                                                view! { <img src=url alt="logo" /> }
+                                                                view! { <img class="max-w-full h-15 object-contain mb-4" src=url alt="logo" /> }
                                                             })}
 
-                                                        <h3>{provider.name}</h3>
-                                                        <div class="flows">{flows_text}</div>
+                                                        <h3 class="font-semibold text-lg mb-1">{provider.name}</h3>
+                                                        <div class="text-sm text-gray-400">{flows_text}</div>
                                                         {badge}
                                                     </A>
                                                 }
@@ -75,7 +75,7 @@ pub fn HomePage() -> impl IntoView {
                                 }
                                     .into_view()
                             }
-                            Err(e) => view! { <div class="error-msg">{e}</div> }.into_view(),
+                            Err(e) => view! { <div class="text-red-400 bg-red-400/10 px-4 py-3 rounded-lg my-4 text-sm">{e}</div> }.into_view(),
                         })
                 }}
 

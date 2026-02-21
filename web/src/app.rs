@@ -8,10 +8,10 @@ use crate::pages::{channels::ChannelsPage, home::HomePage, login::LoginPage, pla
 pub fn App() -> impl IntoView {
     view! {
         <Router>
-            <nav class="nav">
-                <a class="nav-logo" href="/">"OTVI"</a>
-                <div class="nav-actions">
-                    <a class="btn btn-small btn-secondary" href="/">"Providers"</a>
+            <nav class="bg-gray-900 px-6 py-3 flex items-center justify-between sticky top-0 z-50 shadow-lg shadow-black/30">
+                <a class="text-xl font-bold text-rose-500 hover:text-rose-400 transition-colors" href="/">"OTVI"</a>
+                <div class="flex gap-3 items-center">
+                    <a class="px-3 py-1.5 text-sm rounded-lg bg-indigo-900 text-gray-200 hover:bg-indigo-800 transition-colors" href="/">"Providers"</a>
                 </div>
             </nav>
             <main>

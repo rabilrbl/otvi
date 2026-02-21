@@ -112,9 +112,9 @@ pub fn LoginPage() -> impl IntoView {
     };
 
     view! {
-        <div class="container">
-            <div class="login-container">
-                <Suspense fallback=move || view! { <div class="loading">"Loading…"</div> }>
+        <div class="max-w-7xl mx-auto px-6 py-8">
+            <div class="max-w-md mx-auto mt-12">
+                <Suspense fallback=move || view! { <div class="text-center py-12 text-gray-400">"Loading…"</div> }>
                     {let on_submit = on_submit.clone(); move || {
                         let on_submit = on_submit.clone();
                         provider
@@ -123,12 +123,12 @@ pub fn LoginPage() -> impl IntoView {
                                 Ok(info) => {
                                     let info_stored = store_value(info.clone());
                                     view! {
-                                        <div class="login-form">
-                                            <h2>{format!("Sign in to {}", info.name)}</h2>
+                                        <div class="bg-gray-900 rounded-lg p-8">
+                                            <h2 class="text-center text-xl font-semibold mb-6">{format!("Sign in to {}", info.name)}</h2>
 
                                             // ── Flow selector tabs ──
                                             <Show when=move || info_stored.get_value().auth_flows.len().gt(&1)>
-                                                <div class="flow-tabs">
+                                                <div class="flex gap-2 mb-6">
                                                     <For
                                                         each=move || {
                                                             info_stored.get_value()
@@ -142,8 +142,9 @@ pub fn LoginPage() -> impl IntoView {
                                                         children=move |(i, name)| {
                                                             view! {
                                                                 <button
-                                                                    class="flow-tab"
-                                                                    class:active=move || selected_flow_idx.get() == i
+                                                                    class="flex-1 py-2.5 rounded-lg text-sm text-center transition-all border cursor-pointer"
+                                                                    class=("bg-indigo-900 text-gray-200 border-indigo-900", move || selected_flow_idx.get() == i)
+                                                                    class=("bg-gray-950 text-gray-400 border-white/10 hover:bg-indigo-900/50", move || selected_flow_idx.get() != i)
                                                                     on:click=move |_| {
                                                                         set_selected_flow_idx.set(i);
                                                                         set_inputs.set(HashMap::new());
@@ -189,12 +190,12 @@ pub fn LoginPage() -> impl IntoView {
 
                                                 // Error message
                                                 <Show when=move || error.get().is_some()>
-                                                    <div class="error-msg">{move || error.get()}</div>
+                                                    <div class="text-red-400 bg-red-400/10 px-4 py-3 rounded-lg my-4 text-sm">{move || error.get()}</div>
                                                 </Show>
 
                                                 <button
                                                     type="submit"
-                                                    class="btn btn-primary"
+                                                    class="w-full py-3 rounded-lg bg-rose-500 text-white font-medium hover:bg-rose-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                                                     disabled=move || loading.get()
                                                 >
                                                     {move || {
@@ -212,7 +213,7 @@ pub fn LoginPage() -> impl IntoView {
                                     }
                                         .into_view()
                                 }
-                                Err(e) => view! { <div class="error-msg">{e}</div> }.into_view(),
+                                Err(e) => view! { <div class="text-red-400 bg-red-400/10 px-4 py-3 rounded-lg my-4 text-sm">{e}</div> }.into_view(),
                             })
                     }}
                 </Suspense>
@@ -230,12 +231,13 @@ fn render_field(
     let key2 = field.key.clone();
 
     view! {
-        <div class="form-group">
-            <label>{&field.label}</label>
+        <div class="mb-4">
+            <label class="block mb-1.5 text-gray-400 text-sm">{&field.label}</label>
             <input
                 type=field.field_type.clone()
                 required=field.required
                 placeholder=field.label.clone()
+                class="w-full px-4 py-3 bg-gray-950 border border-white/10 rounded-lg text-gray-200 text-base focus:outline-none focus:border-rose-500 transition-colors"
                 on:input=move |ev| {
                     let value = event_target_value(&ev);
                     let k = key.clone();

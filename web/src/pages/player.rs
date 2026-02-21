@@ -72,29 +72,29 @@ pub fn PlayerPage() -> impl IntoView {
     });
 
     view! {
-        <div class="container">
-            <div class="player-container">
+        <div class="max-w-7xl mx-auto px-6 py-8">
+            <div class="max-w-[1100px] mx-auto">
                 <A
                     href=move || format!("/providers/{}/channels", provider_id())
-                    class="back-link"
+                    class="inline-flex items-center gap-1.5 mb-4 text-gray-400 text-sm hover:text-gray-200 transition-colors"
                 >
                     "← Back to channels"
                 </A>
 
                 <Show when=move || error.get().is_some()>
-                    <div class="error-msg">{move || error.get()}</div>
+                    <div class="text-red-400 bg-red-400/10 px-4 py-3 rounded-lg my-4 text-sm">{move || error.get()}</div>
                 </Show>
 
-                <div class="video-wrapper">
-                    <video id="otvi-video" controls></video>
+                <div class="relative w-full pt-[56.25%] bg-black rounded-lg overflow-hidden">
+                    <video id="otvi-video" class="absolute inset-0 w-full h-full" controls></video>
                 </div>
 
-                <div class="player-info">
-                    <h2>{move || {
+                <div class="mt-4 p-4 bg-gray-900 rounded-lg">
+                    <h2 class="text-xl font-semibold mb-1">{move || {
                         let name = channel_name.get();
                         if name.is_empty() { "Loading…".into() } else { name }
                     }}</h2>
-                    <div class="meta">{move || provider_id()}</div>
+                    <div class="text-gray-400 text-sm">{move || provider_id()}</div>
                 </div>
             </div>
         </div>
