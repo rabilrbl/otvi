@@ -148,4 +148,4 @@ otvi/
 
 ## License
 
-MIT
+CC BY-NC-SA 4.0. See [LICENSE](LICENSE) for details.
