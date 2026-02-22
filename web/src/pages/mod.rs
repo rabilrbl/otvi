@@ -1,3 +1,4 @@
+pub mod admin;
 pub mod app_login;
 pub mod channels;
 pub mod home;

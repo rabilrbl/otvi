@@ -6,8 +6,8 @@ use otvi_core::types::{UserInfo, UserRole};
 
 use crate::api;
 use crate::pages::{
-    app_login::AppLoginPage, channels::ChannelsPage, home::HomePage, login::LoginPage,
-    not_found::NotFoundPage, player::PlayerPage, setup::SetupPage,
+    admin::AdminPage, app_login::AppLoginPage, channels::ChannelsPage, home::HomePage,
+    login::LoginPage, not_found::NotFoundPage, player::PlayerPage, setup::SetupPage,
 };
 
 /// Shared auth context available to all child components.
@@ -122,6 +122,12 @@ pub fn App() -> impl IntoView {
                         <span class="text-xs bg-rose-500/20 text-rose-400 px-2 py-0.5 rounded-full hidden sm:inline">
                             "admin"
                         </span>
+                        <a
+                            href="/admin"
+                            class="px-3 py-1.5 text-sm rounded-lg bg-gray-800 text-gray-300 hover:bg-gray-700 transition-colors no-underline hidden sm:inline-block"
+                        >
+                            "Dashboard"
+                        </a>
                     </Show>
                     <button
                         class="px-3 py-1.5 text-sm rounded-lg bg-gray-800 text-gray-300 hover:bg-gray-700 transition-colors cursor-pointer"
@@ -134,6 +140,7 @@ pub fn App() -> impl IntoView {
             <main>
                 <Routes fallback=NotFoundPage>
                     <Route path=path!("/") view=HomePage />
+                    <Route path=path!("/admin") view=AdminPage />
                     <Route path=path!("/login/:provider_id") view=LoginPage />
                     <Route path=path!("/providers/:provider_id/channels") view=ChannelsPage />
                     <Route path=path!("/providers/:provider_id/play/:channel_id") view=PlayerPage />

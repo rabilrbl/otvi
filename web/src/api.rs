@@ -199,6 +199,111 @@ pub async fn provider_logout(provider_id: &str) -> Result<(), String> {
     Ok(())
 }
 
+// ── Admin helpers ────────────────────────────────────────────────────────────
+
+fn put_authed(url: &str) -> gloo_net::http::RequestBuilder {
+    let req = gloo_net::http::Request::put(url);
+    match bearer() {
+        Some(b) => req.header("Authorization", &b),
+        None => req,
+    }
+}
+
+fn delete_authed(url: &str) -> gloo_net::http::RequestBuilder {
+    let req = gloo_net::http::Request::delete(url);
+    match bearer() {
+        Some(b) => req.header("Authorization", &b),
+        None => req,
+    }
+}
+
+// ── Admin: users ─────────────────────────────────────────────────────────────
+
+pub async fn admin_list_users() -> Result<Vec<UserInfo>, String> {
+    let resp = get_authed("/api/admin/users")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.ok() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    resp.json::<Vec<UserInfo>>().await.map_err(|e| e.to_string())
+}
+
+pub async fn admin_create_user(req: CreateUserRequest) -> Result<UserInfo, String> {
+    let body = serde_json::to_string(&req).map_err(|e| e.to_string())?;
+    let resp = post_authed("/api/admin/users")
+        .header("Content-Type", "application/json")
+        .body(body)
+        .map_err(|e| format!("{e:?}"))?
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if resp.ok() {
+        resp.json::<UserInfo>().await.map_err(|e| e.to_string())
+    } else {
+        Err(resp.text().await.unwrap_or_else(|_| format!("HTTP {}", resp.status())))
+    }
+}
+
+pub async fn admin_delete_user(user_id: &str) -> Result<(), String> {
+    let resp = delete_authed(&format!("/api/admin/users/{user_id}"))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if resp.ok() {
+        Ok(())
+    } else {
+        Err(resp.text().await.unwrap_or_else(|_| format!("HTTP {}", resp.status())))
+    }
+}
+
+pub async fn admin_set_user_providers(user_id: &str, providers: Vec<String>) -> Result<(), String> {
+    let body = serde_json::to_string(&UpdateUserProvidersRequest { providers })
+        .map_err(|e| e.to_string())?;
+    let resp = put_authed(&format!("/api/admin/users/{user_id}/providers"))
+        .header("Content-Type", "application/json")
+        .body(body)
+        .map_err(|e| format!("{e:?}"))?
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if resp.ok() {
+        Ok(())
+    } else {
+        Err(resp.text().await.unwrap_or_else(|_| format!("HTTP {}", resp.status())))
+    }
+}
+
+// ── Admin: settings ───────────────────────────────────────────────────────────
+
+pub async fn admin_get_settings() -> Result<ServerSettings, String> {
+    let resp = get_authed("/api/admin/settings")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.ok() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    resp.json::<ServerSettings>().await.map_err(|e| e.to_string())
+}
+
+pub async fn admin_update_settings(settings: ServerSettings) -> Result<(), String> {
+    let body = serde_json::to_string(&settings).map_err(|e| e.to_string())?;
+    let resp = put_authed("/api/admin/settings")
+        .header("Content-Type", "application/json")
+        .body(body)
+        .map_err(|e| format!("{e:?}"))?
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if resp.ok() {
+        Ok(())
+    } else {
+        Err(resp.text().await.unwrap_or_else(|_| format!("HTTP {}", resp.status())))
+    }
+}
+
 // ── Channel endpoints ───────────────────────────────────────────────────────
 
 pub async fn fetch_channels(
