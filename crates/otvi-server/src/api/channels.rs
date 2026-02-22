@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use axum::extract::{Path, Query, State};
 use axum::Json;
+use axum::extract::{Path, Query, State};
 use serde_json::Value;
 
 use otvi_core::config::AuthScope;
@@ -119,16 +119,14 @@ pub async fn stream(
     .map_err(|e| AppError::Internal(e.to_string()))?;
 
     // Extract stream URL
-    let stream_url =
-        extract_json_path(&response, &provider.playback.stream.response.url)
-            .ok_or_else(|| AppError::Internal("Stream URL not found in response".into()))?;
+    let stream_url = extract_json_path(&response, &provider.playback.stream.response.url)
+        .ok_or_else(|| AppError::Internal("Stream URL not found in response".into()))?;
 
     // Extract stream type: if the value doesn't start with '$.' treat it as a
     // literal (e.g. "hls"), otherwise extract from the response JSON.
     let stream_type_raw = &provider.playback.stream.response.stream_type;
     let stream_type_str = if stream_type_raw.starts_with("$.") {
-        extract_json_path(&response, stream_type_raw)
-            .unwrap_or_else(|| "hls".to_string())
+        extract_json_path(&response, stream_type_raw).unwrap_or_else(|| "hls".to_string())
     } else {
         stream_type_raw.clone()
     };
@@ -181,7 +179,9 @@ pub async fn stream(
             .map(|(k, v)| (k.clone(), context.resolve(v)))
             .collect();
 
-        let needs_ctx = !resolved_headers.is_empty() || !url_param_cookies.is_empty() || !static_cookies.is_empty()
+        let needs_ctx = !resolved_headers.is_empty()
+            || !url_param_cookies.is_empty()
+            || !static_cookies.is_empty()
             || provider.playback.stream.append_manifest_query_to_key_uris;
         let base = format!("/api/proxy?url={}", urlencoding::encode(&stream_url));
         if needs_ctx {
@@ -191,7 +191,10 @@ pub async fn stream(
                 resolved_cookies: Default::default(),
                 static_cookies,
                 manifest_query: None,
-                append_manifest_query_to_key_uris: provider.playback.stream.append_manifest_query_to_key_uris,
+                append_manifest_query_to_key_uris: provider
+                    .playback
+                    .stream
+                    .append_manifest_query_to_key_uris,
             };
             let token = uuid::Uuid::new_v4().to_string();
             state.proxy_ctx.write().unwrap().insert(token.clone(), ctx);
@@ -219,12 +222,20 @@ fn map_channels(
 
     let mut channels = Vec::new();
     for item in items {
+        let logo = extract_mapped_field(item, field_map, "logo").map(|url| {
+            // If logo_base_url is set and the logo is a relative path (no scheme),
+            // prepend the base URL so the client gets a fully qualified URL.
+            if let Some(base) = &mapping.logo_base_url {
+                if !url.starts_with("http://") && !url.starts_with("https://") {
+                    return format!("{}{}", base, url);
+                }
+            }
+            url
+        });
         channels.push(Channel {
-            id: extract_mapped_field(item, field_map, "id")
-                .unwrap_or_else(|| "unknown".into()),
-            name: extract_mapped_field(item, field_map, "name")
-                .unwrap_or_else(|| "Unnamed".into()),
-            logo: extract_mapped_field(item, field_map, "logo"),
+            id: extract_mapped_field(item, field_map, "id").unwrap_or_else(|| "unknown".into()),
+            name: extract_mapped_field(item, field_map, "name").unwrap_or_else(|| "Unnamed".into()),
+            logo,
             category: extract_mapped_field(item, field_map, "category"),
             number: extract_mapped_field(item, field_map, "number"),
             description: extract_mapped_field(item, field_map, "description"),
@@ -244,10 +255,8 @@ fn map_categories(
     let mut categories = Vec::new();
     for item in items {
         categories.push(Category {
-            id: extract_mapped_field(item, field_map, "id")
-                .unwrap_or_else(|| "unknown".into()),
-            name: extract_mapped_field(item, field_map, "name")
-                .unwrap_or_else(|| "Unknown".into()),
+            id: extract_mapped_field(item, field_map, "id").unwrap_or_else(|| "unknown".into()),
+            name: extract_mapped_field(item, field_map, "name").unwrap_or_else(|| "Unknown".into()),
         });
     }
 

@@ -193,6 +193,13 @@ pub struct ResponseMapping {
     /// Map of canonical field name → JSONPath within each item.
     #[serde(default)]
     pub mapping: HashMap<String, String>,
+    /// Optional base URL prepended to relative logo URLs extracted from the
+    /// channel list response.  Use this when the provider API returns only a
+    /// filename or path for the channel logo rather than a full URL.
+    ///
+    /// Example: `"https://jiotv.cdn.jio.com/apis/v1.3/getLogoUrl/get/"`
+    #[serde(default)]
+    pub logo_base_url: Option<String>,
 }
 
 // ── Playback ────────────────────────────────────────────────────────────────

@@ -159,6 +159,9 @@ channels:
         version: "315"
     response:
       items_path: "$.result"
+      # JioTV returns only a filename (e.g. "ColorsHD.png") in the logoUrl
+      # field.  Prepend the CDN base path to produce a valid absolute URL.
+      logo_base_url: "https://jiotv.catchup.cdn.jio.com/dare_images/images/"
       mapping:
         id: "$.channel_id"
         name: "$.channel_name"

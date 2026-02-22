@@ -1,7 +1,8 @@
 {
   "chat.tools.terminal.autoApprove": {
     "trunk": true,
-    "cargo": true
+    "cargo": true,
+    "./target/debug/otvi-server": true
   },
   "rust-analyzer.server.extraEnv": {
     "PATH": "/home/linuxbrew/.linuxbrew/opt/rustup/bin:/home/linuxbrew/.linuxbrew/bin:/home/rabil/.cargo/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin"
