@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 otvi-core = { path = "../crates/otvi-core" }
 
-leptos = { version = "0.6", features = ["csr"] }
+leptos = { version = "0.8", features = ["csr"] }
 leptos_router = { version = "0.6", features = ["csr"] }
 
 serde = { workspace = true }
