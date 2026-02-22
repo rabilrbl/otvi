@@ -1,0 +1,266 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# JioTV Mobile – OTVI Provider Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# This config mirrors the JioTV Android mobile app's HTTP API.
+# Derived from the open-source JioTV-Go project:
+#   https://github.com/JioTV-Go/jiotv_go
+#
+# Auth flow:  Phone number → OTP → Verify → access/refresh/sso tokens
+# Channels:   GET channel list from CDN endpoint (no auth required for list)
+# Playback:   POST to get HLS manifest URL (requires auth tokens)
+#
+# Template variables used:
+#   {{input.phone}}         – raw phone number from user
+#   {{input.phone_b64}}     – base64-encoded phone number (auto-transformed)
+#   {{input.otp}}           – OTP entered by user
+#   {{stored.access_token}} – JWT-like access token from OTP verify
+#   {{stored.refresh_token}}– refresh token from OTP verify
+#   {{stored.sso_token}}    – SSO token from OTP verify
+#   {{stored.crm}}          – subscriber/CRM ID
+#   {{stored.unique_id}}    – unique user ID
+#   {{stored.device_id}}    – generated 16-char hex device ID
+#   {{device_id}}           – auto-generated per-session device ID
+# ─────────────────────────────────────────────────────────────────────────────
+
+provider:
+  name: "JioTV"
+  id: "jiotv-mobile"
+  logo: "https://www.jiotv.com/favicon.ico"
+
+defaults:
+  base_url: ""
+  headers:
+    User-Agent: "okhttp/4.2.2"
+    devicetype: "phone"
+    os: "android"
+
+# ── Authentication ──────────────────────────────────────────────────────────
+
+auth:
+  scope: "per_user"
+  flows:
+    - id: "phone_otp"
+      name: "Jio Phone Number"
+      inputs:
+        - key: "phone"
+          label: "Jio Phone Number"
+          type: "tel"
+          required: true
+          # The phone number is base64-encoded before sending to JioTV API.
+          # This creates {{input.phone_base64}} alongside {{input.phone}}.
+          transform: "base64"
+      steps:
+        # ── Step 1: Send OTP ──
+        - name: "Send OTP"
+          request:
+            method: "POST"
+            path: "https://jiotvapi.media.jio.com/userservice/apis/v1/loginotp/send"
+            headers:
+              Content-Type: "application/json"
+              appname: "RJIL_JioTV"
+            body: |
+              {"number":"{{input.phone_base64}}"}
+          # JioTV returns 204 No Content on success (empty body)
+          success_status: 204
+          on_success:
+            extract: {}
+            prompt:
+              - key: "otp"
+                label: "Enter OTP sent to your phone"
+                type: "text"
+                required: true
+
+        # ── Step 2: Verify OTP ──
+        - name: "Verify OTP"
+          request:
+            method: "POST"
+            path: "https://jiotvapi.media.jio.com/userservice/apis/v1/loginotp/verify"
+            headers:
+              Content-Type: "application/json"
+              appname: "RJIL_JioTV"
+            body: |
+              {
+                "number": "{{input.phone_base64}}",
+                "otp": "{{input.otp}}",
+                "deviceInfo": {
+                  "consumptionDeviceName": "SM-G930F",
+                  "info": {
+                    "type": "android",
+                    "platform": {
+                      "name": "SM-G930F",
+                      "version": ""
+                    },
+                    "androidId": "{{stored.device_id}}"
+                  }
+                }
+              }
+          on_success:
+            extract:
+              access_token: "$.authToken"
+              refresh_token: "$.refreshToken"
+              sso_token: "$.ssoToken"
+              crm: "$.sessionAttributes.user.subscriberId"
+              unique_id: "$.sessionAttributes.user.unique"
+
+  logout:
+    request:
+      method: "POST"
+      path: "https://auth.media.jio.com/tokenservice/apis/v1/logout?langId=6"
+      headers:
+        Content-Type: "application/json; charset=utf-8"
+        Accept-Encoding: "gzip"
+        versionCode: "389"
+        accessToken: "{{stored.access_token}}"
+        uniqueid: "{{stored.unique_id}}"
+      body: |
+        {
+          "appName": "RJIL_JioTV",
+          "deviceId": "{{stored.device_id}}",
+          "refreshToken": "{{stored.refresh_token}}"
+        }
+
+  refresh:
+    request:
+      method: "POST"
+      path: "https://auth.media.jio.com/tokenservice/apis/v1/refreshtoken?langId=6"
+      headers:
+        Content-Type: "application/json; charset=utf-8"
+        versionCode: "389"
+        Host: "auth.media.jio.com"
+        accessToken: "{{stored.access_token}}"
+      body: |
+        {
+          "appName": "RJIL_JioTV",
+          "deviceId": "{{stored.device_id}}",
+          "refreshToken": "{{stored.refresh_token}}"
+        }
+    on_success:
+      extract:
+        access_token: "$.authToken"
+
+# ── Channel Browsing ────────────────────────────────────────────────────────
+
+channels:
+  list:
+    request:
+      method: "GET"
+      path: "https://jiotvapi.cdn.jio.com/apis/v3.0/getMobileChannelList/get/"
+      headers:
+        Accept: "application/json"
+        appkey: "NzNiMDhlYzQyNjJm"
+        lbcookie: "1"
+        usertype: "JIO"
+      params:
+        langId: "6"
+        os: "android"
+        devicetype: "phone"
+        usertype: "JIO"
+        version: "315"
+    response:
+      items_path: "$.result"
+      # JioTV returns only a filename (e.g. "ColorsHD.png") in the logoUrl
+      # field.  Prepend the CDN base path to produce a valid absolute URL.
+      logo_base_url: "https://jiotv.catchup.cdn.jio.com/dare_images/images/"
+      mapping:
+        id: "$.channel_id"
+        name: "$.channel_name"
+        logo: "$.logoUrl"
+        category: "$.channelCategoryId"
+        number: "$.channel_id"
+
+  # JioTV embeds category IDs in channel objects (`channelCategoryId`).
+  # There is no separate categories API, so we define them statically here.
+  static_categories:
+    - { id: "5", name: "Entertainment" }
+    - { id: "6", name: "Movies" }
+    - { id: "7", name: "Kids" }
+    - { id: "8", name: "Sports" }
+    - { id: "9", name: "Lifestyle & Travel" }
+    - { id: "10", name: "Infotainment" }
+    - { id: "12", name: "News" }
+    - { id: "13", name: "Music" }
+    - { id: "15", name: "Devotion" }
+    - { id: "16", name: "Business News" }
+    - { id: "17", name: "Educational" }
+    - { id: "18", name: "Shopping" }
+
+# ── Stream Playback ─────────────────────────────────────────────────────────
+
+playback:
+  stream:
+    request:
+      method: "POST"
+      path: "https://jiotvapi.media.jio.com/playback/apis/v1.1/geturl?langId=6"
+      headers:
+        Content-type: "application/x-www-form-urlencoded"
+        appkey: "NzNiMDhlYzQyNjJm"
+        channel_id: "{{input.channel_id}}"
+        crmid: "{{stored.crm}}"
+        userId: "{{stored.crm}}"
+        deviceId: "{{stored.device_id}}"
+        isott: "false"
+        languageId: "6"
+        lbcookie: "1"
+        osVersion: "13"
+        subscriberId: "{{stored.crm}}"
+        uniqueId: "{{stored.unique_id}}"
+        usergroup: "tvYR7NSNn7rymo3F"
+        versionCode: "389"
+        accessToken: "{{stored.access_token}}"
+      # begin = current UTC timestamp (JioTV-Go: GenerateCurrentTime → "YYYYMMDDTHHMMSS")
+      # srno  = current UTC date      (JioTV-Go: GenerateDate          → "YYYYMMDD")
+      body: "channel_id={{input.channel_id}}&stream_type=Seek&begin={{utcnow}}&srno={{utcdate}}"
+      body_encoding: "form"
+    response:
+      # HLS manifest URL
+      url: "$.bitrates.auto"
+      # JioTV always serves HLS (m3u8)
+      type: "hls"
+    # Headers forwarded by the proxy when fetching manifest segments / keys.
+    # Derived from JioTV-Go: RenderHandler uses tv.Headers (okhttp UA) for the
+    # master manifest, while RenderTSHandler / RenderKeyHandler use the ExoPlayer
+    # UA for segments and encryption keys.  The CDN validates accessToken,
+    # ssotoken and subscriber identity on every request.
+    proxy_headers:
+      # ExoPlayer UA is required for segment / key requests (JioTV CDN rejects okhttp for those)
+      User-Agent: "plaYtv/7.1.7 (Linux;Android 8.1.0) ExoPlayerLib/2.11.7"
+      os: "android"
+      devicetype: "phone"
+      osVersion: "13"
+      # Auth tokens validated by the JioTV CDN on manifest + segment requests
+      accessToken: "{{stored.access_token}}"
+      ssotoken: "{{stored.sso_token}}"
+      # Subscriber identity headers
+      crmid: "{{stored.crm}}"
+      subscriberId: "{{stored.crm}}"
+      uniqueId: "{{stored.unique_id}}"
+      # Additional headers copied from SetCommonJioTVHeaders in JioTV-Go
+      lbcookie: "1"
+      usergroup: "tvYR7NSNn7rymo3F"
+      versionCode: "389"
+      # srno (serial number) forwarded by JioTV-Go's RenderKeyHandler
+      srno: "230203144000"
+      # channelId required by tv.media.jio.com for .pkey AES-128 key requests
+      # (JioTV-Go's RenderKeyHandler sets c.Request().Header.Set("channelId", channel_id))
+      channelId: "{{input.channel_id}}"
+    # URL query-params in the stream URL that should be forwarded as cookies.
+    # JioTV's Akamai CDN embeds the token as `__hdnea__=…` in the manifest URL
+    # and authenticates segment / .pkey requests via the `__hdnea__` cookie.
+    proxy_url_cookies:
+      __hdnea__: "__hdnea__"
+    # The manifest URL's query string (including __hdnea__) is NOT appended to
+    # EXT-X-KEY URI lines; the resolved __hdnea__ cookie is sent via the Cookie
+    # header instead (same as JioTV-Go behaviour — key server accepts it).
+    append_manifest_query_to_key_uris: false
+    # Allow the resolved __hdnea__ cookie to be forwarded to key requests.
+    # Empirically the key server (tv.media.jio.com) requires it even though its
+    # path (/fallback/bpk-tv/…) doesn't match the CDN ACL (/bpk-tv/…).
+    key_exclude_resolved_cookies: false
+    # Static cookies forwarded on every upstream proxy request.
+    proxy_cookies:
+      ssotoken: "{{stored.sso_token}}"
+      crmid: "{{stored.crm}}"
+      subscriberId: "{{stored.crm}}"
+      uniqueId: "{{stored.unique_id}}"
+      accessToken: "{{stored.access_token}}"

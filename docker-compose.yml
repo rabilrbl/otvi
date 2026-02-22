@@ -1,0 +1,13 @@
+services:
+  otvi:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      # Mount your provider YAML files into the container
+      - ./providers:/app/providers:ro
+    environment:
+      - PORT=3000
+      - PROVIDERS_DIR=/app/providers
+      - STATIC_DIR=/app/dist
+      - RUST_LOG=otvi_server=info

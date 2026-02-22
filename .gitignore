@@ -1,1 +1,12 @@
 /target
+sessions.json
+dist/
+node_modules/
+.vscode/
+
+# Environment / secrets – keep .env.example but not .env itself
+.env
+.env.local
+
+# SQLite database file created at runtime
+data.db

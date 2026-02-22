@@ -1,0 +1,12 @@
+[build]
+target = "index.html"
+dist = "../dist"
+
+[watch]
+watch = ["src", "index.html", "input.css"]
+
+# Run Tailwind CSS v4 before Trunk builds
+[[hooks]]
+stage = "pre_build"
+command = "bunx"
+command_arguments = ["tailwindcss", "-i", "input.css", "-o", "style.css", "--minify"]
