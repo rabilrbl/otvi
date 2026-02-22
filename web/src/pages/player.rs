@@ -25,10 +25,8 @@ extern "C" {
 #[component]
 pub fn PlayerPage() -> impl IntoView {
     let params = use_params_map();
-    let provider_id =
-        move || params.with(|p| p.get("provider_id").unwrap_or_default());
-    let channel_id =
-        move || params.with(|p| p.get("channel_id").unwrap_or_default());
+    let provider_id = move || params.with(|p| p.get("provider_id").unwrap_or_default());
+    let channel_id = move || params.with(|p| p.get("channel_id").unwrap_or_default());
 
     let (error, set_error) = signal(Option::<String>::None);
     let (channel_name, set_channel_name) = signal(String::new());

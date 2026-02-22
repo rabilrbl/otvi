@@ -1,6 +1,6 @@
+use leptos::ev;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-use leptos::ev;
 use otvi_core::types::UserInfo;
 
 use crate::api;

@@ -27,10 +27,7 @@ impl AuthCtx {
     }
 
     pub fn username(&self) -> String {
-        self.user
-            .get()
-            .map(|u| u.username)
-            .unwrap_or_default()
+        self.user.get().map(|u| u.username).unwrap_or_default()
     }
 }
 
@@ -198,4 +195,3 @@ pub fn App() -> impl IntoView {
         </Router>
     }
 }
-

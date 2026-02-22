@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use axum::routing::{delete, get, post, put};
 use axum::Router;
+use axum::routing::{delete, get, post, put};
 use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
 
@@ -24,8 +24,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let providers_dir =
-        std::env::var("PROVIDERS_DIR").unwrap_or_else(|_| "providers".to_string());
+    let providers_dir = std::env::var("PROVIDERS_DIR").unwrap_or_else(|_| "providers".to_string());
     let static_dir = std::env::var("STATIC_DIR").unwrap_or_else(|_| "dist".to_string());
     let port = std::env::var("PORT").unwrap_or_else(|_| "3000".to_string());
 
@@ -33,8 +32,8 @@ async fn main() -> anyhow::Result<()> {
     // Register all bundled drivers so AnyPool can inspect the URL scheme.
     sqlx::any::install_default_drivers();
 
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "sqlite://data.db".to_string());
+    let database_url =
+        std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite://data.db".to_string());
     tracing::info!("Connecting to database: {database_url}");
     let db = db::init(&database_url).await?;
 
@@ -62,8 +61,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/login", post(api::user_auth::login))
         .route("/me", get(api::user_auth::me))
         .route("/logout", post(api::user_auth::logout))
-        .route("/change-password", post(api::user_auth::change_password))
-        ;
+        .route("/change-password", post(api::user_auth::change_password));
 
     // Provider-specific auth (TV provider sessions).
     let provider_routes = Router::new()

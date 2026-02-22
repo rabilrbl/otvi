@@ -28,8 +28,7 @@ impl TemplateContext {
     /// Merge a map of values under a common prefix (e.g. `"input"`, `"stored"`).
     pub fn merge(&mut self, prefix: &str, map: &HashMap<String, String>) {
         for (k, v) in map {
-            self.values
-                .insert(format!("{prefix}.{k}"), v.clone());
+            self.values.insert(format!("{prefix}.{k}"), v.clone());
         }
     }
 

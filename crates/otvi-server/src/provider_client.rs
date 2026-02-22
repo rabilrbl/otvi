@@ -65,7 +65,11 @@ pub async fn execute_request(
                     let mut parts = pair.splitn(2, '=');
                     let key = parts.next()?.trim().to_string();
                     let value = parts.next().unwrap_or("").trim().to_string();
-                    if key.is_empty() { None } else { Some((key, value)) }
+                    if key.is_empty() {
+                        None
+                    } else {
+                        Some((key, value))
+                    }
                 })
                 .collect();
             builder = builder.form(&pairs);
@@ -77,10 +81,7 @@ pub async fn execute_request(
     let response = builder.send().await?;
     let status = response.status();
     let status_code = status.as_u16();
-    let body: Value = response
-        .json()
-        .await
-        .unwrap_or(Value::Null);
+    let body: Value = response.json().await.unwrap_or(Value::Null);
 
     if !status.is_success() {
         anyhow::bail!("Provider API returned {status}: {body}");

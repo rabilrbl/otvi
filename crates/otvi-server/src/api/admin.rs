@@ -12,8 +12,8 @@
 
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
 use axum::Json;
+use axum::extract::{Path, State};
 
 use otvi_core::types::*;
 
@@ -102,7 +102,9 @@ pub async fn delete_user(
 ) -> Result<Json<serde_json::Value>, AppError> {
     // Prevent an admin from deleting themselves.
     if admin.sub == user_id {
-        return Err(AppError::BadRequest("Cannot delete your own account".into()));
+        return Err(AppError::BadRequest(
+            "Cannot delete your own account".into(),
+        ));
     }
 
     db::delete_user(&state.db, &user_id)

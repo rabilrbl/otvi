@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
 use leptos::either::Either;
+use leptos::ev;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-use leptos::ev;
 use leptos_router::hooks::*;
 
 use otvi_core::types::*;
@@ -14,15 +14,12 @@ use crate::api;
 #[component]
 pub fn LoginPage() -> impl IntoView {
     let params = use_params_map();
-    let provider_id =
-        move || params.with(|p| p.get("provider_id").unwrap_or_default());
+    let provider_id = move || params.with(|p| p.get("provider_id").unwrap_or_default());
 
     // Fetch provider metadata (including auth flows)
     let provider = LocalResource::new(move || {
         let id = provider_id();
-        async move {
-            api::fetch_provider(&id).await
-        }
+        async move { api::fetch_provider(&id).await }
     });
 
     // UI state
@@ -98,10 +95,7 @@ pub fn LoginPage() -> impl IntoView {
                 Ok(resp) => {
                     if resp.success {
                         // Session is now stored server-side via JWT sub.
-                        navigate(
-                            &format!("/providers/{pid}/channels"),
-                            Default::default(),
-                        );
+                        navigate(&format!("/providers/{pid}/channels"), Default::default());
                     } else if let Some(next) = resp.next_step {
                         set_session_id.set(resp.session_id);
                         set_current_step.set(next.step_index);

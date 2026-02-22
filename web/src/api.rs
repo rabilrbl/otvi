@@ -77,7 +77,9 @@ pub async fn app_login(username: &str, password: &str) -> Result<AppLoginRespons
         .map_err(|e| e.to_string())?;
 
     if resp.ok() {
-        resp.json::<AppLoginResponse>().await.map_err(|e| e.to_string())
+        resp.json::<AppLoginResponse>()
+            .await
+            .map_err(|e| e.to_string())
     } else {
         Err(resp.text().await.unwrap_or_else(|_| "Login failed".into()))
     }
@@ -99,9 +101,14 @@ pub async fn app_register(username: &str, password: &str) -> Result<AppLoginResp
         .map_err(|e| e.to_string())?;
 
     if resp.ok() {
-        resp.json::<AppLoginResponse>().await.map_err(|e| e.to_string())
+        resp.json::<AppLoginResponse>()
+            .await
+            .map_err(|e| e.to_string())
     } else {
-        Err(resp.text().await.unwrap_or_else(|_| "Registration failed".into()))
+        Err(resp
+            .text()
+            .await
+            .unwrap_or_else(|_| "Registration failed".into()))
     }
 }
 
@@ -124,9 +131,14 @@ pub async fn change_password(
         .map_err(|e| e.to_string())?;
 
     if resp.ok() {
-        resp.json::<AppLoginResponse>().await.map_err(|e| e.to_string())
+        resp.json::<AppLoginResponse>()
+            .await
+            .map_err(|e| e.to_string())
     } else {
-        Err(resp.text().await.unwrap_or_else(|_| "Password change failed".into()))
+        Err(resp
+            .text()
+            .await
+            .unwrap_or_else(|_| "Password change failed".into()))
     }
 }
 
@@ -160,7 +172,9 @@ pub async fn fetch_providers() -> Result<Vec<ProviderInfo>, String> {
         }
         return Err(format!("HTTP {}", resp.status()));
     }
-    resp.json::<Vec<ProviderInfo>>().await.map_err(|e| e.to_string())
+    resp.json::<Vec<ProviderInfo>>()
+        .await
+        .map_err(|e| e.to_string())
 }
 
 pub async fn fetch_provider(id: &str) -> Result<ProviderInfo, String> {
@@ -209,13 +223,20 @@ pub async fn login(provider_id: &str, req: &LoginRequest) -> Result<LoginRespons
         .await
         .map_err(|e| e.to_string())?;
     if !resp.ok() {
-        return Err(resp.text().await.unwrap_or_else(|_| format!("HTTP {}", resp.status())));
+        return Err(resp
+            .text()
+            .await
+            .unwrap_or_else(|_| format!("HTTP {}", resp.status())));
     }
-    resp.json::<LoginResponse>().await.map_err(|e| e.to_string())
+    resp.json::<LoginResponse>()
+        .await
+        .map_err(|e| e.to_string())
 }
 
 pub async fn provider_logout(provider_id: &str) -> Result<(), String> {
-    let Some(b) = bearer() else { return Err("Not logged in".into()) };
+    let Some(b) = bearer() else {
+        return Err("Not logged in".into());
+    };
     Request::post(&format!("/api/providers/{provider_id}/auth/logout"))
         .header("Authorization", &b)
         .send()
@@ -252,7 +273,9 @@ pub async fn admin_list_users() -> Result<Vec<UserInfo>, String> {
     if !resp.ok() {
         return Err(format!("HTTP {}", resp.status()));
     }
-    resp.json::<Vec<UserInfo>>().await.map_err(|e| e.to_string())
+    resp.json::<Vec<UserInfo>>()
+        .await
+        .map_err(|e| e.to_string())
 }
 
 pub async fn admin_create_user(req: CreateUserRequest) -> Result<UserInfo, String> {
@@ -267,7 +290,10 @@ pub async fn admin_create_user(req: CreateUserRequest) -> Result<UserInfo, Strin
     if resp.ok() {
         resp.json::<UserInfo>().await.map_err(|e| e.to_string())
     } else {
-        Err(resp.text().await.unwrap_or_else(|_| format!("HTTP {}", resp.status())))
+        Err(resp
+            .text()
+            .await
+            .unwrap_or_else(|_| format!("HTTP {}", resp.status())))
     }
 }
 
@@ -279,7 +305,10 @@ pub async fn admin_delete_user(user_id: &str) -> Result<(), String> {
     if resp.ok() {
         Ok(())
     } else {
-        Err(resp.text().await.unwrap_or_else(|_| format!("HTTP {}", resp.status())))
+        Err(resp
+            .text()
+            .await
+            .unwrap_or_else(|_| format!("HTTP {}", resp.status())))
     }
 }
 
@@ -296,7 +325,10 @@ pub async fn admin_set_user_providers(user_id: &str, providers: Vec<String>) -> 
     if resp.ok() {
         Ok(())
     } else {
-        Err(resp.text().await.unwrap_or_else(|_| format!("HTTP {}", resp.status())))
+        Err(resp
+            .text()
+            .await
+            .unwrap_or_else(|_| format!("HTTP {}", resp.status())))
     }
 }
 
@@ -315,7 +347,10 @@ pub async fn admin_reset_password(user_id: &str, new_password: &str) -> Result<(
     if resp.ok() {
         Ok(())
     } else {
-        Err(resp.text().await.unwrap_or_else(|_| format!("HTTP {}", resp.status())))
+        Err(resp
+            .text()
+            .await
+            .unwrap_or_else(|_| format!("HTTP {}", resp.status())))
     }
 }
 
@@ -329,7 +364,9 @@ pub async fn admin_get_settings() -> Result<ServerSettings, String> {
     if !resp.ok() {
         return Err(format!("HTTP {}", resp.status()));
     }
-    resp.json::<ServerSettings>().await.map_err(|e| e.to_string())
+    resp.json::<ServerSettings>()
+        .await
+        .map_err(|e| e.to_string())
 }
 
 pub async fn admin_update_settings(settings: ServerSettings) -> Result<(), String> {
@@ -344,7 +381,10 @@ pub async fn admin_update_settings(settings: ServerSettings) -> Result<(), Strin
     if resp.ok() {
         Ok(())
     } else {
-        Err(resp.text().await.unwrap_or_else(|_| format!("HTTP {}", resp.status())))
+        Err(resp
+            .text()
+            .await
+            .unwrap_or_else(|_| format!("HTTP {}", resp.status())))
     }
 }
 
@@ -354,7 +394,9 @@ pub async fn fetch_channels(
     provider_id: &str,
     params: &HashMap<String, String>,
 ) -> Result<ChannelListResponse, String> {
-    let Some(b) = bearer() else { return Err("Not logged in".into()) };
+    let Some(b) = bearer() else {
+        return Err("Not logged in".into());
+    };
     let mut url = format!("/api/providers/{provider_id}/channels");
     if !params.is_empty() {
         let qs: Vec<String> = params.iter().map(|(k, v)| format!("{k}={v}")).collect();
@@ -368,11 +410,15 @@ pub async fn fetch_channels(
     if !resp.ok() {
         return Err(format!("HTTP {}", resp.status()));
     }
-    resp.json::<ChannelListResponse>().await.map_err(|e| e.to_string())
+    resp.json::<ChannelListResponse>()
+        .await
+        .map_err(|e| e.to_string())
 }
 
 pub async fn fetch_categories(provider_id: &str) -> Result<CategoryListResponse, String> {
-    let Some(b) = bearer() else { return Err("Not logged in".into()) };
+    let Some(b) = bearer() else {
+        return Err("Not logged in".into());
+    };
     let resp = Request::get(&format!("/api/providers/{provider_id}/channels/categories"))
         .header("Authorization", &b)
         .send()
@@ -381,18 +427,24 @@ pub async fn fetch_categories(provider_id: &str) -> Result<CategoryListResponse,
     if !resp.ok() {
         return Err(format!("HTTP {}", resp.status()));
     }
-    resp.json::<CategoryListResponse>().await.map_err(|e| e.to_string())
+    resp.json::<CategoryListResponse>()
+        .await
+        .map_err(|e| e.to_string())
 }
 
 // ── Playback endpoints ──────────────────────────────────────────────────────
 
 pub async fn fetch_stream(provider_id: &str, channel_id: &str) -> Result<StreamInfo, String> {
-    let Some(b) = bearer() else { return Err("Not logged in".into()) };
-    let resp = Request::get(&format!("/api/providers/{provider_id}/channels/{channel_id}/stream"))
-        .header("Authorization", &b)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    let Some(b) = bearer() else {
+        return Err("Not logged in".into());
+    };
+    let resp = Request::get(&format!(
+        "/api/providers/{provider_id}/channels/{channel_id}/stream"
+    ))
+    .header("Authorization", &b)
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
     if !resp.ok() {
         return Err(format!("HTTP {}", resp.status()));
     }
