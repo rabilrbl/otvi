@@ -12,7 +12,7 @@ use axum::extract::FromRequestParts;
 use axum::http::StatusCode;
 use axum::http::request::Parts;
 use axum::response::{IntoResponse, Response};
-use axum::{RequestPartsExt, async_trait};
+use axum::RequestPartsExt;
 use axum_extra::TypedHeader;
 use axum_extra::headers::Authorization;
 use axum_extra::headers::authorization::Bearer;
@@ -97,7 +97,6 @@ pub fn validate_token(keys: &JwtKeys, token: &str) -> Result<Claims, jsonwebtoke
 /// Axum extractor: validates the `Authorization: Bearer <token>` header and
 /// returns the decoded [`Claims`].  Returns `401 Unauthorized` if the header
 /// is missing or the token is invalid/expired.
-#[async_trait]
 impl<S> FromRequestParts<S> for Claims
 where
     S: Send + Sync + std::ops::Deref<Target = crate::state::AppState>,
@@ -160,7 +159,6 @@ impl IntoResponse for AuthError {
 /// Returns `403 Forbidden` when the token is valid but the role is `user`.
 pub struct AdminClaims(pub Claims);
 
-#[async_trait]
 impl<S> FromRequestParts<S> for AdminClaims
 where
     S: Send + Sync + std::ops::Deref<Target = crate::state::AppState>,
