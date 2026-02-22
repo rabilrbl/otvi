@@ -1,0 +1,41 @@
+import type {SidebarsConfig} from '@docusaurus/plugin-content-docs';
+
+const sidebars: SidebarsConfig = {
+  docsSidebar: [
+    'introduction',
+    'getting-started',
+    'architecture',
+    'configuration',
+    {
+      type: 'category',
+      label: 'Provider Guide',
+      items: [
+        'providers/overview',
+        'providers/yaml-schema',
+        'providers/template-engine',
+        'providers/authentication',
+        'providers/channels',
+        'providers/playback-and-drm',
+        'providers/stream-proxy',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'API Reference',
+      items: [
+        'api-reference/overview',
+        'api-reference/providers',
+        'api-reference/authentication',
+        'api-reference/channels',
+        'api-reference/streaming',
+        'api-reference/user-management',
+        'api-reference/admin',
+      ],
+    },
+    'frontend',
+    'deployment',
+    'admin-guide',
+  ],
+};
+
+export default sidebars;
