@@ -1,4 +1,6 @@
-use leptos::*;
+use leptos::prelude::*;
+use leptos::task::spawn_local;
+use leptos::ev;
 use otvi_core::types::UserInfo;
 
 use crate::api;
@@ -7,11 +9,11 @@ use crate::api;
 /// Creates the initial admin account.
 #[component]
 pub fn SetupPage(on_done: Callback<UserInfo>) -> impl IntoView {
-    let (username, set_username) = create_signal(String::new());
-    let (password, set_password) = create_signal(String::new());
-    let (confirm, set_confirm) = create_signal(String::new());
-    let (error, set_error) = create_signal(Option::<String>::None);
-    let (loading, set_loading) = create_signal(false);
+    let (username, set_username) = signal(String::new());
+    let (password, set_password) = signal(String::new());
+    let (confirm, set_confirm) = signal(String::new());
+    let (error, set_error) = signal(Option::<String>::None);
+    let (loading, set_loading) = signal(false);
 
     let on_submit = move |ev: ev::SubmitEvent| {
         ev.prevent_default();
@@ -39,7 +41,7 @@ pub fn SetupPage(on_done: Callback<UserInfo>) -> impl IntoView {
             match api::app_register(&u, &p).await {
                 Ok(resp) => {
                     api::store_token(&resp.token);
-                    on_done.call(resp.user);
+                    on_done.run(resp.user);
                 }
                 Err(e) => {
                     set_error.set(Some(e));
