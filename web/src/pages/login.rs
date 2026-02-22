@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 
-use leptos::*;
-use leptos_router::*;
+use leptos::either::Either;
+use leptos::prelude::*;
+use leptos::task::spawn_local;
+use leptos::ev;
+use leptos_router::hooks::*;
 
 use otvi_core::types::*;
 
@@ -12,30 +15,33 @@ use crate::api;
 pub fn LoginPage() -> impl IntoView {
     let params = use_params_map();
     let provider_id =
-        move || params.with(|p| p.get("provider_id").cloned().unwrap_or_default());
+        move || params.with(|p| p.get("provider_id").unwrap_or_default());
 
     // Fetch provider metadata (including auth flows)
-    let provider = create_local_resource(provider_id, |id| async move {
-        api::fetch_provider(&id).await
+    let provider = LocalResource::new(move || {
+        let id = provider_id();
+        async move {
+            api::fetch_provider(&id).await
+        }
     });
 
     // UI state
-    let (selected_flow_idx, set_selected_flow_idx) = create_signal(0usize);
-    let (inputs, set_inputs) = create_signal(HashMap::<String, String>::new());
-    let (error, set_error) = create_signal(Option::<String>::None);
-    let (loading, set_loading) = create_signal(false);
+    let (selected_flow_idx, set_selected_flow_idx) = signal(0usize);
+    let (inputs, set_inputs) = signal(HashMap::<String, String>::new());
+    let (error, set_error) = signal(Option::<String>::None);
+    let (loading, set_loading) = signal(false);
 
     // Multi-step state
-    let (session_id, set_session_id) = create_signal(Option::<String>::None);
-    let (current_step, set_current_step) = create_signal(0usize);
-    let (extra_fields, set_extra_fields) = create_signal(Vec::<FieldInfo>::new());
+    let (session_id, set_session_id) = signal(Option::<String>::None);
+    let (current_step, set_current_step) = signal(0usize);
+    let (extra_fields, set_extra_fields) = signal(Vec::<FieldInfo>::new());
 
     let navigate = use_navigate();
 
     // If the user already has an active provider session, skip to channels.
     {
         let navigate = navigate.clone();
-        create_effect(move |_| {
+        Effect::new(move |_| {
             let pid = provider_id();
             if pid.is_empty() {
                 return;
@@ -120,8 +126,8 @@ pub fn LoginPage() -> impl IntoView {
                             .get()
                             .map(|result| match result {
                                 Ok(info) => {
-                                    let info_stored = store_value(info.clone());
-                                    view! {
+                                    let info_stored = StoredValue::new(info.clone());
+                                    Either::Left(view! {
                                         <div class="bg-gray-900 rounded-lg p-8">
                                             <h2 class="text-center text-xl font-semibold mb-6">{format!("Sign in to {}", info.name)}</h2>
 
@@ -210,9 +216,9 @@ pub fn LoginPage() -> impl IntoView {
                                             </form>
                                         </div>
                                     }
-                                        .into_view()
+                                    )
                                 }
-                                Err(e) => view! { <div class="text-red-400 bg-red-400/10 px-4 py-3 rounded-lg my-4 text-sm">{e}</div> }.into_view(),
+                                Err(e) => Either::Right(view! { <div class="text-red-400 bg-red-400/10 px-4 py-3 rounded-lg my-4 text-sm">{e}</div> }),
                             })
                     }}
                 </Suspense>
@@ -231,7 +237,7 @@ fn render_field(
 
     view! {
         <div class="mb-4">
-            <label class="block mb-1.5 text-gray-400 text-sm">{&field.label}</label>
+            <label class="block mb-1.5 text-gray-400 text-sm">{field.label.clone()}</label>
             <input
                 type=field.field_type.clone()
                 required=field.required

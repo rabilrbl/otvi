@@ -1,11 +1,13 @@
-use leptos::*;
-use leptos_router::*;
+use leptos::prelude::*;
+use leptos::task::spawn_local;
+use leptos_router::components::*;
+use leptos_router::path;
 use otvi_core::types::{UserInfo, UserRole};
 
 use crate::api;
 use crate::pages::{
     app_login::AppLoginPage, channels::ChannelsPage, home::HomePage, login::LoginPage,
-    player::PlayerPage, setup::SetupPage,
+    not_found::NotFoundPage, player::PlayerPage, setup::SetupPage,
 };
 
 /// Shared auth context available to all child components.
@@ -48,14 +50,14 @@ enum BootState {
 #[component]
 pub fn App() -> impl IntoView {
     // ── Auth context ──────────────────────────────────────────────────────
-    let user: RwSignal<Option<UserInfo>> = create_rw_signal(None);
+    let user: RwSignal<Option<UserInfo>> = RwSignal::new(None);
     let auth_ctx = AuthCtx { user };
     provide_context(auth_ctx.clone());
 
     // ── Boot sequence ─────────────────────────────────────────────────────
-    let (boot_state, set_boot_state) = create_signal(BootState::Loading);
+    let (boot_state, set_boot_state) = signal(BootState::Loading);
 
-    create_effect(move |_| {
+    Effect::new(move |_| {
         spawn_local(async move {
             match api::boot_check().await {
                 api::AppBoot::Ready(info) => {
@@ -116,17 +118,11 @@ pub fn App() -> impl IntoView {
                     <span class="text-sm text-gray-400 hidden sm:inline">
                         {move || auth_ctx.username()}
                     </span>
-                    {move || {
-                        if auth_ctx.is_admin() {
-                            view! {
-                                <span class="text-xs bg-rose-500/20 text-rose-400 px-2 py-0.5 rounded-full hidden sm:inline">
-                                    "admin"
-                                </span>
-                            }.into_view()
-                        } else {
-                            ().into_view()
-                        }
-                    }}
+                    <Show when=move || auth_ctx.is_admin()>
+                        <span class="text-xs bg-rose-500/20 text-rose-400 px-2 py-0.5 rounded-full hidden sm:inline">
+                            "admin"
+                        </span>
+                    </Show>
                     <button
                         class="px-3 py-1.5 text-sm rounded-lg bg-gray-800 text-gray-300 hover:bg-gray-700 transition-colors cursor-pointer"
                         on:click=logout
@@ -136,11 +132,11 @@ pub fn App() -> impl IntoView {
                 </div>
             </nav>
             <main>
-                <Routes>
-                    <Route path="/" view=HomePage />
-                    <Route path="/login/:provider_id" view=LoginPage />
-                    <Route path="/providers/:provider_id/channels" view=ChannelsPage />
-                    <Route path="/providers/:provider_id/play/:channel_id" view=PlayerPage />
+                <Routes fallback=NotFoundPage>
+                    <Route path=path!("/") view=HomePage />
+                    <Route path=path!("/login/:provider_id") view=LoginPage />
+                    <Route path=path!("/providers/:provider_id/channels") view=ChannelsPage />
+                    <Route path=path!("/providers/:provider_id/play/:channel_id") view=PlayerPage />
                 </Routes>
             </main>
         </Router>

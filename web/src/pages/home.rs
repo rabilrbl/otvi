@@ -1,11 +1,12 @@
-use leptos::*;
+use leptos::either::{Either, EitherOf3};
+use leptos::prelude::*;
 
 use crate::api;
 
 /// Home page: lists all available TV providers.
 #[component]
 pub fn HomePage() -> impl IntoView {
-    let providers = create_local_resource(|| (), |_| async move { api::fetch_providers().await });
+    let providers = LocalResource::new(|| async { api::fetch_providers().await });
 
     view! {
         <div class="max-w-7xl mx-auto px-6 py-8">
@@ -17,15 +18,15 @@ pub fn HomePage() -> impl IntoView {
             <Suspense fallback=move || view! { <div class="text-center py-12 text-gray-400">"Loading providers…"</div> }>
                 {move || {
                     providers.get().map(|result| match result {
-                        Ok(list) if list.is_empty() => view! {
+                        Ok(list) if list.is_empty() => EitherOf3::A(view! {
                             <div class="text-center py-12 text-gray-400">
                                 "No providers configured. Add a YAML file to the "
                                 <code class="bg-gray-800 px-1.5 py-0.5 rounded text-sm">"providers/"</code>
                                 " directory."
                             </div>
-                        }.into_view(),
+                        }),
 
-                        Ok(list) => view! {
+                        Ok(list) => EitherOf3::B(view! {
                             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 mt-6">
                                 <For
                                     each=move || list.clone()
@@ -34,10 +35,10 @@ pub fn HomePage() -> impl IntoView {
                                         let pid = provider.id.clone();
                                         let pid2 = pid.clone();
                                         // Check provider session status asynchronously.
-                                        let session_status = create_local_resource(
-                                            move || pid2.clone(),
-                                            |id| async move { api::check_provider_session(&id).await },
-                                        );
+                                        let session_status = LocalResource::new(move || {
+                                            let id = pid2.clone();
+                                            async move { api::check_provider_session(&id).await }
+                                        });
                                         let flows_text = provider
                                             .auth_flows
                                             .iter()
@@ -62,12 +63,12 @@ pub fn HomePage() -> impl IntoView {
                                                 <div class="text-sm text-gray-400">{flows_text}</div>
                                                 {move || {
                                                     match session_status.get() {
-                                                        Some(true) => view! {
+                                                        Some(true) => Either::Left(view! {
                                                             <div class="text-sm text-emerald-400 mt-2 font-medium">"Signed in ✓"</div>
-                                                        }.into_view(),
-                                                        _ => view! {
+                                                        }),
+                                                        _ => Either::Right(view! {
                                                             <div class="text-sm text-gray-400 mt-2">"Sign in →"</div>
-                                                        }.into_view(),
+                                                        }),
                                                     }
                                                 }}
                                             </a>
@@ -75,13 +76,13 @@ pub fn HomePage() -> impl IntoView {
                                     }
                                 />
                             </div>
-                        }.into_view(),
+                        }),
 
-                        Err(_) => view! {
+                        Err(_) => EitherOf3::C(view! {
                             <div class="text-center py-16 text-gray-400">
                                 <p class="text-lg mb-2">"Could not load providers."</p>
                             </div>
-                        }.into_view(),
+                        }),
                     })
                 }}
             </Suspense>

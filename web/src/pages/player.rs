@@ -1,5 +1,6 @@
-use leptos::*;
-use leptos_router::*;
+use leptos::prelude::*;
+use leptos::task::spawn_local;
+use leptos_router::hooks::*;
 use wasm_bindgen::prelude::*;
 
 use otvi_core::types::StreamType;
@@ -25,15 +26,15 @@ extern "C" {
 pub fn PlayerPage() -> impl IntoView {
     let params = use_params_map();
     let provider_id =
-        move || params.with(|p| p.get("provider_id").cloned().unwrap_or_default());
+        move || params.with(|p| p.get("provider_id").unwrap_or_default());
     let channel_id =
-        move || params.with(|p| p.get("channel_id").cloned().unwrap_or_default());
+        move || params.with(|p| p.get("channel_id").unwrap_or_default());
 
-    let (error, set_error) = create_signal(Option::<String>::None);
-    let (channel_name, set_channel_name) = create_signal(String::new());
+    let (error, set_error) = signal(Option::<String>::None);
+    let (channel_name, set_channel_name) = signal(String::new());
 
     // Fetch stream and init player on mount
-    create_effect(move |_| {
+    Effect::new(move |_| {
         let pid = provider_id();
         let cid = channel_id();
         if pid.is_empty() || cid.is_empty() {
@@ -74,12 +75,12 @@ pub fn PlayerPage() -> impl IntoView {
     view! {
         <div class="max-w-7xl mx-auto px-6 py-8">
             <div class="max-w-[1100px] mx-auto">
-                <A
+                <a
                     href=move || format!("/providers/{}/channels", provider_id())
                     class="inline-flex items-center gap-1.5 mb-4 text-gray-400 text-sm hover:text-gray-200 transition-colors"
                 >
                     "← Back to channels"
-                </A>
+                </a>
 
                 <Show when=move || error.get().is_some()>
                     <div class="text-red-400 bg-red-400/10 px-4 py-3 rounded-lg my-4 text-sm">{move || error.get()}</div>

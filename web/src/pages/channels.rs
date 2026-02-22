@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
-use leptos::*;
-use leptos_router::*;
+use leptos::either::EitherOf3;
+use leptos::prelude::*;
+use leptos::task::spawn_local;
+use leptos_router::hooks::*;
 
 use crate::api;
 
@@ -9,15 +11,15 @@ use crate::api;
 #[component]
 pub fn ChannelsPage() -> impl IntoView {
     let params = use_params_map();
-    let provider_id = move || params.with(|p| p.get("provider_id").cloned().unwrap_or_default());
+    let provider_id = move || params.with(|p| p.get("provider_id").unwrap_or_default());
 
-    let (selected_category, set_selected_category) = create_signal(String::new());
+    let (selected_category, set_selected_category) = signal(String::new());
     let navigate = use_navigate();
 
     // Redirect to provider login if no authenticated provider session exists.
     {
         let navigate = navigate.clone();
-        create_effect(move |_| {
+        Effect::new(move |_| {
             let pid = provider_id();
             if pid.is_empty() {
                 return;
@@ -32,20 +34,21 @@ pub fn ChannelsPage() -> impl IntoView {
     }
 
     // Fetch channels whenever the selected category changes
-    let channels = create_local_resource(
-        move || (provider_id(), selected_category.get()),
-        |(pid, cat)| async move {
+    let channels = LocalResource::new(move || {
+        let (pid, cat) = (provider_id(), selected_category.get());
+        async move {
             let mut params = HashMap::new();
             if !cat.is_empty() {
                 params.insert("category".to_string(), cat);
             }
             api::fetch_channels(&pid, &params).await
-        },
-    );
+        }
+    });
 
     // Fetch categories once
-    let categories = create_local_resource(provider_id, |pid| async move {
-        api::fetch_categories(&pid).await.ok()
+    let categories = LocalResource::new(move || {
+        let pid = provider_id();
+        async move { api::fetch_categories(&pid).await.ok() }
     });
 
     // Logout handler
@@ -74,50 +77,49 @@ pub fn ChannelsPage() -> impl IntoView {
             <Suspense fallback=|| ()>
                 {move || {
                     categories.get().flatten().map(|cats| {
-                        if cats.categories.is_empty() {
-                            return view! { <div></div> }.into_view();
-                        }
+                        let cats = StoredValue::new(cats);
                         view! {
-                            <div class="flex gap-2 flex-wrap mb-4">
-                                <button
-                                    class=move || {
-                                        let base = "px-4 py-1.5 rounded-full text-sm cursor-pointer transition-all border";
-                                        if selected_category.get().is_empty() {
-                                            format!("{base} bg-rose-500 text-white border-rose-500")
-                                        } else {
-                                            format!("{base} bg-gray-900 text-gray-400 border-white/10 hover:bg-rose-500 hover:text-white hover:border-rose-500")
+                            <Show when=move || !cats.get_value().categories.is_empty()>
+                                <div class="flex gap-2 flex-wrap mb-4">
+                                    <button
+                                        class=move || {
+                                            let base = "px-4 py-1.5 rounded-full text-sm cursor-pointer transition-all border";
+                                            if selected_category.get().is_empty() {
+                                                format!("{base} bg-rose-500 text-white border-rose-500")
+                                            } else {
+                                                format!("{base} bg-gray-900 text-gray-400 border-white/10 hover:bg-rose-500 hover:text-white hover:border-rose-500")
+                                            }
                                         }
-                                    }
-                                    on:click=move |_| set_selected_category.set(String::new())
-                                >
-                                    "All"
-                                </button>
-                                <For
-                                    each=move || cats.categories.clone()
-                                    key=|c| c.id.clone()
-                                    children=move |cat| {
-                                        let cat_id = cat.id.clone();
-                                        let cat_id2 = cat.id.clone();
-                                        view! {
-                                            <button
-                                                class=move || {
-                                                    let base = "px-4 py-1.5 rounded-full text-sm cursor-pointer transition-all border";
-                                                    if selected_category.get() == cat_id {
-                                                        format!("{base} bg-rose-500 text-white border-rose-500")
-                                                    } else {
-                                                        format!("{base} bg-gray-900 text-gray-400 border-white/10 hover:bg-rose-500 hover:text-white hover:border-rose-500")
+                                        on:click=move |_| set_selected_category.set(String::new())
+                                    >
+                                        "All"
+                                    </button>
+                                    <For
+                                        each=move || cats.get_value().categories
+                                        key=|c| c.id.clone()
+                                        children=move |cat| {
+                                            let cat_id = cat.id.clone();
+                                            let cat_id2 = cat.id.clone();
+                                            view! {
+                                                <button
+                                                    class=move || {
+                                                        let base = "px-4 py-1.5 rounded-full text-sm cursor-pointer transition-all border";
+                                                        if selected_category.get() == cat_id {
+                                                            format!("{base} bg-rose-500 text-white border-rose-500")
+                                                        } else {
+                                                            format!("{base} bg-gray-900 text-gray-400 border-white/10 hover:bg-rose-500 hover:text-white hover:border-rose-500")
+                                                        }
                                                     }
-                                                }
-                                                on:click=move |_| set_selected_category
-                                                    .set(cat_id2.clone())
-                                            >
-                                                {&cat.name}
-                                            </button>
+                                                    on:click=move |_| set_selected_category.set(cat_id2.clone())
+                                                >
+                                                    {cat.name.clone()}
+                                                </button>
+                                            }
                                         }
-                                    }
-                                />
-                            </div>
-                        }.into_view()
+                                    />
+                                </div>
+                            </Show>
+                        }
                     })
                 }}
             </Suspense>
@@ -129,10 +131,10 @@ pub fn ChannelsPage() -> impl IntoView {
                     let navigate = navigate.clone();
                     channels.get().map(|result| match result {
                         Ok(data) if data.channels.is_empty() => {
-                            view! { <div class="text-center py-12 text-gray-400">"No channels found."</div> }.into_view()
+                            EitherOf3::A(view! { <div class="text-center py-12 text-gray-400">"No channels found."</div> })
                         }
                         Ok(data) => {
-                            view! {
+                            EitherOf3::B(view! {
                                 <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 mt-4">
                                     <For
                                         each=move || data.channels.clone()
@@ -159,7 +161,7 @@ pub fn ChannelsPage() -> impl IntoView {
                                                         .map(|url| {
                                                             view! { <img class="w-18 h-18 object-contain rounded mx-auto mb-2" src=url alt="logo" /> }
                                                         })}
-                                                    <div class="font-medium text-sm">{&channel.name}</div>
+                                                    <div class="font-medium text-sm">{channel.name.clone()}</div>
                                                     {channel
                                                         .number
                                                         .clone()
@@ -177,13 +179,13 @@ pub fn ChannelsPage() -> impl IntoView {
                                         }
                                     />
                                 </div>
-                            }.into_view()
+                            })
                         }
                         Err(e) => {
                             // Redirect to login if provider session is invalid
                             let navigate = navigate.clone();
                             navigate(&format!("/login/{pid}"), Default::default());
-                            view! { <div class="text-red-400 bg-red-400/10 px-4 py-3 rounded-lg my-4 text-sm">{e}</div> }.into_view()
+                            EitherOf3::C(view! { <div class="text-red-400 bg-red-400/10 px-4 py-3 rounded-lg my-4 text-sm">{e}</div> })
                         },
                     })
                 }}
