@@ -96,7 +96,7 @@ impl AppState {
                 continue;
             }
             let content = std::fs::read_to_string(&path)?;
-            match serde_yaml::from_str::<ProviderConfig>(&content) {
+            match serde_yaml_ng::from_str::<ProviderConfig>(&content) {
                 Ok(config) => {
                     tracing::info!(
                         "Loaded provider '{}' from {}",
