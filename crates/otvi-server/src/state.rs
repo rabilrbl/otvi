@@ -33,6 +33,10 @@ pub struct ProxyContext {
     pub manifest_query: Option<String>,
     /// Mirror of `PlaybackEndpoint::append_manifest_query_to_key_uris`.
     pub append_manifest_query_to_key_uris: bool,
+    /// Mirror of `PlaybackEndpoint::key_exclude_resolved_cookies`.
+    /// When true, URL-param-extracted cookies (`resolved_cookies`) are not
+    /// forwarded on AES-128 key file requests.
+    pub key_exclude_resolved_cookies: bool,
 }
 
 fn build_http_client() -> reqwest::Client {

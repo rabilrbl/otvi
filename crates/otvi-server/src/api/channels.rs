@@ -9,6 +9,8 @@ use otvi_core::config::AuthScope;
 use otvi_core::template::extract_json_path;
 use otvi_core::types::*;
 
+use tracing::error;
+
 use crate::auth_middleware::Claims;
 use crate::error::AppError;
 use crate::provider_client;
@@ -53,7 +55,15 @@ pub async fn list(
     .await
     .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let channels = map_channels(&response, &provider.channels.list.response)?;
+    let mut channels = map_channels(&response, &provider.channels.list.response)?;
+
+    // If a category filter was requested, apply it locally (the upstream API
+    // may not support server-side filtering by category).
+    if let Some(cat) = params.get("category") {
+        if !cat.is_empty() {
+            channels.retain(|ch| ch.category.as_deref() == Some(cat.as_str()));
+        }
+    }
 
     Ok(Json(ChannelListResponse { channels }))
 }
@@ -68,6 +78,21 @@ pub async fn categories(
         .providers
         .get(&provider_id)
         .ok_or_else(|| AppError::NotFound("Provider not found".into()))?;
+
+    // If the provider defines static categories inline, return them directly
+    // without making a network request.
+    if !provider.channels.static_categories.is_empty() {
+        let categories = provider
+            .channels
+            .static_categories
+            .iter()
+            .map(|c| Category {
+                id: c.id.clone(),
+                name: c.name.clone(),
+            })
+            .collect();
+        return Ok(Json(CategoryListResponse { categories }));
+    }
 
     let cat_endpoint = provider
         .channels
@@ -116,11 +141,17 @@ pub async fn stream(
         &context,
     )
     .await
-    .map_err(|e| AppError::Internal(e.to_string()))?;
+    .map_err(|e| {
+        error!(channel_id = %channel_id, provider = %provider_id, "Playback API error: {e}");
+        AppError::Internal(e.to_string())
+    })?;
 
     // Extract stream URL
     let stream_url = extract_json_path(&response, &provider.playback.stream.response.url)
-        .ok_or_else(|| AppError::Internal("Stream URL not found in response".into()))?;
+        .ok_or_else(|| {
+            error!(channel_id = %channel_id, provider = %provider_id, url_path = %provider.playback.stream.response.url, response = %response, "Stream URL not found in response");
+            AppError::Internal("Stream URL not found in response".into())
+        })?;
 
     // Extract stream type: if the value doesn't start with '$.' treat it as a
     // literal (e.g. "hls"), otherwise extract from the response JSON.
@@ -195,6 +226,7 @@ pub async fn stream(
                     .playback
                     .stream
                     .append_manifest_query_to_key_uris,
+                key_exclude_resolved_cookies: provider.playback.stream.key_exclude_resolved_cookies,
             };
             let token = uuid::Uuid::new_v4().to_string();
             state.proxy_ctx.write().unwrap().insert(token.clone(), ctx);

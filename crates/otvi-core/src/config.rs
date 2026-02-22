@@ -169,11 +169,22 @@ pub struct RefreshConfig {
 
 // ── Channels ────────────────────────────────────────────────────────────────
 
+/// A statically-defined category (used when the provider has no categories API).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StaticCategory {
+    pub id: String,
+    pub name: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelsConfig {
     pub list: ApiEndpoint,
     #[serde(default)]
     pub categories: Option<ApiEndpoint>,
+    /// Inline static category list, used when the provider does not expose a
+    /// categories API endpoint (e.g. categories are embedded in channel data).
+    #[serde(default)]
+    pub static_categories: Vec<StaticCategory>,
 }
 
 /// Generic API endpoint with request and response-mapping information.
@@ -255,6 +266,17 @@ pub struct PlaybackEndpoint {
     /// encryption-key requests.
     #[serde(default)]
     pub append_manifest_query_to_key_uris: bool,
+    /// When `true`, URL-param-extracted cookies (i.e. `resolved_cookies`
+    /// populated from the manifest URL's query string via `proxy_url_cookies`)
+    /// are **not** forwarded on AES-128 key requests.
+    ///
+    /// Set this when the key server lives on a different domain from the
+    /// segment CDN and does not accept (or actively rejects) the CDN auth
+    /// token (e.g. Akamai `__hdnea__` with an ACL that covers only the CDN
+    /// path, not the key-server path).  Static cookies from `proxy_cookies`
+    /// are still forwarded; only URL-extracted tokens are suppressed.
+    #[serde(default)]
+    pub key_exclude_resolved_cookies: bool,
 }
 
 /// Describes how to extract stream URL, type and optional DRM information from

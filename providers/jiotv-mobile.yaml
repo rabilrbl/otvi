@@ -169,13 +169,21 @@ channels:
         category: "$.channelCategoryId"
         number: "$.channel_id"
 
-  # JioTV doesn't have a separate categories API; categories are IDs embedded
-  # in the channel objects.  We define static well-known categories here via
-  # a comment for reference (the server doesn't call this endpoint):
-  #
-  #  1: Entertainment   2: Movies   3: Sports    4: Lifestyle
-  #  5: Infotainment    6: News     7: Music     8: Devotional
-  #  9: Business       10: Kids    12: Educational
+  # JioTV embeds category IDs in channel objects (`channelCategoryId`).
+  # There is no separate categories API, so we define them statically here.
+  static_categories:
+    - { id: "5", name: "Entertainment" }
+    - { id: "6", name: "Movies" }
+    - { id: "7", name: "Kids" }
+    - { id: "8", name: "Sports" }
+    - { id: "9", name: "Lifestyle & Travel" }
+    - { id: "10", name: "Infotainment" }
+    - { id: "12", name: "News" }
+    - { id: "13", name: "Music" }
+    - { id: "15", name: "Devotion" }
+    - { id: "16", name: "Business News" }
+    - { id: "17", name: "Educational" }
+    - { id: "18", name: "Shopping" }
 
 # ── Stream Playback ─────────────────────────────────────────────────────────
 
@@ -200,7 +208,9 @@ playback:
         usergroup: "tvYR7NSNn7rymo3F"
         versionCode: "389"
         accessToken: "{{stored.access_token}}"
-      body: "channel_id={{input.channel_id}}&stream_type=Seek"
+      # begin = current UTC timestamp (JioTV-Go: GenerateCurrentTime → "YYYYMMDDTHHMMSS")
+      # srno  = current UTC date      (JioTV-Go: GenerateDate          → "YYYYMMDD")
+      body: "channel_id={{input.channel_id}}&stream_type=Seek&begin={{utcnow}}&srno={{utcdate}}"
       body_encoding: "form"
     response:
       # HLS manifest URL
@@ -231,14 +241,22 @@ playback:
       versionCode: "389"
       # srno (serial number) forwarded by JioTV-Go's RenderKeyHandler
       srno: "230203144000"
+      # channelId required by tv.media.jio.com for .pkey AES-128 key requests
+      # (JioTV-Go's RenderKeyHandler sets c.Request().Header.Set("channelId", channel_id))
+      channelId: "{{input.channel_id}}"
     # URL query-params in the stream URL that should be forwarded as cookies.
     # JioTV's Akamai CDN embeds the token as `__hdnea__=…` in the manifest URL
     # and authenticates segment / .pkey requests via the `__hdnea__` cookie.
     proxy_url_cookies:
       __hdnea__: "__hdnea__"
-    # Append the manifest URL query string to EXT-X-KEY URIs before fetching.
-    # Required when the upstream CDN authenticates key requests via URL params.
-    append_manifest_query_to_key_uris: true
+    # The manifest URL's query string (including __hdnea__) is NOT appended to
+    # EXT-X-KEY URI lines; the resolved __hdnea__ cookie is sent via the Cookie
+    # header instead (same as JioTV-Go behaviour — key server accepts it).
+    append_manifest_query_to_key_uris: false
+    # Allow the resolved __hdnea__ cookie to be forwarded to key requests.
+    # Empirically the key server (tv.media.jio.com) requires it even though its
+    # path (/fallback/bpk-tv/…) doesn't match the CDN ACL (/bpk-tv/…).
+    key_exclude_resolved_cookies: false
     # Static cookies forwarded on every upstream proxy request.
     proxy_cookies:
       ssotoken: "{{stored.sso_token}}"

@@ -9,8 +9,7 @@ use crate::api;
 #[component]
 pub fn ChannelsPage() -> impl IntoView {
     let params = use_params_map();
-    let provider_id =
-        move || params.with(|p| p.get("provider_id").cloned().unwrap_or_default());
+    let provider_id = move || params.with(|p| p.get("provider_id").cloned().unwrap_or_default());
 
     let (selected_category, set_selected_category) = create_signal(String::new());
     let navigate = use_navigate();
@@ -81,9 +80,14 @@ pub fn ChannelsPage() -> impl IntoView {
                         view! {
                             <div class="flex gap-2 flex-wrap mb-4">
                                 <button
-                                    class="px-4 py-1.5 rounded-full text-sm cursor-pointer transition-all border"
-                                    class=("bg-rose-500 text-white border-rose-500", move || selected_category.get().is_empty())
-                                    class=("bg-gray-900 text-gray-400 border-white/10 hover:bg-rose-500 hover:text-white hover:border-rose-500", move || !selected_category.get().is_empty())
+                                    class=move || {
+                                        let base = "px-4 py-1.5 rounded-full text-sm cursor-pointer transition-all border";
+                                        if selected_category.get().is_empty() {
+                                            format!("{base} bg-rose-500 text-white border-rose-500")
+                                        } else {
+                                            format!("{base} bg-gray-900 text-gray-400 border-white/10 hover:bg-rose-500 hover:text-white hover:border-rose-500")
+                                        }
+                                    }
                                     on:click=move |_| set_selected_category.set(String::new())
                                 >
                                     "All"
@@ -94,12 +98,16 @@ pub fn ChannelsPage() -> impl IntoView {
                                     children=move |cat| {
                                         let cat_id = cat.id.clone();
                                         let cat_id2 = cat.id.clone();
-                                        let cat_id3 = cat.id.clone();
                                         view! {
                                             <button
-                                                class="px-4 py-1.5 rounded-full text-sm cursor-pointer transition-all border"
-                                                class=("bg-rose-500 text-white border-rose-500", move || selected_category.get() == cat_id)
-                                                class=("bg-gray-900 text-gray-400 border-white/10 hover:bg-rose-500 hover:text-white hover:border-rose-500", move || selected_category.get() != cat_id3)
+                                                class=move || {
+                                                    let base = "px-4 py-1.5 rounded-full text-sm cursor-pointer transition-all border";
+                                                    if selected_category.get() == cat_id {
+                                                        format!("{base} bg-rose-500 text-white border-rose-500")
+                                                    } else {
+                                                        format!("{base} bg-gray-900 text-gray-400 border-white/10 hover:bg-rose-500 hover:text-white hover:border-rose-500")
+                                                    }
+                                                }
                                                 on:click=move |_| set_selected_category
                                                     .set(cat_id2.clone())
                                             >

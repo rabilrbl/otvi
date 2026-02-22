@@ -19,6 +19,7 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path, State};
+use chrono::Utc;
 use uuid::Uuid;
 
 use otvi_core::config::AuthScope;
@@ -119,6 +120,9 @@ pub async fn login(
         context.set(k.clone(), v.clone());
     }
     context.set("uuid", Uuid::new_v4().to_string());
+    let now = Utc::now();
+    context.set("utcnow", now.format("%Y%m%dT%H%M%S").to_string());
+    context.set("utcdate", now.format("%Y%m%d").to_string());
     let device_id = stored
         .get("device_id")
         .cloned()
@@ -304,5 +308,11 @@ pub async fn build_provider_context(
         context.set(format!("stored.{k}"), v.clone());
     }
     context.set("uuid", uuid::Uuid::new_v4().to_string());
+    // Dynamic time helpers (same formats used by JioTV-Go's GenerateCurrentTime / GenerateDate).
+    // {{utcnow}} → YYYYMMDDTHHMMSS in UTC (JioTV `begin` param)
+    // {{utcdate}} → YYYYMMDD in UTC (JioTV `srno` param)
+    let now = chrono::Utc::now();
+    context.set("utcnow", now.format("%Y%m%dT%H%M%S").to_string());
+    context.set("utcdate", now.format("%Y%m%d").to_string());
     Ok(context)
 }

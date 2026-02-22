@@ -58,6 +58,11 @@ pub async fn proxy_stream(
     for (k, v) in &ctx.headers {
         req = req.header(k.as_str(), v.as_str());
     }
+    // Log proxy request headers for key file requests to aid debugging.
+    let is_key_url = upstream_url.contains(".pkey") || upstream_url.contains(".key");
+    if is_key_url {
+        debug!(url = %upstream_url, headers = ?ctx.headers, "proxy key request headers");
+    }
     // Fall back to a generic UA only when none was supplied
     if !ctx.headers.keys().any(|k| k.to_lowercase() == "user-agent") {
         req = req.header("User-Agent", "Mozilla/5.0");
@@ -81,17 +86,26 @@ pub async fn proxy_stream(
 
         let mut cookie_pairs: Vec<String> = Vec::new();
 
-        // Source 1 – params in the current URL (freshest value wins)
-        for (param, cookie_name) in &ctx.url_param_cookies {
-            if let Some(val) = query_map.get(param.as_str()) {
-                cookie_pairs.push(format!("{cookie_name}={val}"));
+        // When `key_exclude_resolved_cookies` is set, skip URL-param-extracted
+        // cookies (sources 1 & 2) for key requests.  This prevents CDN auth
+        // tokens (e.g. Akamai `__hdnea__`) whose ACL covers only the segment
+        // CDN path from being sent to a separate key server on a different
+        // domain/path — which would cause a 403 from the CDN firewall.
+        let skip_url_cookies = is_key_url && ctx.key_exclude_resolved_cookies;
+
+        if !skip_url_cookies {
+            // Source 1 – params in the current URL (freshest value wins)
+            for (param, cookie_name) in &ctx.url_param_cookies {
+                if let Some(val) = query_map.get(param.as_str()) {
+                    cookie_pairs.push(format!("{cookie_name}={val}"));
+                }
             }
-        }
-        // Source 2 – persisted values from a prior manifest fetch (fill gaps)
-        for (cookie_name, val) in &ctx.resolved_cookies {
-            let already = cookie_pairs.iter().any(|p| p.starts_with(&format!("{cookie_name}=")));
-            if !already {
-                cookie_pairs.push(format!("{cookie_name}={val}"));
+            // Source 2 – persisted values from a prior manifest fetch (fill gaps)
+            for (cookie_name, val) in &ctx.resolved_cookies {
+                let already = cookie_pairs.iter().any(|p| p.starts_with(&format!("{cookie_name}=")));
+                if !already {
+                    cookie_pairs.push(format!("{cookie_name}={val}"));
+                }
             }
         }
         // Source 3 – static cookies from provider YAML `proxy_cookies` field
