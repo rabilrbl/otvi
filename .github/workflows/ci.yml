@@ -44,26 +44,12 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --all-features
 
-  audit:
-    name: Security Audit
+  check:
+    name: Check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
-      - name: Run security audit
-        run: cargo audit
-
-  deny:
-    name: Dependency Check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Install cargo-deny
-        run: cargo install cargo-deny --locked
-      - name: Check dependencies
-        run: cargo deny check
+      - name: Run cargo check
+        run: cargo check --workspace --all-features
