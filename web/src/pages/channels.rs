@@ -15,14 +15,20 @@ pub fn ChannelsPage() -> impl IntoView {
     let (selected_category, set_selected_category) = create_signal(String::new());
     let navigate = use_navigate();
 
-    // Redirect to login if no session token exists
+    // Redirect to provider login if no authenticated provider session exists.
     {
         let navigate = navigate.clone();
         create_effect(move |_| {
             let pid = provider_id();
-            if !pid.is_empty() && api::get_session(&pid).is_none() {
-                navigate(&format!("/login/{pid}"), Default::default());
+            if pid.is_empty() {
+                return;
             }
+            let nav = navigate.clone();
+            spawn_local(async move {
+                if !api::check_provider_session(&pid).await {
+                    nav(&format!("/login/{pid}"), Default::default());
+                }
+            });
         });
     }
 
@@ -50,7 +56,7 @@ pub fn ChannelsPage() -> impl IntoView {
         let pid = pid_for_logout();
         let nav = nav_for_logout.clone();
         spawn_local(async move {
-            let _ = api::logout(&pid).await;
+            let _ = api::provider_logout(&pid).await;
             nav("/", Default::default());
         });
     };
@@ -166,12 +172,9 @@ pub fn ChannelsPage() -> impl IntoView {
                             }.into_view()
                         }
                         Err(e) => {
-                            // Redirect to login if session is invalid
-                            if e.contains("Not logged in") || e.contains("401") || e.contains("Unauthorized") {
-                                api::clear_session(&pid);
-                                let navigate = navigate.clone();
-                                navigate(&format!("/login/{pid}"), Default::default());
-                            }
+                            // Redirect to login if provider session is invalid
+                            let navigate = navigate.clone();
+                            navigate(&format!("/login/{pid}"), Default::default());
                             view! { <div class="text-red-400 bg-red-400/10 px-4 py-3 rounded-lg my-4 text-sm">{e}</div> }.into_view()
                         },
                     })

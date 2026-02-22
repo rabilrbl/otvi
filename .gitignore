@@ -2,3 +2,10 @@
 sessions.json
 dist/
 node_modules/
+
+# Environment / secrets – keep .env.example but not .env itself
+.env
+.env.local
+
+# SQLite database file created at runtime
+data.db

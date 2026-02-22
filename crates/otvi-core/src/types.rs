@@ -117,3 +117,66 @@ pub struct DrmInfo {
     #[serde(default)]
     pub headers: HashMap<String, String>,
 }
+
+// ── OTVI user account (application-level auth, independent of providers) ────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UserRole {
+    Admin,
+    User,
+}
+
+/// Information about the currently authenticated OTVI user.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct UserInfo {
+    pub id: String,
+    pub username: String,
+    pub role: UserRole,
+    /// Provider IDs this user has access to.
+    pub providers: Vec<String>,
+}
+
+// ── OTVI app-level register / login / logout ─────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegisterRequest {
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppLoginRequest {
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppLoginResponse {
+    pub token: String,
+    pub user: UserInfo,
+}
+
+// ── Admin: user management ────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateUserRequest {
+    pub username: String,
+    pub password: String,
+    pub role: UserRole,
+    /// Provider IDs to grant access to (empty = all providers).
+    #[serde(default)]
+    pub providers: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateUserProvidersRequest {
+    pub providers: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerSettings {
+    /// When `true`, the public `/api/auth/register` endpoint is disabled;
+    /// only admins can create new accounts via `/api/admin/users`.
+    pub signup_disabled: bool,
+}

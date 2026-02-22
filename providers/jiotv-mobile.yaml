@@ -38,6 +38,7 @@ defaults:
 # ── Authentication ──────────────────────────────────────────────────────────
 
 auth:
+  scope: "per_user"
   flows:
     - id: "phone_otp"
       name: "Jio Phone Number"

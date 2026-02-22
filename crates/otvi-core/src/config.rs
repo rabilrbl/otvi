@@ -43,8 +43,27 @@ pub struct RequestDefaults {
 
 // ── Auth ────────────────────────────────────────────────────────────────────
 
+/// Controls who manages the provider's authentication credentials.
+///
+/// - `global`   – An admin logs in once; every authenticated user of this
+///                OTVI instance shares those provider credentials.
+/// - `per_user` – Every OTVI user supplies their own provider credentials.
+///                Each user has an independent provider session.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthScope {
+    /// Admin supplies credentials once; shared across all users.
+    Global,
+    /// Each user must log in with their own provider credentials.
+    #[default]
+    PerUser,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthConfig {
+    /// Who manages credentials for this provider (default: `per_user`).
+    #[serde(default)]
+    pub scope: AuthScope,
     pub flows: Vec<AuthFlow>,
     #[serde(default)]
     pub logout: Option<ApiCall>,

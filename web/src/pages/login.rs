@@ -32,19 +32,20 @@ pub fn LoginPage() -> impl IntoView {
 
     let navigate = use_navigate();
 
-    // If already logged in, redirect straight to channels
+    // If the user already has an active provider session, skip to channels.
     {
         let navigate = navigate.clone();
         create_effect(move |_| {
             let pid = provider_id();
-            if !pid.is_empty() && api::get_session(&pid).is_some() {
-                let nav = navigate.clone();
-                spawn_local(async move {
-                    if api::check_session(&pid).await {
-                        nav(&format!("/providers/{pid}/channels"), Default::default());
-                    }
-                });
+            if pid.is_empty() {
+                return;
             }
+            let nav = navigate.clone();
+            spawn_local(async move {
+                if api::check_provider_session(&pid).await {
+                    nav(&format!("/providers/{pid}/channels"), Default::default());
+                }
+            });
         });
     }
 
@@ -90,9 +91,7 @@ pub fn LoginPage() -> impl IntoView {
             match api::login(&pid, &req).await {
                 Ok(resp) => {
                     if resp.success {
-                        if let Some(sid) = &resp.session_id {
-                            api::store_session(&pid, sid);
-                        }
+                        // Session is now stored server-side via JWT sub.
                         navigate(
                             &format!("/providers/{pid}/channels"),
                             Default::default(),

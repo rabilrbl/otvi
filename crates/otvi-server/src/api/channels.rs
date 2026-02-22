@@ -2,33 +2,42 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::extract::{Path, Query, State};
-use axum::http::HeaderMap;
 use axum::Json;
 use serde_json::Value;
 
+use otvi_core::config::AuthScope;
 use otvi_core::template::extract_json_path;
 use otvi_core::types::*;
 
+use crate::auth_middleware::Claims;
 use crate::error::AppError;
 use crate::provider_client;
 use crate::state::AppState;
 
-use super::auth::{build_context, extract_session};
+use super::auth::build_provider_context;
+
+/// Resolve the provider-session user ID based on the provider's auth scope.
+fn session_uid(scope: &AuthScope, claims: &Claims) -> String {
+    match scope {
+        AuthScope::Global => String::new(),
+        AuthScope::PerUser => claims.sub.clone(),
+    }
+}
 
 /// `GET /api/providers/:id/channels`
 pub async fn list(
     State(state): State<Arc<AppState>>,
     Path(provider_id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
-    headers: HeaderMap,
+    claims: Claims,
 ) -> Result<Json<ChannelListResponse>, AppError> {
-    let session_id = extract_session(&headers)?;
     let provider = state
         .providers
         .get(&provider_id)
         .ok_or_else(|| AppError::NotFound("Provider not found".into()))?;
 
-    let mut context = build_context(&state, &session_id)?;
+    let uid = session_uid(&provider.auth.scope, &claims);
+    let mut context = build_provider_context(&state, &uid, &provider_id).await?;
     // Forward query params as input.* variables
     for (k, v) in &params {
         context.set(format!("input.{k}"), v.clone());
@@ -53,9 +62,8 @@ pub async fn list(
 pub async fn categories(
     State(state): State<Arc<AppState>>,
     Path(provider_id): Path<String>,
-    headers: HeaderMap,
+    claims: Claims,
 ) -> Result<Json<CategoryListResponse>, AppError> {
-    let session_id = extract_session(&headers)?;
     let provider = state
         .providers
         .get(&provider_id)
@@ -67,7 +75,8 @@ pub async fn categories(
         .as_ref()
         .ok_or_else(|| AppError::NotFound("Categories not configured".into()))?;
 
-    let context = build_context(&state, &session_id)?;
+    let uid = session_uid(&provider.auth.scope, &claims);
+    let context = build_provider_context(&state, &uid, &provider_id).await?;
 
     let response = provider_client::execute_request_body(
         &state.http_client,
@@ -88,15 +97,15 @@ pub async fn categories(
 pub async fn stream(
     State(state): State<Arc<AppState>>,
     Path((provider_id, channel_id)): Path<(String, String)>,
-    headers: HeaderMap,
+    claims: Claims,
 ) -> Result<Json<StreamInfo>, AppError> {
-    let session_id = extract_session(&headers)?;
     let provider = state
         .providers
         .get(&provider_id)
         .ok_or_else(|| AppError::NotFound("Provider not found".into()))?;
 
-    let mut context = build_context(&state, &session_id)?;
+    let uid = session_uid(&provider.auth.scope, &claims);
+    let mut context = build_provider_context(&state, &uid, &provider_id).await?;
     context.set("input.channel_id", &channel_id);
 
     let response = provider_client::execute_request_body(

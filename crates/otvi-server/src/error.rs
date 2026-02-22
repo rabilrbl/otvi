@@ -6,6 +6,7 @@ pub enum AppError {
     NotFound(String),
     BadRequest(String),
     Unauthorized,
+    Forbidden(String),
     Internal(String),
 }
 
@@ -15,6 +16,7 @@ impl IntoResponse for AppError {
             Self::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
             Self::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
             Self::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized".to_string()),
+            Self::Forbidden(msg) => (StatusCode::FORBIDDEN, msg),
             Self::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
         };
         let body = serde_json::json!({ "error": message });
