@@ -12,7 +12,7 @@ serde_yaml = "0.9"
 
 axum = { version = "0.7", features = ["macros"] }
 tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "cookies"] }
 tower-http = { version = "0.5", features = ["cors", "fs"] }
 uuid = { version = "1", features = ["v4"] }
 tracing = "0.1"

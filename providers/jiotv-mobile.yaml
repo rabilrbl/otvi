@@ -26,7 +26,7 @@
 provider:
   name: "JioTV"
   id: "jiotv-mobile"
-  logo: "https://jiotv.catchup.cdn.jio.com/dare_images/images/channel_logo_android-tv.png"
+  logo: "https://www.jiotv.com/favicon.ico"
 
 defaults:
   base_url: ""
@@ -203,3 +203,42 @@ playback:
       url: "$.bitrates.auto"
       # JioTV always serves HLS (m3u8)
       type: "hls"
+    # Headers forwarded by the proxy when fetching manifest segments / keys.
+    # Derived from JioTV-Go: RenderHandler uses tv.Headers (okhttp UA) for the
+    # master manifest, while RenderTSHandler / RenderKeyHandler use the ExoPlayer
+    # UA for segments and encryption keys.  The CDN validates accessToken,
+    # ssotoken and subscriber identity on every request.
+    proxy_headers:
+      # ExoPlayer UA is required for segment / key requests (JioTV CDN rejects okhttp for those)
+      User-Agent: "plaYtv/7.1.7 (Linux;Android 8.1.0) ExoPlayerLib/2.11.7"
+      os: "android"
+      devicetype: "phone"
+      osVersion: "13"
+      # Auth tokens validated by the JioTV CDN on manifest + segment requests
+      accessToken: "{{stored.access_token}}"
+      ssotoken: "{{stored.sso_token}}"
+      # Subscriber identity headers
+      crmid: "{{stored.crm}}"
+      subscriberId: "{{stored.crm}}"
+      uniqueId: "{{stored.unique_id}}"
+      # Additional headers copied from SetCommonJioTVHeaders in JioTV-Go
+      lbcookie: "1"
+      usergroup: "tvYR7NSNn7rymo3F"
+      versionCode: "389"
+      # srno (serial number) forwarded by JioTV-Go's RenderKeyHandler
+      srno: "230203144000"
+    # URL query-params in the stream URL that should be forwarded as cookies.
+    # JioTV's Akamai CDN embeds the token as `__hdnea__=…` in the manifest URL
+    # and authenticates segment / .pkey requests via the `__hdnea__` cookie.
+    proxy_url_cookies:
+      __hdnea__: "__hdnea__"
+    # Append the manifest URL query string to EXT-X-KEY URIs before fetching.
+    # Required when the upstream CDN authenticates key requests via URL params.
+    append_manifest_query_to_key_uris: true
+    # Static cookies forwarded on every upstream proxy request.
+    proxy_cookies:
+      ssotoken: "{{stored.sso_token}}"
+      crmid: "{{stored.crm}}"
+      subscriberId: "{{stored.crm}}"
+      uniqueId: "{{stored.unique_id}}"
+      accessToken: "{{stored.access_token}}"

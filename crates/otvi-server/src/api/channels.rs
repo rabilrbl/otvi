@@ -150,11 +150,47 @@ pub async fn stream(
         None
     };
 
-    // Proxy the stream URL through our backend to avoid CORS issues
-    let proxied_url = format!(
-        "/api/proxy?url={}",
-        urlencoding::encode(&stream_url)
-    );
+    // Proxy the stream URL through our backend to avoid CORS issues.
+    // Build a ProxyContext with resolved headers and URL-param→cookie mappings,
+    // store it server-side under an opaque UUID, and embed only the token.
+    let proxied_url = {
+        let resolved_headers: HashMap<String, String> = provider
+            .playback
+            .stream
+            .proxy_headers
+            .iter()
+            .map(|(k, v)| (k.clone(), context.resolve(v)))
+            .collect();
+        // url_param_cookies are param/cookie names — no template resolution needed.
+        let url_param_cookies = provider.playback.stream.proxy_url_cookies.clone();
+        // proxy_cookies have template vars that need resolving (same as proxy_headers).
+        let static_cookies: HashMap<String, String> = provider
+            .playback
+            .stream
+            .proxy_cookies
+            .iter()
+            .map(|(k, v)| (k.clone(), context.resolve(v)))
+            .collect();
+
+        let needs_ctx = !resolved_headers.is_empty() || !url_param_cookies.is_empty() || !static_cookies.is_empty()
+            || provider.playback.stream.append_manifest_query_to_key_uris;
+        let base = format!("/api/proxy?url={}", urlencoding::encode(&stream_url));
+        if needs_ctx {
+            let ctx = crate::state::ProxyContext {
+                headers: resolved_headers,
+                url_param_cookies,
+                resolved_cookies: Default::default(),
+                static_cookies,
+                manifest_query: None,
+                append_manifest_query_to_key_uris: provider.playback.stream.append_manifest_query_to_key_uris,
+            };
+            let token = uuid::Uuid::new_v4().to_string();
+            state.proxy_ctx.write().unwrap().insert(token.clone(), ctx);
+            format!("{base}&ctx={token}")
+        } else {
+            base
+        }
+    };
 
     Ok(Json(StreamInfo {
         url: proxied_url,

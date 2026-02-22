@@ -187,6 +187,48 @@ pub struct PlaybackConfig {
 pub struct PlaybackEndpoint {
     pub request: RequestSpec,
     pub response: PlaybackResponse,
+    /// Extra HTTP headers forwarded by the proxy when fetching stream segments
+    /// and manifests on behalf of the browser.  Supports the same
+    /// `{{stored.*}}` / `{{input.*}}` template variables as request specs.
+    #[serde(default)]
+    pub proxy_headers: HashMap<String, String>,
+    /// Maps a URL query-parameter name in the upstream stream URL to a cookie
+    /// name that the proxy should send on every sub-request (segments, keys…).
+    ///
+    /// Some CDNs (e.g. Akamai) embed auth tokens as URL query params in the
+    /// manifest URL but authenticate segment/key requests via a cookie.  List
+    /// them here so the proxy forwards them correctly.
+    ///
+    /// Example (JioTV / Akamai `hdnea`):
+    /// ```yaml
+    /// proxy_url_cookies:
+    ///   hdnea: "__hdnea__"
+    /// ```
+    #[serde(default)]
+    pub proxy_url_cookies: HashMap<String, String>,
+    /// Static cookie values sent verbatim on every upstream proxy request.
+    /// Supports the same `{{stored.*}}` template variables as `proxy_headers`.
+    ///
+    /// Use this when the upstream CDN or origin authenticates requests via
+    /// HTTP cookies rather than (or in addition to) request headers.
+    ///
+    /// Example (JioTV key-file auth via user tokens):
+    /// ```yaml
+    /// proxy_cookies:
+    ///   ssotoken: "{{stored.sso_token}}"
+    ///   crmid: "{{stored.crm}}"
+    /// ```
+    #[serde(default)]
+    pub proxy_cookies: HashMap<String, String>,
+    /// When `true`, the raw query string from the first manifest URL that
+    /// carries query params is appended to every `EXT-X-KEY` URI before
+    /// the proxy fetches the key file from upstream.
+    ///
+    /// Set this when the upstream CDN requires the same auth token that
+    /// appears in the manifest URL to also be present as a query param on
+    /// encryption-key requests.
+    #[serde(default)]
+    pub append_manifest_query_to_key_uris: bool,
 }
 
 /// Describes how to extract stream URL, type and optional DRM information from

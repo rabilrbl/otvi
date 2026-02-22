@@ -2,6 +2,42 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::RwLock;
 
+/// Server-side context stored per stream session so that sensitive values
+/// (auth headers, cookie mappings) never travel in URLs.
+#[derive(Debug, Clone, Default)]
+pub struct ProxyContext {
+    /// HTTP headers to apply to every upstream proxy request.
+    pub headers: HashMap<String, String>,
+    /// URL query-param name → cookie name.
+    /// The proxy extracts the param from the upstream URL and sends it as the
+    /// named cookie, enabling CDNs that authenticate via cookies (e.g. Akamai
+    /// `hdnea`) to work correctly for segments and encryption-key requests.
+    pub url_param_cookies: HashMap<String, String>,
+    /// Cookie values extracted from a previously-seen manifest URL and cached
+    /// here so that sub-requests whose URLs carry no query params (e.g. bare
+    /// `.pkey` encryption-key files) still get the correct cookies.
+    pub resolved_cookies: HashMap<String, String>,
+    /// Static cookie values resolved from the provider YAML (`proxy_cookies`)
+    /// and sent verbatim on every upstream request.  Unlike `url_param_cookies`
+    /// these are not extracted from the upstream URL; they are resolved once at
+    /// session creation time (template vars expanded) and stored here.
+    pub static_cookies: HashMap<String, String>,
+    /// The raw query string from the most recent manifest URL that carried
+    /// query params.  Saved here so that `EXT-X-KEY` sub-requests, which
+    /// normally have no query params, can have the manifest params appended
+    /// when `append_manifest_query_to_key_uris` is `true`.
+    pub manifest_query: Option<String>,
+    /// Mirror of `PlaybackEndpoint::append_manifest_query_to_key_uris`.
+    pub append_manifest_query_to_key_uris: bool,
+}
+
+fn build_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .cookie_store(true)
+        .build()
+        .expect("Failed to build HTTP client")
+}
+
 use serde::{Deserialize, Serialize};
 
 use otvi_core::config::ProviderConfig;
@@ -19,6 +55,11 @@ pub struct AppState {
     pub http_client: reqwest::Client,
     /// Path to the sessions persistence file.
     pub sessions_path: PathBuf,
+    /// Opaque proxy-context token → per-stream proxy context.
+    ///
+    /// Populated by the stream endpoint; contains resolved headers and
+    /// cookie mappings.  Only the opaque token is embedded in proxy URLs.
+    pub proxy_ctx: RwLock<HashMap<String, ProxyContext>>,
 }
 
 /// Per-session data stored on the server side.
@@ -54,8 +95,9 @@ impl AppState {
                 return Ok(Self {
                     providers,
                     sessions: RwLock::new(sessions),
-                    http_client: reqwest::Client::new(),
+                    http_client: build_http_client(),
                     sessions_path,
+                    proxy_ctx: RwLock::new(HashMap::new()),
                 });
             }
             Err(e) => return Err(e.into()),
@@ -91,8 +133,9 @@ impl AppState {
         Ok(Self {
             providers,
             sessions: RwLock::new(sessions),
-            http_client: reqwest::Client::new(),
+            http_client: build_http_client(),
             sessions_path,
+            proxy_ctx: RwLock::new(HashMap::new()),
         })
     }
 
