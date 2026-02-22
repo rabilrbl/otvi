@@ -77,7 +77,10 @@ pub async fn proxy_stream(
     //     manifest URL (which carries the auth token as a query param) was
     //     fetched.  Sub-requests like bare `.pkey` key files have no query
     //     params at all, so source (2) is essential for them.
-    if !ctx.url_param_cookies.is_empty() || !ctx.resolved_cookies.is_empty() || !ctx.static_cookies.is_empty() {
+    if !ctx.url_param_cookies.is_empty()
+        || !ctx.resolved_cookies.is_empty()
+        || !ctx.static_cookies.is_empty()
+    {
         // Decode all query pairs once so we can look them up cheaply.
         let query_map: std::collections::HashMap<String, String> = parsed
             .query_pairs()
@@ -102,7 +105,9 @@ pub async fn proxy_stream(
             }
             // Source 2 – persisted values from a prior manifest fetch (fill gaps)
             for (cookie_name, val) in &ctx.resolved_cookies {
-                let already = cookie_pairs.iter().any(|p| p.starts_with(&format!("{cookie_name}=")));
+                let already = cookie_pairs
+                    .iter()
+                    .any(|p| p.starts_with(&format!("{cookie_name}=")));
                 if !already {
                     cookie_pairs.push(format!("{cookie_name}={val}"));
                 }
@@ -111,7 +116,9 @@ pub async fn proxy_stream(
         // Source 3 – static cookies from provider YAML `proxy_cookies` field
         // (lowest priority; overridden by URL-extracted or manifest-extracted values)
         for (cookie_name, val) in &ctx.static_cookies {
-            let already = cookie_pairs.iter().any(|p| p.starts_with(&format!("{cookie_name}=")));
+            let already = cookie_pairs
+                .iter()
+                .any(|p| p.starts_with(&format!("{cookie_name}=")));
             if !already {
                 cookie_pairs.push(format!("{cookie_name}={val}"));
             }
@@ -129,13 +136,12 @@ pub async fn proxy_stream(
             req = req.header("Cookie", cookie_header);
         }
     }
-    let resp = req.send().await
-        .map_err(|e| {
-            (
-                StatusCode::BAD_GATEWAY,
-                format!("Failed to fetch upstream: {e}"),
-            )
-        })?;
+    let resp = req.send().await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Failed to fetch upstream: {e}"),
+        )
+    })?;
 
     let upstream_status = resp.status();
     let content_type = resp
@@ -173,7 +179,8 @@ pub async fn proxy_stream(
                     .url_param_cookies
                     .iter()
                     .filter_map(|(param, cookie_name)| {
-                        query_map.get(param.as_str())
+                        query_map
+                            .get(param.as_str())
                             .map(|val| (cookie_name.clone(), val.clone()))
                     })
                     .collect();
@@ -202,17 +209,19 @@ pub async fn proxy_stream(
         } else {
             None
         };
-        let rewritten = rewrite_m3u8(&body_text, upstream_url, query.ctx.as_deref(), key_extra_query);
+        let rewritten = rewrite_m3u8(
+            &body_text,
+            upstream_url,
+            query.ctx.as_deref(),
+            key_extra_query,
+        );
 
         let mut headers = HeaderMap::new();
         headers.insert(
             "content-type",
             HeaderValue::from_static("application/vnd.apple.mpegurl"),
         );
-        headers.insert(
-            "access-control-allow-origin",
-            HeaderValue::from_static("*"),
-        );
+        headers.insert("access-control-allow-origin", HeaderValue::from_static("*"));
 
         return Ok((
             StatusCode::from_u16(upstream_status.as_u16()).unwrap_or(StatusCode::OK),
@@ -225,10 +234,7 @@ pub async fn proxy_stream(
     // For non-m3u8 (segments, keys, etc.) — pass through as-is
     let mut headers = HeaderMap::new();
     headers.insert("content-type", content_type);
-    headers.insert(
-        "access-control-allow-origin",
-        HeaderValue::from_static("*"),
-    );
+    headers.insert("access-control-allow-origin", HeaderValue::from_static("*"));
 
     Ok((
         StatusCode::from_u16(upstream_status.as_u16()).unwrap_or(StatusCode::OK),
@@ -253,10 +259,13 @@ pub async fn proxy_stream(
 /// (e.g. `minrate=80000&__hdnea__=st%3D…`).  It is appended to key file
 /// URLs (`.pkey`/`.key`) before proxying so that the upstream CDN receives
 /// the Akamai token as a URL param — matching JioTV-Go's `RenderKeyHandler`.
-fn rewrite_m3u8(content: &str, playlist_url: &str, ctx_token: Option<&str>, manifest_query: Option<&str>) -> String {
-    let base = Url::parse(playlist_url).unwrap_or_else(|_| {
-        Url::parse("http://unknown").unwrap()
-    });
+fn rewrite_m3u8(
+    content: &str,
+    playlist_url: &str,
+    ctx_token: Option<&str>,
+    manifest_query: Option<&str>,
+) -> String {
+    let base = Url::parse(playlist_url).unwrap_or_else(|_| Url::parse("http://unknown").unwrap());
 
     let mut output = String::with_capacity(content.len());
 
@@ -294,7 +303,12 @@ fn rewrite_m3u8(content: &str, playlist_url: &str, ctx_token: Option<&str>, mani
 /// `extra_query` is an optional raw query string to append to the resolved URL
 /// before percent-encoding it.  Used for key file URLs to carry the manifest's
 /// Akamai token so the upstream CDN authorises the request.
-fn resolve_and_proxy(url_str: &str, base: &Url, ctx_token: Option<&str>, extra_query: Option<&str>) -> String {
+fn resolve_and_proxy(
+    url_str: &str,
+    base: &Url,
+    ctx_token: Option<&str>,
+    extra_query: Option<&str>,
+) -> String {
     let absolute = if url_str.starts_with("http://") || url_str.starts_with("https://") {
         url_str.to_string()
     } else {
@@ -329,7 +343,12 @@ fn resolve_and_proxy(url_str: &str, base: &Url, ctx_token: Option<&str>, extra_q
 /// For encryption-key URIs (`.pkey` / `.key`), `manifest_query` is appended
 /// to the target URL so the upstream CDN receives the session token as a URL
 /// param (as JioTV-Go's `RenderKeyHandler` does).
-fn rewrite_uri_attributes(line: &str, base: &Url, ctx_token: Option<&str>, manifest_query: Option<&str>) -> String {
+fn rewrite_uri_attributes(
+    line: &str,
+    base: &Url,
+    ctx_token: Option<&str>,
+    manifest_query: Option<&str>,
+) -> String {
     // Find URI="…" pattern (case-insensitive)
     let mut result = line.to_string();
 
@@ -341,8 +360,10 @@ fn rewrite_uri_attributes(line: &str, base: &Url, ctx_token: Option<&str>, manif
             // Append manifest query params to key file URLs so the upstream CDN
             // (e.g. tv.media.jio.com Akamai) receives the auth token in the URL.
             let lower = uri_val.to_lowercase();
-            let is_key = lower.contains(".pkey") || lower.ends_with(".key")
-                || lower.contains("aes128.key") || lower.contains("/key");
+            let is_key = lower.contains(".pkey")
+                || lower.ends_with(".key")
+                || lower.contains("aes128.key")
+                || lower.contains("/key");
             let extra = if is_key { manifest_query } else { None };
             let proxied = resolve_and_proxy(uri_val, base, ctx_token, extra);
             result = format!(
