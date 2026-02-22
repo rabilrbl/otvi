@@ -59,10 +59,10 @@ pub async fn list(
 
     // If a category filter was requested, apply it locally (the upstream API
     // may not support server-side filtering by category).
-    if let Some(cat) = params.get("category") {
-        if !cat.is_empty() {
-            channels.retain(|ch| ch.category.as_deref() == Some(cat.as_str()));
-        }
+    if let Some(cat) = params.get("category")
+        && !cat.is_empty()
+    {
+        channels.retain(|ch| ch.category.as_deref() == Some(cat.as_str()));
     }
 
     Ok(Json(ChannelListResponse { channels }))
@@ -257,10 +257,11 @@ fn map_channels(
         let logo = extract_mapped_field(item, field_map, "logo").map(|url| {
             // If logo_base_url is set and the logo is a relative path (no scheme),
             // prepend the base URL so the client gets a fully qualified URL.
-            if let Some(base) = &mapping.logo_base_url {
-                if !url.starts_with("http://") && !url.starts_with("https://") {
-                    return format!("{}{}", base, url);
-                }
+            if let Some(base) = &mapping.logo_base_url
+                && !url.starts_with("http://")
+                && !url.starts_with("https://")
+            {
+                return format!("{}{}", base, url);
             }
             url
         });

@@ -9,7 +9,7 @@
 //! The provider YAML contains an `auth.scope` field:
 //!
 //! * `global`   – Only an **admin** can log in / log out.  A single shared
-//!                provider session is used for all OTVI users of that provider.
+//!   provider session is used for all OTVI users of that provider.
 //! * `per_user` – Every OTVI user manages their own provider credentials.
 //!
 //! All endpoints require a valid OTVI JWT (`Authorization: Bearer …`).
@@ -40,17 +40,17 @@ fn apply_transforms(
 ) -> HashMap<String, String> {
     let mut result = inputs.clone();
     for field in &flow.inputs {
-        if let Some(transform) = &field.transform {
-            if let Some(val) = inputs.get(&field.key) {
-                let transformed = match transform.as_str() {
-                    "base64" => {
-                        use base64::Engine;
-                        base64::engine::general_purpose::STANDARD.encode(val.as_bytes())
-                    }
-                    _ => continue,
-                };
-                result.insert(format!("{}_{}", field.key, transform), transformed);
-            }
+        if let Some(transform) = &field.transform
+            && let Some(val) = inputs.get(&field.key)
+        {
+            let transformed = match transform.as_str() {
+                "base64" => {
+                    use base64::Engine;
+                    base64::engine::general_purpose::STANDARD.encode(val.as_bytes())
+                }
+                _ => continue,
+            };
+            result.insert(format!("{}_{}", field.key, transform), transformed);
         }
     }
     result

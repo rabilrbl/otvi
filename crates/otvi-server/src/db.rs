@@ -53,11 +53,10 @@ pub async fn init(database_url: &str) -> anyhow::Result<Db> {
         // Skip in-memory databases.
         if !raw.starts_with(':') {
             let path = std::path::Path::new(raw);
-            if let Some(parent) = path.parent() {
-                if !parent.as_os_str().is_empty() {
-                    std::fs::create_dir_all(parent)
-                        .context("Failed to create database directory")?;
-                }
+            if let Some(parent) = path.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent).context("Failed to create database directory")?;
             }
             if !path.exists() {
                 std::fs::File::create(path).context("Failed to create SQLite database file")?;

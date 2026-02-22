@@ -52,7 +52,7 @@ pub fn App() -> impl IntoView {
     // ── Auth context ──────────────────────────────────────────────────────
     let user: RwSignal<Option<UserInfo>> = RwSignal::new(None);
     let auth_ctx = AuthCtx { user };
-    provide_context(auth_ctx.clone());
+    provide_context(auth_ctx);
 
     // ── Boot sequence ─────────────────────────────────────────────────────
     let (boot_state, set_boot_state) = signal(BootState::Loading);

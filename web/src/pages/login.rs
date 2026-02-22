@@ -245,7 +245,7 @@ fn render_field(
                             map.insert(k, value);
                         });
                 }
-                prop:value=move || String::new()
+                prop:value=String::new
                 name=key2
             />
         </div>

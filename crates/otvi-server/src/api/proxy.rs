@@ -167,37 +167,37 @@ pub async fn proxy_stream(
         // Before rewriting, persist any url_param_cookies values found in
         // this manifest URL into the context so that sub-requests that have
         // no query params (e.g. bare .pkey key files) still get the cookies.
-        if let Some(token) = query.ctx.as_deref() {
-            if !ctx.url_param_cookies.is_empty() {
-                // Use query_pairs() so percent-encoded values are decoded before
-                // being stored (same decoding used when building the Cookie header).
-                let query_map: std::collections::HashMap<String, String> = parsed
-                    .query_pairs()
-                    .map(|(k, v)| (k.into_owned(), v.into_owned()))
-                    .collect();
-                let freshened: std::collections::HashMap<String, String> = ctx
-                    .url_param_cookies
-                    .iter()
-                    .filter_map(|(param, cookie_name)| {
-                        query_map
-                            .get(param.as_str())
-                            .map(|val| (cookie_name.clone(), val.clone()))
-                    })
-                    .collect();
-                if !freshened.is_empty() {
-                    debug!(url = %upstream_url, ?freshened, "persisting resolved_cookies from manifest");
-                    if let Ok(mut store) = state.proxy_ctx.write() {
-                        if let Some(entry) = store.get_mut(token) {
-                            entry.resolved_cookies.extend(freshened);
-                            // Also persist the raw query string so that key URLs (.pkey/.key)
-                            // can have it appended before fetching upstream (JioTV-Go pattern).
-                            if let Some(q) = parsed.query() {
-                                if entry.manifest_query.is_none() {
-                                    entry.manifest_query = Some(q.to_owned());
-                                    debug!(url = %upstream_url, manifest_query = %q, "persisting manifest_query");
-                                }
-                            }
-                        }
+        if let Some(token) = query.ctx.as_deref()
+            && !ctx.url_param_cookies.is_empty()
+        {
+            // Use query_pairs() so percent-encoded values are decoded before
+            // being stored (same decoding used when building the Cookie header).
+            let query_map: std::collections::HashMap<String, String> = parsed
+                .query_pairs()
+                .map(|(k, v)| (k.into_owned(), v.into_owned()))
+                .collect();
+            let freshened: std::collections::HashMap<String, String> = ctx
+                .url_param_cookies
+                .iter()
+                .filter_map(|(param, cookie_name)| {
+                    query_map
+                        .get(param.as_str())
+                        .map(|val| (cookie_name.clone(), val.clone()))
+                })
+                .collect();
+            if !freshened.is_empty() {
+                debug!(url = %upstream_url, ?freshened, "persisting resolved_cookies from manifest");
+                if let Ok(mut store) = state.proxy_ctx.write()
+                    && let Some(entry) = store.get_mut(token)
+                {
+                    entry.resolved_cookies.extend(freshened);
+                    // Also persist the raw query string so that key URLs (.pkey/.key)
+                    // can have it appended before fetching upstream (JioTV-Go pattern).
+                    if let Some(q) = parsed.query()
+                        && entry.manifest_query.is_none()
+                    {
+                        entry.manifest_query = Some(q.to_owned());
+                        debug!(url = %upstream_url, manifest_query = %q, "persisting manifest_query");
                     }
                 }
             }

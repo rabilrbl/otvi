@@ -91,7 +91,7 @@ impl AppState {
             let path = entry.path();
             let is_yaml = path
                 .extension()
-                .map_or(false, |ext| ext == "yaml" || ext == "yml");
+                .is_some_and(|ext| ext == "yaml" || ext == "yml");
             if !is_yaml {
                 continue;
             }

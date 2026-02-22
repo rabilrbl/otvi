@@ -32,9 +32,8 @@ pub fn AdminPage() -> impl IntoView {
                 Ok(list) => users.set(list),
                 Err(e) => page_error.set(Some(format!("Failed to load users: {e}"))),
             }
-            match p {
-                Ok(list) => providers.set(list),
-                Err(_) => {}
+            if let Ok(list) = p {
+                providers.set(list)
             }
             match s {
                 Ok(cfg) => settings.set(cfg),

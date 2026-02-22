@@ -52,7 +52,7 @@ pub fn ChannelsPage() -> impl IntoView {
     });
 
     // Logout handler
-    let pid_for_logout = provider_id.clone();
+    let pid_for_logout = provider_id;
     let nav_for_logout = navigate.clone();
     let on_logout = move |_| {
         let pid = pid_for_logout();
