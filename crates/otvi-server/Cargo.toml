@@ -44,7 +44,7 @@ dotenvy = "0.15"
 argon2 = "0.5"
 
 # JWT
-jsonwebtoken = "10"
+jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }
