@@ -6,8 +6,9 @@ use otvi_core::types::{UserInfo, UserRole};
 
 use crate::api;
 use crate::pages::{
-    admin::AdminPage, app_login::AppLoginPage, channels::ChannelsPage, home::HomePage,
-    login::LoginPage, not_found::NotFoundPage, player::PlayerPage, setup::SetupPage,
+    admin::AdminPage, app_login::AppLoginPage, change_password::ChangePasswordPage,
+    channels::ChannelsPage, home::HomePage, login::LoginPage, not_found::NotFoundPage,
+    player::PlayerPage, setup::SetupPage,
 };
 
 /// Shared auth context available to all child components.
@@ -42,6 +43,8 @@ enum BootState {
     NeedsSetup,
     /// No valid JWT – user must log in.
     NeedsLogin,
+    /// User must change their password before proceeding.
+    NeedsPasswordChange,
     /// Authenticated and ready to use the app.
     Ready,
 }
@@ -57,12 +60,20 @@ pub fn App() -> impl IntoView {
     // ── Boot sequence ─────────────────────────────────────────────────────
     let (boot_state, set_boot_state) = signal(BootState::Loading);
 
+    // Whether the voluntary change-password overlay is open.
+    let show_change_pw: RwSignal<bool> = RwSignal::new(false);
+
     Effect::new(move |_| {
         spawn_local(async move {
             match api::boot_check().await {
                 api::AppBoot::Ready(info) => {
-                    user.set(Some(info));
-                    set_boot_state.set(BootState::Ready);
+                    if info.must_change_password {
+                        user.set(Some(info));
+                        set_boot_state.set(BootState::NeedsPasswordChange);
+                    } else {
+                        user.set(Some(info));
+                        set_boot_state.set(BootState::Ready);
+                    }
                 }
                 api::AppBoot::NeedsLogin => {
                     set_boot_state.set(BootState::NeedsLogin);
@@ -74,16 +85,28 @@ pub fn App() -> impl IntoView {
         });
     });
 
-    // Callback fired by both SetupPage and AppLoginPage on success.
+    // Callback fired by SetupPage, AppLoginPage, and ChangePasswordPage on success.
     let on_auth_done = move |info: UserInfo| {
+        if info.must_change_password {
+            user.set(Some(info));
+            set_boot_state.set(BootState::NeedsPasswordChange);
+        } else {
+            user.set(Some(info));
+            set_boot_state.set(BootState::Ready);
+        }
+    };
+
+    // Callback fired when the user voluntarily changes their password.
+    let on_voluntary_pw_change = move |info: UserInfo| {
         user.set(Some(info));
-        set_boot_state.set(BootState::Ready);
+        show_change_pw.set(false);
     };
 
     // Logout: clear token + reset state.
     let logout = move |_| {
         api::clear_token();
         user.set(None);
+        show_change_pw.set(false);
         set_boot_state.set(BootState::NeedsLogin);
     };
 
@@ -103,6 +126,24 @@ pub fn App() -> impl IntoView {
             <Show when=move || boot_state.get() == BootState::NeedsLogin fallback=|| ()>
                 <div class="fixed inset-0 z-50 bg-gray-950 overflow-auto">
                     <AppLoginPage on_done=Callback::new(on_auth_done) />
+                </div>
+            </Show>
+            <Show when=move || boot_state.get() == BootState::NeedsPasswordChange fallback=|| ()>
+                <div class="fixed inset-0 z-50 bg-gray-950 overflow-auto">
+                    <ChangePasswordPage
+                        on_done=Callback::new(on_auth_done)
+                        forced=true
+                    />
+                </div>
+            </Show>
+
+            // ── Voluntary change-password overlay ──────────────────────────
+            <Show when=move || show_change_pw.get() fallback=|| ()>
+                <div class="fixed inset-0 z-40 bg-gray-950 overflow-auto">
+                    <ChangePasswordPage
+                        on_done=Callback::new(on_voluntary_pw_change)
+                        forced=false
+                    />
                 </div>
             </Show>
 
@@ -128,6 +169,14 @@ pub fn App() -> impl IntoView {
                         >
                             "Dashboard"
                         </a>
+                    </Show>
+                    <Show when=move || boot_state.get() == BootState::Ready>
+                        <button
+                            class="px-3 py-1.5 text-sm rounded-lg bg-gray-800 text-gray-300 hover:bg-gray-700 transition-colors cursor-pointer"
+                            on:click=move |_| show_change_pw.set(true)
+                        >
+                            "Change Password"
+                        </button>
                     </Show>
                     <button
                         class="px-3 py-1.5 text-sm rounded-lg bg-gray-800 text-gray-300 hover:bg-gray-700 transition-colors cursor-pointer"

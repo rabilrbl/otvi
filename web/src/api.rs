@@ -105,6 +105,31 @@ pub async fn app_register(username: &str, password: &str) -> Result<AppLoginResp
     }
 }
 
+pub async fn change_password(
+    current_password: &str,
+    new_password: &str,
+) -> Result<AppLoginResponse, String> {
+    let body = serde_json::to_string(&ChangePasswordRequest {
+        current_password: current_password.to_string(),
+        new_password: new_password.to_string(),
+    })
+    .map_err(|e| e.to_string())?;
+
+    let resp = post_authed("/api/auth/change-password")
+        .header("Content-Type", "application/json")
+        .body(body)
+        .map_err(|e| format!("{e:?}"))?
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if resp.ok() {
+        resp.json::<AppLoginResponse>().await.map_err(|e| e.to_string())
+    } else {
+        Err(resp.text().await.unwrap_or_else(|_| "Password change failed".into()))
+    }
+}
+
 // ── Provider endpoints ──────────────────────────────────────────────────────
 
 /// Helper: build a GET request with Authorization header if we have a token.
@@ -262,6 +287,25 @@ pub async fn admin_set_user_providers(user_id: &str, providers: Vec<String>) -> 
     let body = serde_json::to_string(&UpdateUserProvidersRequest { providers })
         .map_err(|e| e.to_string())?;
     let resp = put_authed(&format!("/api/admin/users/{user_id}/providers"))
+        .header("Content-Type", "application/json")
+        .body(body)
+        .map_err(|e| format!("{e:?}"))?
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if resp.ok() {
+        Ok(())
+    } else {
+        Err(resp.text().await.unwrap_or_else(|_| format!("HTTP {}", resp.status())))
+    }
+}
+
+pub async fn admin_reset_password(user_id: &str, new_password: &str) -> Result<(), String> {
+    let body = serde_json::to_string(&AdminResetPasswordRequest {
+        new_password: new_password.to_string(),
+    })
+    .map_err(|e| e.to_string())?;
+    let resp = put_authed(&format!("/api/admin/users/{user_id}/password"))
         .header("Content-Type", "application/json")
         .body(body)
         .map_err(|e| format!("{e:?}"))?

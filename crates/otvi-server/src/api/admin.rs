@@ -48,6 +48,7 @@ pub async fn list_users(
             username: row.username,
             role,
             providers,
+            must_change_password: row.must_change_password,
         });
     }
 
@@ -75,7 +76,7 @@ pub async fn create_user(
     }
 
     let hash = hash_password(&req.password)?;
-    let user_id = db::create_user(&state.db, &req.username, &hash, &req.role)
+    let user_id = db::create_user(&state.db, &req.username, &hash, &req.role, true)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
@@ -89,6 +90,7 @@ pub async fn create_user(
         username: req.username,
         role: req.role,
         providers: req.providers,
+        must_change_password: true,
     }))
 }
 
@@ -110,6 +112,8 @@ pub async fn delete_user(
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
+// ── User management (continued) ────────────────────────────────────────────
+
 /// `PUT /api/admin/users/:id/providers`
 ///
 /// Replace the provider allow-list for a user.
@@ -121,6 +125,32 @@ pub async fn set_user_providers(
     Json(req): Json<UpdateUserProvidersRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     db::set_user_providers(&state.db, &user_id, &req.providers)
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    Ok(Json(serde_json::json!({ "success": true })))
+}
+
+/// `PUT /api/admin/users/:id/password`
+///
+/// Admin resets a user's password and forces a password-change on next login.
+pub async fn reset_user_password(
+    State(state): State<Arc<AppState>>,
+    AdminClaims(_): AdminClaims,
+    Path(user_id): Path<String>,
+    Json(req): Json<AdminResetPasswordRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    if req.new_password.is_empty() {
+        return Err(AppError::BadRequest("Password must not be empty".into()));
+    }
+
+    let hash = hash_password(&req.new_password)?;
+    db::update_password(&state.db, &user_id, &hash)
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    // Re-arm the must_change_password flag so the user is forced to change on
+    // next login (update_password clears it, so we set it again here).
+    db::set_must_change_password(&state.db, &user_id, true)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 

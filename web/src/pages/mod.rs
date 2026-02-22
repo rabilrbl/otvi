@@ -1,5 +1,6 @@
 pub mod admin;
 pub mod app_login;
+pub mod change_password;
 pub mod channels;
 pub mod home;
 pub mod login;

@@ -62,6 +62,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/login", post(api::user_auth::login))
         .route("/me", get(api::user_auth::me))
         .route("/logout", post(api::user_auth::logout))
+        .route("/change-password", post(api::user_auth::change_password))
         ;
 
     // Provider-specific auth (TV provider sessions).
@@ -88,6 +89,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/users", post(api::admin::create_user))
         .route("/users/{id}", delete(api::admin::delete_user))
         .route("/users/{id}/providers", put(api::admin::set_user_providers))
+        .route("/users/{id}/password", put(api::admin::reset_user_password))
         .route("/settings", get(api::admin::get_settings))
         .route("/settings", put(api::admin::update_settings));
 

@@ -93,6 +93,7 @@ pub struct UserRow {
     pub password_hash: String,
     pub role: String,
     pub created_at: String,
+    pub must_change_password: bool,
 }
 
 /// Optional provider allow-list attached to a user (empty = all providers).
@@ -111,7 +112,8 @@ pub async fn user_count(db: &Db) -> anyhow::Result<i64> {
 
 pub async fn get_user_by_username(db: &Db, username: &str) -> anyhow::Result<Option<UserRow>> {
     let row = sqlx::query(
-        "SELECT id, username, password_hash, role, created_at FROM users WHERE username = ?",
+        "SELECT id, username, password_hash, role, created_at, must_change_password \
+         FROM users WHERE username = ?",
     )
     .bind(username)
     .fetch_optional(db)
@@ -123,16 +125,19 @@ pub async fn get_user_by_username(db: &Db, username: &str) -> anyhow::Result<Opt
         password_hash: r.get("password_hash"),
         role: r.get("role"),
         created_at: r.get("created_at"),
+        must_change_password: r.get::<i64, _>("must_change_password") != 0,
     }))
 }
 
 #[allow(dead_code)]
 pub async fn get_user_by_id(db: &Db, id: &str) -> anyhow::Result<Option<UserRow>> {
-    let row =
-        sqlx::query("SELECT id, username, password_hash, role, created_at FROM users WHERE id = ?")
-            .bind(id)
-            .fetch_optional(db)
-            .await?;
+    let row = sqlx::query(
+        "SELECT id, username, password_hash, role, created_at, must_change_password \
+         FROM users WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(db)
+    .await?;
 
     Ok(row.map(|r| UserRow {
         id: r.get("id"),
@@ -140,12 +145,14 @@ pub async fn get_user_by_id(db: &Db, id: &str) -> anyhow::Result<Option<UserRow>
         password_hash: r.get("password_hash"),
         role: r.get("role"),
         created_at: r.get("created_at"),
+        must_change_password: r.get::<i64, _>("must_change_password") != 0,
     }))
 }
 
 pub async fn list_users(db: &Db) -> anyhow::Result<Vec<UserRow>> {
     let rows = sqlx::query(
-        "SELECT id, username, password_hash, role, created_at FROM users ORDER BY created_at",
+        "SELECT id, username, password_hash, role, created_at, must_change_password \
+         FROM users ORDER BY created_at",
     )
     .fetch_all(db)
     .await?;
@@ -158,6 +165,7 @@ pub async fn list_users(db: &Db) -> anyhow::Result<Vec<UserRow>> {
             password_hash: r.get("password_hash"),
             role: r.get("role"),
             created_at: r.get("created_at"),
+            must_change_password: r.get::<i64, _>("must_change_password") != 0,
         })
         .collect())
 }
@@ -167,6 +175,7 @@ pub async fn create_user(
     username: &str,
     password_hash: &str,
     role: &UserRole,
+    must_change_password: bool,
 ) -> anyhow::Result<String> {
     let id = Uuid::new_v4().to_string();
     let role_str = match role {
@@ -174,19 +183,43 @@ pub async fn create_user(
         UserRole::User => "user",
     };
     let now = Utc::now().to_rfc3339();
+    let mcp: i64 = if must_change_password { 1 } else { 0 };
 
     sqlx::query(
-        "INSERT INTO users (id, username, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO users (id, username, password_hash, role, created_at, must_change_password) \
+         VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(username)
     .bind(password_hash)
     .bind(role_str)
     .bind(&now)
+    .bind(mcp)
     .execute(db)
     .await?;
 
     Ok(id)
+}
+
+/// Update a user's password hash and clear the must_change_password flag.
+pub async fn update_password(db: &Db, user_id: &str, new_hash: &str) -> anyhow::Result<()> {
+    sqlx::query("UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?")
+        .bind(new_hash)
+        .bind(user_id)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+/// Set the must_change_password flag for a user (admin reset).
+pub async fn set_must_change_password(db: &Db, user_id: &str, value: bool) -> anyhow::Result<()> {
+    let v: i64 = if value { 1 } else { 0 };
+    sqlx::query("UPDATE users SET must_change_password = ? WHERE id = ?")
+        .bind(v)
+        .bind(user_id)
+        .execute(db)
+        .await?;
+    Ok(())
 }
 
 pub async fn delete_user(db: &Db, user_id: &str) -> anyhow::Result<()> {

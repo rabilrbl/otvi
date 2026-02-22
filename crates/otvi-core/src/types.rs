@@ -135,6 +135,9 @@ pub struct UserInfo {
     pub role: UserRole,
     /// Provider IDs this user has access to.
     pub providers: Vec<String>,
+    /// When `true` the user must change their password before proceeding.
+    #[serde(default)]
+    pub must_change_password: bool,
 }
 
 // ── OTVI app-level register / login / logout ─────────────────────────────────
@@ -172,6 +175,17 @@ pub struct CreateUserRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateUserProvidersRequest {
     pub providers: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChangePasswordRequest {
+    pub current_password: String,
+    pub new_password: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdminResetPasswordRequest {
+    pub new_password: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

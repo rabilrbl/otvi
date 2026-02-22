@@ -307,6 +307,12 @@ fn UsersSection(
     let edit_loading: RwSignal<bool> = RwSignal::new(false);
     let edit_error: RwSignal<Option<String>> = RwSignal::new(None);
 
+    // Reset-password inline panel state.
+    let resetting: RwSignal<Option<String>> = RwSignal::new(None);
+    let reset_pw: RwSignal<String> = RwSignal::new(String::new());
+    let reset_pw_loading: RwSignal<bool> = RwSignal::new(false);
+    let reset_pw_error: RwSignal<Option<String>> = RwSignal::new(None);
+
     view! {
         <section class="bg-gray-900 border border-white/5 rounded-xl p-6 space-y-4">
             <h2 class="text-lg font-semibold">"Users"</h2>
@@ -323,6 +329,7 @@ fn UsersSection(
                         key=|u| u.id.clone()
                         children=move |user| {
                             let uid = user.id.clone();
+                            let mcp = user.must_change_password;
 
                             // ── Derived signals scoped to this user ────────
                             let is_editing = {
@@ -379,6 +386,13 @@ fn UsersSection(
                                                     <span class="text-xs bg-gray-700 text-gray-400 px-2 py-0.5 rounded-full shrink-0">"user"</span>
                                                 }.into_any(),
                                             }}
+                                            {if mcp {
+                                                view! {
+                                                    <span class="text-xs bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded-full shrink-0">"temp pwd"</span>
+                                                }.into_any()
+                                            } else {
+                                                view! { <span></span> }.into_any()
+                                            }}
                                         </div>
 
                                         // Provider chips
@@ -409,6 +423,20 @@ fn UsersSection(
                                                 on:click=on_start_edit
                                             >
                                                 "Edit Providers"
+                                            </button>
+                                            <button
+                                                class="px-3 py-1.5 text-xs rounded-lg bg-amber-500/20 hover:bg-amber-500/40 text-amber-300 transition-colors cursor-pointer"
+                                                on:click={
+                                                    let uid_r = uid.clone();
+                                                    move |_: ev::MouseEvent| {
+                                                        resetting.set(Some(uid_r.clone()));
+                                                        reset_pw.set(String::new());
+                                                        reset_pw_error.set(None);
+                                                        editing.set(None);
+                                                    }
+                                                }
+                                            >
+                                                "Reset Password"
                                             </button>
                                             <button
                                                 class="px-3 py-1.5 text-xs rounded-lg bg-red-500/20 hover:bg-red-500/40 text-red-400 transition-colors cursor-pointer"
@@ -525,6 +553,83 @@ fn UsersSection(
                                                     on:click=move |_| {
                                                         editing.set(None);
                                                         edit_error.set(None);
+                                                    }
+                                                >
+                                                    "Cancel"
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </Show>
+
+                                    // ── Inline reset-password panel ──────────
+                                    <Show when={
+                                        let uid3 = uid.clone();
+                                        move || resetting.get().as_ref().map(|id| id == &uid3).unwrap_or(false)
+                                    }>
+                                        <div class="border-t border-white/5 px-4 py-4 space-y-3">
+                                            <p class="text-sm text-gray-400">
+                                                "Set a new temporary password. The user will be required \
+                                                 to change it on next login."
+                                            </p>
+                                            <input
+                                                type="password"
+                                                class="w-full max-w-xs bg-gray-700 rounded-lg px-3 py-2 \
+                                                       text-sm text-white placeholder-gray-500 \
+                                                       border border-white/10 focus:outline-none focus:border-rose-500"
+                                                placeholder="New password (min. 8 chars)"
+                                                autocomplete="new-password"
+                                                prop:value=move || reset_pw.get()
+                                                on:input=move |ev| reset_pw.set(event_target_value(&ev))
+                                            />
+                                            <Show when=move || reset_pw_error.get().is_some()>
+                                                <div class="text-red-400 bg-red-400/10 px-3 py-2 rounded-lg text-sm">
+                                                    {move || reset_pw_error.get()}
+                                                </div>
+                                            </Show>
+                                            <div class="flex gap-2">
+                                                <button
+                                                    class="px-4 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 \
+                                                           text-white text-sm font-medium transition-colors \
+                                                           disabled:opacity-50 cursor-pointer"
+                                                    on:click=move |_: ev::MouseEvent| {
+                                                        let Some(uid_r) = resetting.get_untracked() else { return };
+                                                        let pw = reset_pw.get_untracked();
+                                                        if pw.len() < 8 {
+                                                            reset_pw_error.set(Some(
+                                                                "Password must be at least 8 characters.".into(),
+                                                            ));
+                                                            return;
+                                                        }
+                                                        reset_pw_loading.set(true);
+                                                        reset_pw_error.set(None);
+                                                        spawn_local(async move {
+                                                            match api::admin_reset_password(&uid_r, &pw).await {
+                                                                Ok(()) => {
+                                                                    users.update(|list| {
+                                                                        if let Some(u) =
+                                                                            list.iter_mut().find(|u| u.id == uid_r)
+                                                                        {
+                                                                            u.must_change_password = true;
+                                                                        }
+                                                                    });
+                                                                    resetting.set(None);
+                                                                    reset_pw.set(String::new());
+                                                                }
+                                                                Err(e) => reset_pw_error.set(Some(e)),
+                                                            }
+                                                            reset_pw_loading.set(false);
+                                                        });
+                                                    }
+                                                    disabled=move || reset_pw_loading.get()
+                                                >
+                                                    {move || if reset_pw_loading.get() { "Saving…" } else { "Set Password" }}
+                                                </button>
+                                                <button
+                                                    class="px-4 py-1.5 rounded-lg bg-gray-700 hover:bg-gray-600 \
+                                                           text-gray-300 text-sm transition-colors cursor-pointer"
+                                                    on:click=move |_| {
+                                                        resetting.set(None);
+                                                        reset_pw_error.set(None);
                                                     }
                                                 >
                                                     "Cancel"

@@ -17,7 +17,9 @@ use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use axum::Json;
 use axum::extract::State;
 
-use otvi_core::types::{AppLoginRequest, AppLoginResponse, RegisterRequest, UserInfo, UserRole};
+use otvi_core::types::{
+    AppLoginRequest, AppLoginResponse, ChangePasswordRequest, RegisterRequest, UserInfo, UserRole,
+};
 
 use crate::auth_middleware::{Claims, create_token};
 use crate::db;
@@ -65,7 +67,7 @@ pub async fn register(
     };
 
     let hash = hash_password(&req.password)?;
-    let user_id = db::create_user(&state.db, &req.username, &hash, &role)
+    let user_id = db::create_user(&state.db, &req.username, &hash, &role, false)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
@@ -82,6 +84,7 @@ pub async fn register(
             username: req.username,
             role,
             providers,
+            must_change_password: false,
         },
     }))
 }
@@ -116,6 +119,7 @@ pub async fn login(
             username: row.username,
             role,
             providers,
+            must_change_password: row.must_change_password,
         },
     }))
 }
@@ -129,6 +133,13 @@ pub async fn me(
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
+    // Fetch must_change_password from DB (not stored in JWT).
+    let must_change_password = db::get_user_by_id(&state.db, &claims.sub)
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+        .map(|r| r.must_change_password)
+        .unwrap_or(false);
+
     let role = claims.role();
     let id = claims.sub;
     let username = claims.username;
@@ -138,6 +149,58 @@ pub async fn me(
         username,
         role,
         providers,
+        must_change_password,
+    }))
+}
+
+/// `POST /api/auth/change-password`
+///
+/// Authenticated users change their own password.  On success the
+/// `must_change_password` flag is cleared and a fresh JWT is returned.
+pub async fn change_password(
+    State(state): State<Arc<AppState>>,
+    claims: Claims,
+    Json(req): Json<ChangePasswordRequest>,
+) -> Result<Json<AppLoginResponse>, AppError> {
+    if req.new_password.is_empty() {
+        return Err(AppError::BadRequest(
+            "New password must not be empty".into(),
+        ));
+    }
+    if req.new_password.len() < 8 {
+        return Err(AppError::BadRequest(
+            "New password must be at least 8 characters".into(),
+        ));
+    }
+
+    let row = db::get_user_by_id(&state.db, &claims.sub)
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+        .ok_or(AppError::Unauthorized)?;
+
+    verify_password(&req.current_password, &row.password_hash)?;
+
+    let new_hash = hash_password(&req.new_password)?;
+    db::update_password(&state.db, &claims.sub, &new_hash)
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    let role = claims.role();
+    let providers = db::get_user_providers(&state.db, &claims.sub)
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    let token = create_token(&state.jwt_keys, &claims.sub, &claims.username, &role);
+
+    Ok(Json(AppLoginResponse {
+        token,
+        user: UserInfo {
+            id: claims.sub,
+            username: claims.username,
+            role,
+            providers,
+            must_change_password: false,
+        },
     }))
 }
 
