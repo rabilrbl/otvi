@@ -50,6 +50,11 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+    services:
+      httpbin:
+        image: kennethreitz/httpbin
+        ports:
+          - 8888:80
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -58,10 +63,18 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-llvm-cov
-      - name: Generate coverage report
+      - name: Wait for httpbin
         run: |
-          cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
-          cargo llvm-cov --workspace --all-features --summary-only > coverage-summary.txt
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8888/get && break
+            sleep 1
+          done
+      - name: Generate coverage report
+        env:
+          HTTPBIN_URL: http://localhost:8888
+        run: |
+          cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info -- --include-ignored
+          cargo llvm-cov --workspace --all-features --summary-only -- --include-ignored > coverage-summary.txt
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
         with:
