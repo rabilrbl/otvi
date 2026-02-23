@@ -1,0 +1,66 @@
+# Test provider YAML that targets httpbin for integration testing.
+#
+# httpbin endpoints used:
+#   POST /post   – echoes the JSON body back
+#   GET  /get    – echoes query params and headers back
+#   GET  /json   – returns a fixed JSON object
+
+provider:
+  name: "Test Provider"
+  id: "test-httpbin"
+
+defaults:
+  base_url: "http://localhost:8888"
+  headers:
+    User-Agent: "otvi-test/1.0"
+    Accept: "application/json"
+
+auth:
+  scope: per_user
+  flows:
+    - id: "simple"
+      name: "Simple Login"
+      inputs:
+        - key: "username"
+          label: "Username"
+          type: "text"
+          required: true
+        - key: "password"
+          label: "Password"
+          type: "password"
+          required: true
+      steps:
+        - name: "Login"
+          request:
+            method: "POST"
+            path: "/post"
+            body: |
+              {"username":"{{input.username}}","password":"{{input.password}}"}
+          on_success:
+            extract:
+              # httpbin echoes the posted JSON under $.json
+              access_token: "$.json.username"
+
+channels:
+  list:
+    request:
+      method: "GET"
+      path: "/json"
+    response:
+      # httpbin /json returns {"slideshow": {"slides": [...]}}
+      items_path: "$.slideshow.slides"
+      mapping:
+        id: "$.title"
+        name: "$.title"
+
+playback:
+  stream:
+    request:
+      method: "GET"
+      path: "/get"
+      params:
+        channel_id: "{{input.channel_id}}"
+    response:
+      # httpbin /get echoes query params under $.args
+      url: "$.url"
+      type: "hls"

@@ -144,9 +144,8 @@ mod tests {
         let (db, _dir) = test_db().await;
         let tmp = tempfile::tempdir().expect("create temp dir");
         let nonexistent = tmp.path().join("does-not-exist");
-        let state =
-            AppState::load_providers(nonexistent.to_str().unwrap(), db, test_keys())
-                .expect("should succeed with warning");
+        let state = AppState::load_providers(nonexistent.to_str().unwrap(), db, test_keys())
+            .expect("should succeed with warning");
         assert!(state.providers.is_empty());
     }
 

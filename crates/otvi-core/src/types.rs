@@ -202,7 +202,10 @@ mod tests {
     #[test]
     fn stream_type_serialization() {
         assert_eq!(serde_json::to_string(&StreamType::Hls).unwrap(), "\"hls\"");
-        assert_eq!(serde_json::to_string(&StreamType::Dash).unwrap(), "\"dash\"");
+        assert_eq!(
+            serde_json::to_string(&StreamType::Dash).unwrap(),
+            "\"dash\""
+        );
     }
 
     #[test]
@@ -215,7 +218,10 @@ mod tests {
 
     #[test]
     fn user_role_serialization() {
-        assert_eq!(serde_json::to_string(&UserRole::Admin).unwrap(), "\"admin\"");
+        assert_eq!(
+            serde_json::to_string(&UserRole::Admin).unwrap(),
+            "\"admin\""
+        );
         assert_eq!(serde_json::to_string(&UserRole::User).unwrap(), "\"user\"");
     }
 
@@ -293,7 +299,10 @@ mod tests {
         let json = serde_json::to_string(&ch).unwrap();
         let decoded: Channel = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.id, "ch1");
-        assert_eq!(decoded.logo, Some("https://img.example.com/news.png".into()));
+        assert_eq!(
+            decoded.logo,
+            Some("https://img.example.com/news.png".into())
+        );
         assert_eq!(decoded.category, Some("news".into()));
         assert_eq!(decoded.number, Some("101".into()));
         assert_eq!(decoded.description, Some("24/7 news channel".into()));
@@ -363,16 +372,14 @@ mod tests {
     #[test]
     fn channel_list_response_roundtrip() {
         let resp = ChannelListResponse {
-            channels: vec![
-                Channel {
-                    id: "c1".into(),
-                    name: "One".into(),
-                    logo: None,
-                    category: None,
-                    number: None,
-                    description: None,
-                },
-            ],
+            channels: vec![Channel {
+                id: "c1".into(),
+                name: "One".into(),
+                logo: None,
+                category: None,
+                number: None,
+                description: None,
+            }],
         };
         let json = serde_json::to_string(&resp).unwrap();
         let decoded: ChannelListResponse = serde_json::from_str(&json).unwrap();

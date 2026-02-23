@@ -215,10 +215,7 @@ mod tests {
     #[test]
     fn extract_without_dollar_prefix() {
         let data = json!({"data": {"token": "xyz"}});
-        assert_eq!(
-            extract_json_path(&data, "data.token"),
-            Some("xyz".into())
-        );
+        assert_eq!(extract_json_path(&data, "data.token"), Some("xyz".into()));
     }
 
     #[test]

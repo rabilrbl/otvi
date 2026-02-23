@@ -43,12 +43,18 @@ mod tests {
 
     #[test]
     fn not_found_produces_404() {
-        assert_eq!(status_of(AppError::NotFound("gone".into())), StatusCode::NOT_FOUND);
+        assert_eq!(
+            status_of(AppError::NotFound("gone".into())),
+            StatusCode::NOT_FOUND
+        );
     }
 
     #[test]
     fn bad_request_produces_400() {
-        assert_eq!(status_of(AppError::BadRequest("bad".into())), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            status_of(AppError::BadRequest("bad".into())),
+            StatusCode::BAD_REQUEST
+        );
     }
 
     #[test]
@@ -58,7 +64,10 @@ mod tests {
 
     #[test]
     fn forbidden_produces_403() {
-        assert_eq!(status_of(AppError::Forbidden("nope".into())), StatusCode::FORBIDDEN);
+        assert_eq!(
+            status_of(AppError::Forbidden("nope".into())),
+            StatusCode::FORBIDDEN
+        );
     }
 
     #[test]

@@ -477,8 +477,7 @@ mod tests {
     #[test]
     fn resolve_and_proxy_with_extra_query() {
         let base = Url::parse("https://cdn.example.com/m.m3u8").unwrap();
-        let result =
-            resolve_and_proxy("https://key.com/key.pkey", &base, None, Some("tok=abc"));
+        let result = resolve_and_proxy("https://key.com/key.pkey", &base, None, Some("tok=abc"));
         assert!(result.contains("tok%3Dabc") || result.contains("tok"));
     }
 
@@ -504,8 +503,7 @@ mod tests {
     fn rewrite_uri_attributes_key_with_manifest_query() {
         let base = Url::parse("https://cdn.example.com/live/master.m3u8").unwrap();
         let line = "#EXT-X-KEY:METHOD=AES-128,URI=\"enc.pkey\"";
-        let result =
-            rewrite_uri_attributes(line, &base, Some("c1"), Some("hdnea=val"));
+        let result = rewrite_uri_attributes(line, &base, Some("c1"), Some("hdnea=val"));
         // The pkey URL should have the manifest query appended
         assert!(result.contains("hdnea"));
     }

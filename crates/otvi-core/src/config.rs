@@ -467,7 +467,10 @@ playback:
 "#;
         let cfg: ProviderConfig = serde_yaml_ng::from_str(yaml).unwrap();
         assert_eq!(cfg.provider.name, "FullTV");
-        assert_eq!(cfg.provider.logo, Some("https://example.com/logo.png".into()));
+        assert_eq!(
+            cfg.provider.logo,
+            Some("https://example.com/logo.png".into())
+        );
         assert_eq!(cfg.defaults.base_url, "https://api.example.com");
         assert_eq!(cfg.defaults.headers.get("User-Agent").unwrap(), "OTVI/1.0");
         assert_eq!(cfg.auth.scope, AuthScope::Global);
@@ -482,7 +485,11 @@ playback:
         assert!(cfg.playback.stream.append_manifest_query_to_key_uris);
         assert!(cfg.playback.stream.key_exclude_resolved_cookies);
         assert_eq!(
-            cfg.playback.stream.proxy_headers.get("Authorization").unwrap(),
+            cfg.playback
+                .stream
+                .proxy_headers
+                .get("Authorization")
+                .unwrap(),
             "Bearer {{stored.token}}"
         );
     }
