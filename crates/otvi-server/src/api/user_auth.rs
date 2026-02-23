@@ -227,3 +227,30 @@ pub fn verify_password(password: &str, hash: &str) -> Result<(), AppError> {
         .verify_password(password.as_bytes(), &parsed)
         .map_err(|_| AppError::Unauthorized)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hash_and_verify_password_roundtrip() {
+        let password = "my-secure-password-123";
+        let hash = hash_password(password).expect("hashing should succeed");
+        verify_password(password, &hash).expect("verification should succeed");
+    }
+
+    #[test]
+    fn verify_password_rejects_wrong_password() {
+        let hash = hash_password("correct-password").expect("hashing should succeed");
+        let result = verify_password("wrong-password", &hash);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn hash_password_produces_different_hashes() {
+        let h1 = hash_password("same-password").unwrap();
+        let h2 = hash_password("same-password").unwrap();
+        // Different salts should produce different hashes.
+        assert_ne!(h1, h2);
+    }
+}

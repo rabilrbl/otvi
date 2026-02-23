@@ -180,3 +180,128 @@ where
         Ok(AdminClaims(claims))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_keys() -> JwtKeys {
+        JwtKeys::new(b"test-secret-key-for-unit-tests")
+    }
+
+    #[test]
+    fn jwt_keys_new_creates_valid_keys() {
+        let keys = test_keys();
+        // Verify we can create and validate a token with the keys.
+        let token = create_token(&keys, "u1", "alice", &UserRole::Admin);
+        assert!(!token.is_empty());
+    }
+
+    #[test]
+    fn create_token_produces_valid_token() {
+        let keys = test_keys();
+        let token = create_token(&keys, "user-42", "bob", &UserRole::User);
+        let claims = validate_token(&keys, &token).expect("token should be valid");
+        assert_eq!(claims.sub, "user-42");
+        assert_eq!(claims.username, "bob");
+        assert_eq!(claims.role, "user");
+    }
+
+    #[test]
+    fn validate_token_accepts_valid_token() {
+        let keys = test_keys();
+        let token = create_token(&keys, "id-1", "carol", &UserRole::Admin);
+        let claims = validate_token(&keys, &token).unwrap();
+        assert_eq!(claims.sub, "id-1");
+        assert_eq!(claims.role, "admin");
+    }
+
+    #[test]
+    fn validate_token_rejects_tampered_token() {
+        let keys = test_keys();
+        let token = create_token(&keys, "id-1", "carol", &UserRole::Admin);
+        let tampered = format!("{token}x");
+        assert!(validate_token(&keys, &tampered).is_err());
+    }
+
+    #[test]
+    fn validate_token_rejects_wrong_secret() {
+        let keys = test_keys();
+        let other_keys = JwtKeys::new(b"different-secret");
+        let token = create_token(&keys, "id-1", "carol", &UserRole::Admin);
+        assert!(validate_token(&other_keys, &token).is_err());
+    }
+
+    #[test]
+    fn claims_role_maps_admin() {
+        let c = Claims {
+            sub: String::new(),
+            username: String::new(),
+            role: "admin".into(),
+            exp: 0,
+        };
+        assert_eq!(c.role(), UserRole::Admin);
+    }
+
+    #[test]
+    fn claims_role_maps_user() {
+        let c = Claims {
+            sub: String::new(),
+            username: String::new(),
+            role: "user".into(),
+            exp: 0,
+        };
+        assert_eq!(c.role(), UserRole::User);
+    }
+
+    #[test]
+    fn claims_role_maps_unknown_to_user() {
+        let c = Claims {
+            sub: String::new(),
+            username: String::new(),
+            role: "unknown".into(),
+            exp: 0,
+        };
+        assert_eq!(c.role(), UserRole::User);
+    }
+
+    #[test]
+    fn is_admin_returns_true_for_admin() {
+        let c = Claims {
+            sub: String::new(),
+            username: String::new(),
+            role: "admin".into(),
+            exp: 0,
+        };
+        assert!(c.is_admin());
+    }
+
+    #[test]
+    fn is_admin_returns_false_for_user() {
+        let c = Claims {
+            sub: String::new(),
+            username: String::new(),
+            role: "user".into(),
+            exp: 0,
+        };
+        assert!(!c.is_admin());
+    }
+
+    #[test]
+    fn create_token_admin_role_roundtrip() {
+        let keys = test_keys();
+        let token = create_token(&keys, "id-a", "admin_user", &UserRole::Admin);
+        let claims = validate_token(&keys, &token).unwrap();
+        assert!(claims.is_admin());
+        assert_eq!(claims.role(), UserRole::Admin);
+    }
+
+    #[test]
+    fn create_token_user_role_roundtrip() {
+        let keys = test_keys();
+        let token = create_token(&keys, "id-u", "normal_user", &UserRole::User);
+        let claims = validate_token(&keys, &token).unwrap();
+        assert!(!claims.is_admin());
+        assert_eq!(claims.role(), UserRole::User);
+    }
+}
