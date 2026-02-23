@@ -327,3 +327,254 @@ fn extract_mapped_field(
     let json_path = field_map.get(canonical_name)?;
     extract_json_path(item, json_path)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_session_uid_global() {
+        let scope = AuthScope::Global;
+        let claims = Claims {
+            sub: "user123".to_string(),
+            username: "testuser".to_string(),
+            role: "user".to_string(),
+            exp: 0,
+        };
+        assert_eq!(session_uid(&scope, &claims), "");
+    }
+
+    #[test]
+    fn test_session_uid_per_user() {
+        let scope = AuthScope::PerUser;
+        let claims = Claims {
+            sub: "user456".to_string(),
+            username: "testuser".to_string(),
+            role: "user".to_string(),
+            exp: 0,
+        };
+        assert_eq!(session_uid(&scope, &claims), "user456");
+    }
+
+    #[test]
+    fn test_extract_mapped_field_found() {
+        let item = json!({"id": "ch1", "title": "Channel One"});
+        let mut field_map = HashMap::new();
+        field_map.insert("id".to_string(), "$.id".to_string());
+        field_map.insert("name".to_string(), "$.title".to_string());
+
+        assert_eq!(
+            extract_mapped_field(&item, &field_map, "id"),
+            Some("ch1".to_string())
+        );
+        assert_eq!(
+            extract_mapped_field(&item, &field_map, "name"),
+            Some("Channel One".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_mapped_field_not_found() {
+        let item = json!({"id": "ch1"});
+        let mut field_map = HashMap::new();
+        field_map.insert("id".to_string(), "$.id".to_string());
+
+        assert_eq!(extract_mapped_field(&item, &field_map, "missing"), None);
+        assert_eq!(extract_mapped_field(&item, &field_map, "name"), None);
+    }
+
+    #[test]
+    fn test_get_items_array_with_path() {
+        let response = json!({"data": {"items": [{"id": 1}, {"id": 2}]}});
+        let mapping = otvi_core::config::ResponseMapping {
+            items_path: Some("$.data.items".to_string()),
+            mapping: HashMap::new(),
+            logo_base_url: None,
+        };
+
+        let result = get_items_array(&response, &mapping);
+        assert!(result.is_ok());
+        let items = result.unwrap();
+        assert_eq!(items.len(), 2);
+    }
+
+    #[test]
+    fn test_get_items_array_no_path() {
+        let response = json!([{"id": 1}, {"id": 2}, {"id": 3}]);
+        let mapping = otvi_core::config::ResponseMapping {
+            items_path: None,
+            mapping: HashMap::new(),
+            logo_base_url: None,
+        };
+
+        let result = get_items_array(&response, &mapping);
+        assert!(result.is_ok());
+        let items = result.unwrap();
+        assert_eq!(items.len(), 3);
+    }
+
+    #[test]
+    fn test_get_items_array_path_not_found() {
+        let response = json!({"other": "data"});
+        let mapping = otvi_core::config::ResponseMapping {
+            items_path: Some("$.data.items".to_string()),
+            mapping: HashMap::new(),
+            logo_base_url: None,
+        };
+
+        let result = get_items_array(&response, &mapping);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_items_array_not_array() {
+        let response = json!({"data": "not an array"});
+        let mapping = otvi_core::config::ResponseMapping {
+            items_path: Some("$.data".to_string()),
+            mapping: HashMap::new(),
+            logo_base_url: None,
+        };
+
+        let result = get_items_array(&response, &mapping);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_map_channels_basic() {
+        let response = json!([
+            {"id": "ch1", "name": "Channel 1"},
+            {"id": "ch2", "name": "Channel 2"}
+        ]);
+        let mut map = HashMap::new();
+        map.insert("id".to_string(), "$.id".to_string());
+        map.insert("name".to_string(), "$.name".to_string());
+        let mapping = otvi_core::config::ResponseMapping {
+            items_path: None,
+            mapping: map,
+            logo_base_url: None,
+        };
+
+        let result = map_channels(&response, &mapping);
+        assert!(result.is_ok());
+        let channels = result.unwrap();
+        assert_eq!(channels.len(), 2);
+        assert_eq!(channels[0].id, "ch1");
+        assert_eq!(channels[0].name, "Channel 1");
+    }
+
+    #[test]
+    fn test_map_channels_with_logo_base_url() {
+        let response = json!([
+            {"id": "ch1", "name": "Channel 1", "logo": "/images/ch1.png"}
+        ]);
+        let mut map = HashMap::new();
+        map.insert("id".to_string(), "$.id".to_string());
+        map.insert("name".to_string(), "$.name".to_string());
+        map.insert("logo".to_string(), "$.logo".to_string());
+        let mapping = otvi_core::config::ResponseMapping {
+            items_path: None,
+            mapping: map,
+            logo_base_url: Some("https://cdn.example.com".to_string()),
+        };
+
+        let result = map_channels(&response, &mapping);
+        assert!(result.is_ok());
+        let channels = result.unwrap();
+        assert_eq!(
+            channels[0].logo,
+            Some("https://cdn.example.com/images/ch1.png".to_string())
+        );
+    }
+
+    #[test]
+    fn test_map_channels_with_absolute_logo() {
+        let response = json!([
+            {"id": "ch1", "name": "Channel 1", "logo": "https://other.com/ch1.png"}
+        ]);
+        let mut map = HashMap::new();
+        map.insert("id".to_string(), "$.id".to_string());
+        map.insert("name".to_string(), "$.name".to_string());
+        map.insert("logo".to_string(), "$.logo".to_string());
+        let mapping = otvi_core::config::ResponseMapping {
+            items_path: None,
+            mapping: map,
+            logo_base_url: Some("https://cdn.example.com".to_string()),
+        };
+
+        let result = map_channels(&response, &mapping);
+        assert!(result.is_ok());
+        let channels = result.unwrap();
+        // Absolute URL should not be modified
+        assert_eq!(
+            channels[0].logo,
+            Some("https://other.com/ch1.png".to_string())
+        );
+    }
+
+    #[test]
+    fn test_map_channels_missing_fields() {
+        let response = json!([
+            {"some": "data"}
+        ]);
+        let mut map = HashMap::new();
+        map.insert("id".to_string(), "$.id".to_string());
+        map.insert("name".to_string(), "$.name".to_string());
+        let mapping = otvi_core::config::ResponseMapping {
+            items_path: None,
+            mapping: map,
+            logo_base_url: None,
+        };
+
+        let result = map_channels(&response, &mapping);
+        assert!(result.is_ok());
+        let channels = result.unwrap();
+        assert_eq!(channels[0].id, "unknown");
+        assert_eq!(channels[0].name, "Unnamed");
+    }
+
+    #[test]
+    fn test_map_categories() {
+        let response = json!([
+            {"id": "cat1", "name": "Category 1"},
+            {"id": "cat2", "name": "Category 2"}
+        ]);
+        let mut map = HashMap::new();
+        map.insert("id".to_string(), "$.id".to_string());
+        map.insert("name".to_string(), "$.name".to_string());
+        let mapping = otvi_core::config::ResponseMapping {
+            items_path: None,
+            mapping: map,
+            logo_base_url: None,
+        };
+
+        let result = map_categories(&response, &mapping);
+        assert!(result.is_ok());
+        let categories = result.unwrap();
+        assert_eq!(categories.len(), 2);
+        assert_eq!(categories[0].id, "cat1");
+        assert_eq!(categories[0].name, "Category 1");
+    }
+
+    #[test]
+    fn test_map_categories_missing_fields() {
+        let response = json!([
+            {"other": "data"}
+        ]);
+        let mut map = HashMap::new();
+        map.insert("id".to_string(), "$.id".to_string());
+        map.insert("name".to_string(), "$.name".to_string());
+        let mapping = otvi_core::config::ResponseMapping {
+            items_path: None,
+            mapping: map,
+            logo_base_url: None,
+        };
+
+        let result = map_categories(&response, &mapping);
+        assert!(result.is_ok());
+        let categories = result.unwrap();
+        assert_eq!(categories[0].id, "unknown");
+        assert_eq!(categories[0].name, "Unknown");
+    }
+}

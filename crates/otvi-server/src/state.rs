@@ -120,3 +120,129 @@ impl AppState {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth_middleware::JwtKeys;
+
+    async fn test_db() -> (Db, tempfile::TempDir) {
+        sqlx::any::install_default_drivers();
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let db_path = dir.path().join("test.db");
+        let url = format!("sqlite://{}", db_path.display());
+        let db = crate::db::init(&url).await.expect("test db init");
+        (db, dir)
+    }
+
+    fn test_keys() -> JwtKeys {
+        JwtKeys::new(b"test-secret")
+    }
+
+    #[tokio::test]
+    async fn load_providers_nonexistent_dir_returns_empty() {
+        let (db, _dir) = test_db().await;
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let nonexistent = tmp.path().join("does-not-exist");
+        let state = AppState::load_providers(nonexistent.to_str().unwrap(), db, test_keys())
+            .expect("should succeed with warning");
+        assert!(state.providers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn load_providers_with_valid_yaml() {
+        let (db, _db_dir) = test_db().await;
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let yaml = r#"
+provider:
+  name: TestTV
+  id: test_tv
+auth:
+  flows:
+    - id: email
+      name: Email Login
+      inputs:
+        - key: email
+          label: Email
+      steps:
+        - name: login
+          request:
+            method: POST
+            path: /api/login
+channels:
+  list:
+    request:
+      method: GET
+      path: /api/channels
+    response:
+      items_path: "$.channels"
+playback:
+  stream:
+    request:
+      method: GET
+      path: /api/play/{{input.id}}
+    response:
+      url: "$.url"
+      type: "hls"
+"#;
+        std::fs::write(dir.path().join("test.yaml"), yaml).unwrap();
+        let state =
+            AppState::load_providers(dir.path().to_str().unwrap(), db, test_keys()).unwrap();
+        assert_eq!(state.providers.len(), 1);
+        assert!(state.providers.contains_key("test_tv"));
+    }
+
+    #[tokio::test]
+    async fn load_providers_skips_non_yaml_files() {
+        let (db, _db_dir) = test_db().await;
+        let dir = tempfile::tempdir().expect("create temp dir");
+        std::fs::write(dir.path().join("readme.txt"), "not yaml").unwrap();
+        std::fs::write(dir.path().join("data.json"), "{}").unwrap();
+        let state =
+            AppState::load_providers(dir.path().to_str().unwrap(), db, test_keys()).unwrap();
+        assert!(state.providers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn load_providers_loads_yml_extension() {
+        let (db, _db_dir) = test_db().await;
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let yaml = r#"
+provider:
+  name: YmlTV
+  id: yml_tv
+auth:
+  flows:
+    - id: email
+      name: Email Login
+      inputs:
+        - key: email
+          label: Email
+      steps:
+        - name: login
+          request:
+            method: POST
+            path: /api/login
+channels:
+  list:
+    request:
+      method: GET
+      path: /api/channels
+    response:
+      items_path: "$.channels"
+playback:
+  stream:
+    request:
+      method: GET
+      path: /api/play/{{input.id}}
+    response:
+      url: "$.url"
+      type: "hls"
+"#;
+        std::fs::write(dir.path().join("provider.yml"), yaml).unwrap();
+        let state =
+            AppState::load_providers(dir.path().to_str().unwrap(), db, test_keys()).unwrap();
+        assert_eq!(state.providers.len(), 1);
+        assert!(state.providers.contains_key("yml_tv"));
+    }
+}

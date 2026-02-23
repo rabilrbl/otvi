@@ -304,3 +304,193 @@ pub struct DrmResponseConfig {
     #[serde(default)]
     pub headers: HashMap<String, String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn minimal_yaml() -> &'static str {
+        r#"
+provider:
+  name: TestTV
+  id: test_tv
+auth:
+  flows:
+    - id: email
+      name: Email Login
+      inputs:
+        - key: email
+          label: Email
+      steps:
+        - name: login
+          request:
+            method: POST
+            path: /api/login
+channels:
+  list:
+    request:
+      method: GET
+      path: /api/channels
+    response:
+      items_path: "$.channels"
+playback:
+  stream:
+    request:
+      method: GET
+      path: /api/play/{{input.id}}
+    response:
+      url: "$.url"
+      type: "hls"
+"#
+    }
+
+    #[test]
+    fn deserialize_minimal_config() {
+        let cfg: ProviderConfig = serde_yaml_ng::from_str(minimal_yaml()).unwrap();
+        assert_eq!(cfg.provider.name, "TestTV");
+        assert_eq!(cfg.provider.id, "test_tv");
+        assert_eq!(cfg.auth.flows.len(), 1);
+        assert_eq!(cfg.auth.flows[0].steps[0].request.method, "POST");
+    }
+
+    #[test]
+    fn default_values() {
+        let cfg: ProviderConfig = serde_yaml_ng::from_str(minimal_yaml()).unwrap();
+        // body_encoding defaults to "json"
+        assert_eq!(cfg.auth.flows[0].steps[0].request.body_encoding, "json");
+        // auth scope defaults to PerUser
+        assert_eq!(cfg.auth.scope, AuthScope::PerUser);
+        // field required defaults to true
+        assert!(cfg.auth.flows[0].inputs[0].required);
+        // field_type defaults to "text"
+        assert_eq!(cfg.auth.flows[0].inputs[0].field_type, "text");
+        // defaults has empty base_url and headers
+        assert!(cfg.defaults.base_url.is_empty());
+        assert!(cfg.defaults.headers.is_empty());
+        // provider logo defaults to None
+        assert!(cfg.provider.logo.is_none());
+        // logout and refresh default to None
+        assert!(cfg.auth.logout.is_none());
+        assert!(cfg.auth.refresh.is_none());
+    }
+
+    #[test]
+    fn deserialize_full_config() {
+        let yaml = r#"
+provider:
+  name: FullTV
+  id: full_tv
+  logo: https://example.com/logo.png
+defaults:
+  base_url: https://api.example.com
+  headers:
+    User-Agent: "OTVI/1.0"
+auth:
+  scope: global
+  flows:
+    - id: email
+      name: Email Login
+      inputs:
+        - key: email
+          label: Email
+          type: email
+          required: true
+        - key: password
+          label: Password
+          type: password
+          required: true
+          transform: base64
+      steps:
+        - name: login
+          request:
+            method: POST
+            path: /api/login
+            headers:
+              Content-Type: application/json
+            body: '{"email":"{{input.email}}"}'
+            body_encoding: json
+          on_success:
+            extract:
+              token: "$.data.token"
+          success_status: 200
+  logout:
+    request:
+      method: POST
+      path: /api/logout
+  refresh:
+    request:
+      method: POST
+      path: /api/refresh
+      body: '{"token":"{{stored.token}}"}'
+    on_success:
+      extract:
+        token: "$.data.token"
+channels:
+  list:
+    request:
+      method: GET
+      path: /api/channels
+    response:
+      items_path: "$.channels"
+      mapping:
+        id: "$.channel_id"
+        name: "$.channel_name"
+      logo_base_url: "https://cdn.example.com/"
+  categories:
+    request:
+      method: GET
+      path: /api/categories
+    response:
+      items_path: "$.categories"
+  static_categories:
+    - id: news
+      name: News
+playback:
+  stream:
+    request:
+      method: GET
+      path: /api/play/{{input.id}}
+    response:
+      url: "$.url"
+      type: "hls"
+      drm:
+        system: "$.drm.system"
+        license_url: "$.drm.license_url"
+    proxy_headers:
+      Authorization: "Bearer {{stored.token}}"
+    proxy_url_cookies:
+      hdnea: "__hdnea__"
+    proxy_cookies:
+      ssotoken: "{{stored.sso_token}}"
+    append_manifest_query_to_key_uris: true
+    key_exclude_resolved_cookies: true
+"#;
+        let cfg: ProviderConfig = serde_yaml_ng::from_str(yaml).unwrap();
+        assert_eq!(cfg.provider.name, "FullTV");
+        assert_eq!(
+            cfg.provider.logo,
+            Some("https://example.com/logo.png".into())
+        );
+        assert_eq!(cfg.defaults.base_url, "https://api.example.com");
+        assert_eq!(cfg.defaults.headers.get("User-Agent").unwrap(), "OTVI/1.0");
+        assert_eq!(cfg.auth.scope, AuthScope::Global);
+        assert_eq!(cfg.auth.flows[0].inputs.len(), 2);
+        assert_eq!(cfg.auth.flows[0].inputs[1].transform, Some("base64".into()));
+        assert!(cfg.auth.logout.is_some());
+        assert!(cfg.auth.refresh.is_some());
+        assert_eq!(cfg.channels.static_categories.len(), 1);
+        assert_eq!(cfg.channels.static_categories[0].id, "news");
+        assert!(cfg.channels.categories.is_some());
+        assert!(cfg.playback.stream.response.drm.is_some());
+        assert!(cfg.playback.stream.append_manifest_query_to_key_uris);
+        assert!(cfg.playback.stream.key_exclude_resolved_cookies);
+        assert_eq!(
+            cfg.playback
+                .stream
+                .proxy_headers
+                .get("Authorization")
+                .unwrap(),
+            "Bearer {{stored.token}}"
+        );
+    }
+}

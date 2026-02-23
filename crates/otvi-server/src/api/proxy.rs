@@ -377,3 +377,150 @@ fn rewrite_uri_attributes(
 
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rewrite_m3u8_rewrites_absolute_urls() {
+        let content = "#EXTM3U\nhttps://cdn.example.com/seg1.ts\n";
+        let result = rewrite_m3u8(content, "https://cdn.example.com/master.m3u8", None, None);
+        assert!(result.contains("/api/proxy?url="));
+        assert!(result.contains("cdn.example.com"));
+        assert!(!result.contains("\nhttps://cdn.example.com/seg1.ts\n"));
+    }
+
+    #[test]
+    fn rewrite_m3u8_rewrites_relative_urls() {
+        let content = "#EXTM3U\nsegment001.ts\n";
+        let result = rewrite_m3u8(
+            content,
+            "https://cdn.example.com/live/master.m3u8",
+            None,
+            None,
+        );
+        assert!(result.contains("/api/proxy?url="));
+        // Relative URL should be resolved against the playlist base
+        assert!(result.contains("cdn.example.com"));
+    }
+
+    #[test]
+    fn rewrite_m3u8_rewrites_uri_in_ext_x_key() {
+        let content =
+            "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"https://key.example.com/key.pkey\"\n";
+        let result = rewrite_m3u8(
+            content,
+            "https://cdn.example.com/master.m3u8",
+            Some("tok123"),
+            None,
+        );
+        assert!(result.contains("URI=\"/api/proxy?url="));
+        assert!(result.contains("ctx=tok123"));
+    }
+
+    #[test]
+    fn rewrite_m3u8_preserves_non_url_lines() {
+        let content = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:10\n#EXTINF:9.009,\n";
+        let result = rewrite_m3u8(content, "https://example.com/m.m3u8", None, None);
+        assert!(result.contains("#EXTM3U"));
+        assert!(result.contains("#EXT-X-VERSION:3"));
+        assert!(result.contains("#EXT-X-TARGETDURATION:10"));
+    }
+
+    #[test]
+    fn rewrite_m3u8_appends_ctx_token() {
+        let content = "#EXTM3U\nseg.ts\n";
+        let result = rewrite_m3u8(content, "https://cdn.example.com/m.m3u8", Some("abc"), None);
+        assert!(result.contains("ctx=abc"));
+    }
+
+    #[test]
+    fn rewrite_m3u8_appends_manifest_query_to_key_uris() {
+        let content =
+            "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"https://key.example.com/key.pkey\"\n";
+        let result = rewrite_m3u8(
+            content,
+            "https://cdn.example.com/master.m3u8",
+            Some("tok"),
+            Some("hdnea=token123"),
+        );
+        // The manifest query should be appended to the key URI
+        assert!(result.contains("hdnea%3Dtoken123") || result.contains("hdnea"));
+    }
+
+    #[test]
+    fn resolve_and_proxy_absolute_url() {
+        let base = Url::parse("https://cdn.example.com/live/master.m3u8").unwrap();
+        let result = resolve_and_proxy("https://other.com/seg.ts", &base, None, None);
+        assert!(result.starts_with("/api/proxy?url="));
+        assert!(result.contains("other.com"));
+    }
+
+    #[test]
+    fn resolve_and_proxy_relative_url() {
+        let base = Url::parse("https://cdn.example.com/live/master.m3u8").unwrap();
+        let result = resolve_and_proxy("segment001.ts", &base, None, None);
+        assert!(result.starts_with("/api/proxy?url="));
+        // Should be resolved to https://cdn.example.com/live/segment001.ts
+        assert!(result.contains("cdn.example.com"));
+        assert!(result.contains("segment001.ts"));
+    }
+
+    #[test]
+    fn resolve_and_proxy_with_ctx_token() {
+        let base = Url::parse("https://cdn.example.com/m.m3u8").unwrap();
+        let result = resolve_and_proxy("seg.ts", &base, Some("mytoken"), None);
+        assert!(result.contains("ctx=mytoken"));
+    }
+
+    #[test]
+    fn resolve_and_proxy_with_extra_query() {
+        let base = Url::parse("https://cdn.example.com/m.m3u8").unwrap();
+        let result = resolve_and_proxy("https://key.com/key.pkey", &base, None, Some("tok=abc"));
+        assert!(result.contains("tok%3Dabc") || result.contains("tok"));
+    }
+
+    #[test]
+    fn rewrite_uri_attributes_rewrites_uri_value() {
+        let base = Url::parse("https://cdn.example.com/live/master.m3u8").unwrap();
+        let line = "#EXT-X-KEY:METHOD=AES-128,URI=\"keys/enc.key\",IV=0x1234";
+        let result = rewrite_uri_attributes(line, &base, Some("ctx1"), None);
+        assert!(result.contains("URI=\"/api/proxy?url="));
+        assert!(result.contains("ctx=ctx1"));
+        assert!(result.contains("IV=0x1234"));
+    }
+
+    #[test]
+    fn rewrite_uri_attributes_no_uri_unchanged() {
+        let base = Url::parse("https://cdn.example.com/m.m3u8").unwrap();
+        let line = "#EXT-X-VERSION:3";
+        let result = rewrite_uri_attributes(line, &base, None, None);
+        assert_eq!(result, "#EXT-X-VERSION:3");
+    }
+
+    #[test]
+    fn rewrite_uri_attributes_key_with_manifest_query() {
+        let base = Url::parse("https://cdn.example.com/live/master.m3u8").unwrap();
+        let line = "#EXT-X-KEY:METHOD=AES-128,URI=\"enc.pkey\"";
+        let result = rewrite_uri_attributes(line, &base, Some("c1"), Some("hdnea=val"));
+        // The pkey URL should have the manifest query appended
+        assert!(result.contains("hdnea"));
+    }
+
+    #[test]
+    fn rewrite_m3u8_empty_lines_preserved() {
+        let content = "#EXTM3U\n\n#EXT-X-VERSION:3\n";
+        let result = rewrite_m3u8(content, "https://example.com/m.m3u8", None, None);
+        assert!(result.contains("\n\n"));
+    }
+
+    #[test]
+    fn resolve_and_proxy_parent_relative_path() {
+        let base = Url::parse("https://cdn.example.com/live/hd/master.m3u8").unwrap();
+        let result = resolve_and_proxy("../sd/stream.m3u8", &base, None, None);
+        assert!(result.contains("cdn.example.com"));
+        // Should resolve to /live/sd/stream.m3u8
+        assert!(result.contains("sd"));
+    }
+}

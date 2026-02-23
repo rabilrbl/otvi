@@ -1,16 +1,10 @@
 use std::sync::Arc;
 
-use axum::Router;
-use axum::routing::{delete, get, post, put};
-use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
 
-mod api;
-mod auth_middleware;
-mod db;
-mod error;
-mod provider_client;
-mod state;
+use otvi_server::auth_middleware;
+use otvi_server::db;
+use otvi_server::state;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -55,56 +49,12 @@ async fn main() -> anyhow::Result<()> {
     );
 
     // ── Routes ──────────────────────────────────────────────────────────────
-    // Application-level auth (OTVI user accounts).
-    let user_auth_routes = Router::new()
-        .route("/register", post(api::user_auth::register))
-        .route("/login", post(api::user_auth::login))
-        .route("/me", get(api::user_auth::me))
-        .route("/logout", post(api::user_auth::logout))
-        .route("/change-password", post(api::user_auth::change_password));
-
-    // Provider-specific auth (TV provider sessions).
-    let provider_routes = Router::new()
-        .route("/providers", get(api::providers::list))
-        .route("/providers/{id}", get(api::providers::get_info))
-        .route("/providers/{id}/auth/login", post(api::auth::login))
-        .route("/providers/{id}/auth/logout", post(api::auth::logout))
-        .route("/providers/{id}/auth/check", get(api::auth::check_session))
-        .route("/providers/{id}/channels", get(api::channels::list))
-        .route(
-            "/providers/{id}/channels/categories",
-            get(api::channels::categories),
-        )
-        .route(
-            "/providers/{id}/channels/{channel_id}/stream",
-            get(api::channels::stream),
-        )
-        .route("/proxy", get(api::proxy::proxy_stream));
-
-    // Admin-only routes.
-    let admin_routes = Router::new()
-        .route("/users", get(api::admin::list_users))
-        .route("/users", post(api::admin::create_user))
-        .route("/users/{id}", delete(api::admin::delete_user))
-        .route("/users/{id}/providers", put(api::admin::set_user_providers))
-        .route("/users/{id}/password", put(api::admin::reset_user_password))
-        .route("/settings", get(api::admin::get_settings))
-        .route("/settings", put(api::admin::update_settings));
-
-    let api_routes = Router::new()
-        .nest("/auth", user_auth_routes)
-        .merge(provider_routes)
-        .nest("/admin", admin_routes);
-
-    let app = Router::new()
-        .nest("/api", api_routes)
-        .fallback_service(
-            ServeDir::new(&static_dir)
-                .append_index_html_on_directories(true)
-                .fallback(ServeFile::new(format!("{static_dir}/index.html"))),
-        )
-        .layer(CorsLayer::permissive())
-        .with_state(Arc::new(app_state));
+    let state = Arc::new(app_state);
+    let app = otvi_server::build_router(state).fallback_service(
+        ServeDir::new(&static_dir)
+            .append_index_html_on_directories(true)
+            .fallback(ServeFile::new(format!("{static_dir}/index.html"))),
+    );
 
     let addr = format!("0.0.0.0:{port}");
     tracing::info!("Listening on {addr}");

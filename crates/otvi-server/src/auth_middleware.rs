@@ -180,3 +180,63 @@ where
         Ok(AdminClaims(claims))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn claims_role_maps_admin() {
+        let c = Claims {
+            sub: String::new(),
+            username: String::new(),
+            role: "admin".into(),
+            exp: 0,
+        };
+        assert_eq!(c.role(), UserRole::Admin);
+    }
+
+    #[test]
+    fn claims_role_maps_user() {
+        let c = Claims {
+            sub: String::new(),
+            username: String::new(),
+            role: "user".into(),
+            exp: 0,
+        };
+        assert_eq!(c.role(), UserRole::User);
+    }
+
+    #[test]
+    fn claims_role_maps_unknown_to_user() {
+        let c = Claims {
+            sub: String::new(),
+            username: String::new(),
+            role: "unknown".into(),
+            exp: 0,
+        };
+        assert_eq!(c.role(), UserRole::User);
+    }
+
+    #[test]
+    fn is_admin_returns_true_for_admin() {
+        let c = Claims {
+            sub: String::new(),
+            username: String::new(),
+            role: "admin".into(),
+            exp: 0,
+        };
+        assert!(c.is_admin());
+    }
+
+    #[test]
+    fn is_admin_returns_false_for_user() {
+        let c = Claims {
+            sub: String::new(),
+            username: String::new(),
+            role: "user".into(),
+            exp: 0,
+        };
+        assert!(!c.is_admin());
+    }
+}

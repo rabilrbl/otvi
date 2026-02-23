@@ -1,0 +1,14 @@
+# Docker Compose for integration tests.
+#
+# Starts an httpbin container that the integration tests use as a mock
+# provider API.  Run with:
+#
+#   docker compose -f docker-compose.test.yml up -d
+#   cargo test --test integration -- --ignored
+#   docker compose -f docker-compose.test.yml down
+
+services:
+  httpbin:
+    image: kennethreitz/httpbin
+    ports:
+      - "8888:80"
