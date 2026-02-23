@@ -6,9 +6,8 @@
 # httpbin echoes requests back, making it ideal for testing and demonstration.
 #
 # It works out of the box against the public https://httpbin.org service.
-# For local Docker testing, run:
-#   docker compose -f docker-compose.test.yml up -d
-# Then the integration test script patches base_url to http://localhost:8888.
+# For local Docker testing, the integration tests read the HTTPBIN_URL
+# environment variable and replace the base_url at runtime.
 #
 # How to create your own provider YAML:
 #

@@ -1,8 +1,8 @@
 # Test provider YAML that targets httpbin for integration testing.
 #
 # By default this uses the public https://httpbin.org service.
-# The integration test script automatically patches base_url to use the
-# local Docker container (http://localhost:8888) before running tests.
+# When the HTTPBIN_URL environment variable is set, the integration test code
+# replaces the base_url at runtime (see integration.rs).
 #
 # httpbin endpoints used:
 #   POST /post   – echoes the JSON body back
