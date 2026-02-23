@@ -493,5 +493,4 @@ playback:
             "Bearer {{stored.token}}"
         );
     }
-
 }
