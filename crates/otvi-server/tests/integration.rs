@@ -38,7 +38,7 @@ fn http_client() -> Client {
 /// Helper: load the httpbin test provider YAML.
 fn load_test_provider() -> ProviderConfig {
     let yaml = include_str!("fixtures/httpbin-provider.yaml");
-    serde_yaml_ng::from_str(yaml).expect("Failed to parse test provider YAML")
+    serde_yaml_ng::from_str(yaml).expect("Failed to parse httpbin-provider.yaml fixture")
 }
 
 /// Helper: execute a provider-style HTTP request against httpbin.
