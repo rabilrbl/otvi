@@ -277,6 +277,24 @@ pub struct PlaybackEndpoint {
     /// are still forwarded; only URL-extracted tokens are suppressed.
     #[serde(default)]
     pub key_exclude_resolved_cookies: bool,
+    /// Substring patterns used to identify encryption-key URIs within
+    /// `EXT-X-KEY` tags when `append_manifest_query_to_key_uris` is `true`.
+    ///
+    /// If the list is **empty** (the default), the manifest query is appended
+    /// to **all** URIs found in `EXT-X-KEY` lines.  If one or more patterns
+    /// are given, a URI must contain at least one of them (case-insensitive)
+    /// for the manifest query to be appended.
+    ///
+    /// Use this to restrict query-param forwarding to a specific key-server
+    /// path or file extension when the same manifest contains mixed key URIs.
+    ///
+    /// Example (restrict to Akamai `.pkey` files only):
+    /// ```yaml
+    /// key_uri_patterns:
+    ///   - ".pkey"
+    /// ```
+    #[serde(default)]
+    pub key_uri_patterns: Vec<String>,
 }
 
 /// Describes how to extract stream URL, type and optional DRM information from

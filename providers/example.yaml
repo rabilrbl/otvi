@@ -40,7 +40,7 @@ defaults:
 # ── Authentication ──────────────────────────────────────────────────────────
 
 auth:
-  scope: per_user
+  scope: global
   flows:
     # ── Simple login ──
     - id: "simple"
@@ -108,3 +108,43 @@ playback:
       # httpbin /get echoes the full request URL under $.url
       url: "$.url"
       type: "hls"
+
+    # ── Proxy configuration ───────────────────────────────────────────────────
+    # The following fields control how the OTVI proxy forwards requests to the
+    # upstream CDN on behalf of the browser.  All are optional.
+
+    # Headers forwarded on every upstream proxy request.
+    # Supports {{stored.*}} and {{input.*}} template variables.
+    # proxy_headers:
+    #   Authorization: "Bearer {{stored.access_token}}"
+    #   User-Agent: "MyApp/1.0"
+
+    # Maps a URL query-parameter name (from the stream/manifest URL) to a
+    # cookie name.  Useful for Akamai-style CDNs that embed the auth token
+    # as a query param in the manifest URL but expect it as a cookie on
+    # segment and key-file requests.
+    # Format: <url_param>: <cookie_name>
+    # proxy_url_cookies:
+    #   hdnea: "__hdnea__"
+
+    # Static cookies sent verbatim on every upstream request.
+    # Supports {{stored.*}} template variables.
+    # proxy_cookies:
+    #   ssotoken: "{{stored.sso_token}}"
+
+    # When true, the raw query string from the first manifest URL is appended
+    # to EXT-X-KEY URIs before fetching them upstream.  Set this when the key
+    # server requires the manifest auth token as a URL param.
+    # append_manifest_query_to_key_uris: false
+
+    # When true, cookies extracted from the manifest URL via proxy_url_cookies
+    # are NOT forwarded on AES-128 key requests.  Useful when the key server
+    # lives on a different domain that rejects the CDN auth token.
+    # key_exclude_resolved_cookies: false
+
+    # Substring patterns (case-insensitive) limiting which EXT-X-KEY URIs
+    # receive the manifest query append (requires
+    # append_manifest_query_to_key_uris: true).  Empty = apply to all.
+    # key_uri_patterns:
+    #   - ".pkey"
+    #   - "/keyserver/"

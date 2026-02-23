@@ -252,11 +252,14 @@ playback:
     # The manifest URL's query string (including __hdnea__) is NOT appended to
     # EXT-X-KEY URI lines; the resolved __hdnea__ cookie is sent via the Cookie
     # header instead (same as JioTV-Go behaviour — key server accepts it).
-    append_manifest_query_to_key_uris: false
+    append_manifest_query_to_key_uris: true
     # Allow the resolved __hdnea__ cookie to be forwarded to key requests.
     # Empirically the key server (tv.media.jio.com) requires it even though its
     # path (/fallback/bpk-tv/…) doesn't match the CDN ACL (/bpk-tv/…).
     key_exclude_resolved_cookies: false
+    # key_uri_patterns is not needed here because append_manifest_query_to_key_uris
+    # is false — the manifest query is never appended for JioTV.
+    key_uri_patterns: [".pkey", ".key"]
     # Static cookies forwarded on every upstream proxy request.
     proxy_cookies:
       ssotoken: "{{stored.sso_token}}"

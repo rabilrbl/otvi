@@ -214,6 +214,7 @@ pub async fn proxy_stream(
             upstream_url,
             query.ctx.as_deref(),
             key_extra_query,
+            &ctx.key_uri_patterns,
         );
 
         let mut headers = HeaderMap::new();
@@ -257,13 +258,18 @@ pub async fn proxy_stream(
 ///
 /// `manifest_query` is the raw query string from the original manifest URL
 /// (e.g. `minrate=80000&__hdnea__=st%3D…`).  It is appended to key file
-/// URLs (`.pkey`/`.key`) before proxying so that the upstream CDN receives
-/// the Akamai token as a URL param — matching JioTV-Go's `RenderKeyHandler`.
+/// URLs before proxying so that the upstream CDN receives the auth token as
+/// a URL param.
+///
+/// `key_uri_patterns` controls which URIs within `EXT-X-KEY` lines receive
+/// the `manifest_query` append.  An empty slice means «apply to all»;
+/// otherwise a URI must contain at least one pattern (case-insensitive).
 fn rewrite_m3u8(
     content: &str,
     playlist_url: &str,
     ctx_token: Option<&str>,
     manifest_query: Option<&str>,
+    key_uri_patterns: &[String],
 ) -> String {
     let base = Url::parse(playlist_url).unwrap_or_else(|_| Url::parse("http://unknown").unwrap());
 
@@ -283,7 +289,8 @@ fn rewrite_m3u8(
             // declarations) — controlled by the caller via `manifest_query`.
             let is_key_tag = trimmed.to_uppercase().starts_with("#EXT-X-KEY");
             let extra = if is_key_tag { manifest_query } else { None };
-            let rewritten_line = rewrite_uri_attributes(trimmed, &base, ctx_token, extra);
+            let rewritten_line =
+                rewrite_uri_attributes(trimmed, &base, ctx_token, extra, key_uri_patterns);
             output.push_str(&rewritten_line);
             output.push('\n');
         } else {
@@ -340,14 +347,18 @@ fn resolve_and_proxy(
 
 /// Rewrite `URI="…"` attributes inside EXT-X tags.
 ///
-/// For encryption-key URIs (`.pkey` / `.key`), `manifest_query` is appended
-/// to the target URL so the upstream CDN receives the session token as a URL
-/// param (as JioTV-Go's `RenderKeyHandler` does).
+/// When `manifest_query` is `Some`, it is appended to the target URI so the
+/// upstream CDN receives the session token as a URL param.  Whether to append
+/// is further gated by `key_uri_patterns`: if the slice is non-empty, the URI
+/// must contain at least one pattern (case-insensitive) for the append to
+/// occur; an empty slice means «always append» (the caller is already
+/// responsible for only passing `manifest_query` for `EXT-X-KEY` lines).
 fn rewrite_uri_attributes(
     line: &str,
     base: &Url,
     ctx_token: Option<&str>,
     manifest_query: Option<&str>,
+    key_uri_patterns: &[String],
 ) -> String {
     // Find URI="…" pattern (case-insensitive)
     let mut result = line.to_string();
@@ -358,12 +369,14 @@ fn rewrite_uri_attributes(
         if let Some(uri_end) = result[actual_start..].find('"') {
             let uri_val = &result[actual_start..actual_start + uri_end].to_string();
             // Append manifest query params to key file URLs so the upstream CDN
-            // (e.g. tv.media.jio.com Akamai) receives the auth token in the URL.
+            // receives the auth token in the URL.  Which URIs qualify is
+            // controlled by the provider-configured `key_uri_patterns`; an
+            // empty list means «apply to all URIs in EXT-X-KEY lines».
             let lower = uri_val.to_lowercase();
-            let is_key = lower.contains(".pkey")
-                || lower.ends_with(".key")
-                || lower.contains("aes128.key")
-                || lower.contains("/key");
+            let is_key = key_uri_patterns.is_empty()
+                || key_uri_patterns
+                    .iter()
+                    .any(|p| lower.contains(p.to_lowercase().as_str()));
             let extra = if is_key { manifest_query } else { None };
             let proxied = resolve_and_proxy(uri_val, base, ctx_token, extra);
             result = format!(
@@ -385,7 +398,13 @@ mod tests {
     #[test]
     fn rewrite_m3u8_rewrites_absolute_urls() {
         let content = "#EXTM3U\nhttps://cdn.example.com/seg1.ts\n";
-        let result = rewrite_m3u8(content, "https://cdn.example.com/master.m3u8", None, None);
+        let result = rewrite_m3u8(
+            content,
+            "https://cdn.example.com/master.m3u8",
+            None,
+            None,
+            &[],
+        );
         assert!(result.contains("/api/proxy?url="));
         assert!(result.contains("cdn.example.com"));
         assert!(!result.contains("\nhttps://cdn.example.com/seg1.ts\n"));
@@ -399,6 +418,7 @@ mod tests {
             "https://cdn.example.com/live/master.m3u8",
             None,
             None,
+            &[],
         );
         assert!(result.contains("/api/proxy?url="));
         // Relative URL should be resolved against the playlist base
@@ -414,6 +434,7 @@ mod tests {
             "https://cdn.example.com/master.m3u8",
             Some("tok123"),
             None,
+            &[],
         );
         assert!(result.contains("URI=\"/api/proxy?url="));
         assert!(result.contains("ctx=tok123"));
@@ -422,7 +443,7 @@ mod tests {
     #[test]
     fn rewrite_m3u8_preserves_non_url_lines() {
         let content = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:10\n#EXTINF:9.009,\n";
-        let result = rewrite_m3u8(content, "https://example.com/m.m3u8", None, None);
+        let result = rewrite_m3u8(content, "https://example.com/m.m3u8", None, None, &[]);
         assert!(result.contains("#EXTM3U"));
         assert!(result.contains("#EXT-X-VERSION:3"));
         assert!(result.contains("#EXT-X-TARGETDURATION:10"));
@@ -431,7 +452,13 @@ mod tests {
     #[test]
     fn rewrite_m3u8_appends_ctx_token() {
         let content = "#EXTM3U\nseg.ts\n";
-        let result = rewrite_m3u8(content, "https://cdn.example.com/m.m3u8", Some("abc"), None);
+        let result = rewrite_m3u8(
+            content,
+            "https://cdn.example.com/m.m3u8",
+            Some("abc"),
+            None,
+            &[],
+        );
         assert!(result.contains("ctx=abc"));
     }
 
@@ -444,6 +471,7 @@ mod tests {
             "https://cdn.example.com/master.m3u8",
             Some("tok"),
             Some("hdnea=token123"),
+            &[],
         );
         // The manifest query should be appended to the key URI
         assert!(result.contains("hdnea%3Dtoken123") || result.contains("hdnea"));
@@ -485,7 +513,7 @@ mod tests {
     fn rewrite_uri_attributes_rewrites_uri_value() {
         let base = Url::parse("https://cdn.example.com/live/master.m3u8").unwrap();
         let line = "#EXT-X-KEY:METHOD=AES-128,URI=\"keys/enc.key\",IV=0x1234";
-        let result = rewrite_uri_attributes(line, &base, Some("ctx1"), None);
+        let result = rewrite_uri_attributes(line, &base, Some("ctx1"), None, &[]);
         assert!(result.contains("URI=\"/api/proxy?url="));
         assert!(result.contains("ctx=ctx1"));
         assert!(result.contains("IV=0x1234"));
@@ -495,7 +523,7 @@ mod tests {
     fn rewrite_uri_attributes_no_uri_unchanged() {
         let base = Url::parse("https://cdn.example.com/m.m3u8").unwrap();
         let line = "#EXT-X-VERSION:3";
-        let result = rewrite_uri_attributes(line, &base, None, None);
+        let result = rewrite_uri_attributes(line, &base, None, None, &[]);
         assert_eq!(result, "#EXT-X-VERSION:3");
     }
 
@@ -503,15 +531,15 @@ mod tests {
     fn rewrite_uri_attributes_key_with_manifest_query() {
         let base = Url::parse("https://cdn.example.com/live/master.m3u8").unwrap();
         let line = "#EXT-X-KEY:METHOD=AES-128,URI=\"enc.pkey\"";
-        let result = rewrite_uri_attributes(line, &base, Some("c1"), Some("hdnea=val"));
-        // The pkey URL should have the manifest query appended
+        let result = rewrite_uri_attributes(line, &base, Some("c1"), Some("hdnea=val"), &[]);
+        // Empty patterns → apply to all key-tag URIs; manifest query must be appended
         assert!(result.contains("hdnea"));
     }
 
     #[test]
     fn rewrite_m3u8_empty_lines_preserved() {
         let content = "#EXTM3U\n\n#EXT-X-VERSION:3\n";
-        let result = rewrite_m3u8(content, "https://example.com/m.m3u8", None, None);
+        let result = rewrite_m3u8(content, "https://example.com/m.m3u8", None, None, &[]);
         assert!(result.contains("\n\n"));
     }
 
@@ -522,5 +550,97 @@ mod tests {
         assert!(result.contains("cdn.example.com"));
         // Should resolve to /live/sd/stream.m3u8
         assert!(result.contains("sd"));
+    }
+
+    // ── Provider-specific key_uri_patterns tests ─────────────────────────────
+
+    #[test]
+    fn rewrite_uri_attributes_pattern_match_appends_query() {
+        // When patterns are given and the URI matches, manifest query IS appended.
+        let base = Url::parse("https://cdn.example.com/live/master.m3u8").unwrap();
+        let line = "#EXT-X-KEY:METHOD=AES-128,URI=\"https://keys.example.com/enc.pkey\"";
+        let patterns = vec![".pkey".to_string()];
+        let result = rewrite_uri_attributes(line, &base, Some("c1"), Some("tok=abc"), &patterns);
+        assert!(result.contains("tok%3Dabc") || result.contains("tok"));
+    }
+
+    #[test]
+    fn rewrite_uri_attributes_pattern_no_match_skips_query() {
+        // When patterns are given but the URI does NOT match, manifest query is NOT appended.
+        let base = Url::parse("https://cdn.example.com/live/master.m3u8").unwrap();
+        let line = "#EXT-X-KEY:METHOD=AES-128,URI=\"https://keys.example.com/enc.bin\"";
+        let patterns = vec![".pkey".to_string()];
+        let result = rewrite_uri_attributes(line, &base, Some("c1"), Some("tok=abc"), &patterns);
+        // enc.bin doesn't match ".pkey" → query must NOT be present
+        assert!(!result.contains("tok%3Dabc") && !result.contains("tok=abc"));
+        // But the URI itself is still proxied
+        assert!(result.contains("/api/proxy?url="));
+    }
+
+    #[test]
+    fn rewrite_uri_attributes_multiple_patterns_one_matches() {
+        // With multiple patterns, matching any one of them is sufficient.
+        let base = Url::parse("https://cdn.example.com/live/master.m3u8").unwrap();
+        let line = "#EXT-X-KEY:METHOD=AES-128,URI=\"https://keys.example.com/enc.pkey\"";
+        let patterns = vec![".bin".to_string(), ".pkey".to_string(), ".dat".to_string()];
+        let result = rewrite_uri_attributes(line, &base, Some("c1"), Some("tok=abc"), &patterns);
+        assert!(result.contains("tok%3Dabc") || result.contains("tok"));
+        assert!(result.contains("/api/proxy?url="));
+    }
+
+    #[test]
+    fn rewrite_uri_attributes_multiple_patterns_none_match() {
+        // With multiple patterns, if none match, query is NOT appended.
+        let base = Url::parse("https://cdn.example.com/live/master.m3u8").unwrap();
+        let line = "#EXT-X-KEY:METHOD=AES-128,URI=\"https://keys.example.com/enc.key\"";
+        let patterns = vec![".pkey".to_string(), "/custom-ks/".to_string()];
+        let result = rewrite_uri_attributes(line, &base, Some("c1"), Some("tok=abc"), &patterns);
+        assert!(!result.contains("tok%3Dabc") && !result.contains("tok=abc"));
+        assert!(result.contains("/api/proxy?url="));
+    }
+
+    #[test]
+    fn rewrite_uri_attributes_pattern_match_case_insensitive() {
+        // Patterns must match case-insensitively (URI may be uppercase).
+        let base = Url::parse("https://cdn.example.com/live/master.m3u8").unwrap();
+        let line = "#EXT-X-KEY:METHOD=AES-128,URI=\"https://keys.example.com/ENC.PKEY\"";
+        let patterns = vec![".pkey".to_string()]; // lowercase pattern, uppercase URI
+        let result = rewrite_uri_attributes(line, &base, Some("c1"), Some("tok=abc"), &patterns);
+        assert!(result.contains("tok%3Dabc") || result.contains("tok"));
+    }
+
+    #[test]
+    fn rewrite_m3u8_provider_patterns_applied_to_key_uris() {
+        // Verify that key_uri_patterns are respected end-to-end through rewrite_m3u8.
+        let content =
+            "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"https://key.example.com/enc.customkey\"\n";
+        let patterns = vec![".customkey".to_string()];
+        let result = rewrite_m3u8(
+            content,
+            "https://cdn.example.com/master.m3u8",
+            Some("tok"),
+            Some("auth=secret"),
+            &patterns,
+        );
+        assert!(result.contains("auth%3Dsecret") || result.contains("auth"));
+    }
+
+    #[test]
+    fn rewrite_m3u8_patterns_skip_non_matching_key_uri() {
+        // When a URI does not match any pattern, manifest query must NOT be appended.
+        let content =
+            "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"https://key.example.com/enc.bin\"\n";
+        let patterns = vec![".pkey".to_string()];
+        let result = rewrite_m3u8(
+            content,
+            "https://cdn.example.com/master.m3u8",
+            Some("tok"),
+            Some("auth=secret"),
+            &patterns,
+        );
+        // enc.bin doesn't match .pkey → manifest query must NOT appear in the URL
+        assert!(!result.contains("auth%3Dsecret") && !result.contains("auth=secret"));
+        // The URI is still proxied
+        assert!(result.contains("/api/proxy?url="));
     }
 }

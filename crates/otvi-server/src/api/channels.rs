@@ -227,6 +227,7 @@ pub async fn stream(
                     .stream
                     .append_manifest_query_to_key_uris,
                 key_exclude_resolved_cookies: provider.playback.stream.key_exclude_resolved_cookies,
+                key_uri_patterns: provider.playback.stream.key_uri_patterns.clone(),
             };
             let token = uuid::Uuid::new_v4().to_string();
             state.proxy_ctx.write().unwrap().insert(token.clone(), ctx);

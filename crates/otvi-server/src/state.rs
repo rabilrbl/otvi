@@ -37,6 +37,11 @@ pub struct ProxyContext {
     /// When true, URL-param-extracted cookies (`resolved_cookies`) are not
     /// forwarded on AES-128 key file requests.
     pub key_exclude_resolved_cookies: bool,
+    /// Mirror of `PlaybackEndpoint::key_uri_patterns`.
+    /// Substring patterns used to identify key URIs within `EXT-X-KEY` tags
+    /// when deciding whether to append the manifest query.  An empty list
+    /// means "apply to all key-tag URIs".
+    pub key_uri_patterns: Vec<String>,
 }
 
 fn build_http_client() -> reqwest::Client {
