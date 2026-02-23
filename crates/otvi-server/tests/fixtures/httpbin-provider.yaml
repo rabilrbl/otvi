@@ -1,5 +1,9 @@
 # Test provider YAML that targets httpbin for integration testing.
 #
+# By default this uses the public https://httpbin.org service.
+# The integration test script automatically patches base_url to use the
+# local Docker container (http://localhost:8888) before running tests.
+#
 # httpbin endpoints used:
 #   POST /post   – echoes the JSON body back
 #   GET  /get    – echoes query params and headers back
@@ -10,7 +14,7 @@ provider:
   id: "test-httpbin"
 
 defaults:
-  base_url: "http://localhost:8888"
+  base_url: "https://httpbin.org"
   headers:
     User-Agent: "otvi-test/1.0"
     Accept: "application/json"
@@ -40,6 +44,14 @@ auth:
             extract:
               # httpbin echoes the posted JSON under $.json
               access_token: "$.json.username"
+              user_name: "$.json.username"
+
+  logout:
+    request:
+      method: "POST"
+      path: "/post"
+      headers:
+        Authorization: "Bearer {{stored.access_token}}"
 
 channels:
   list:
@@ -52,6 +64,10 @@ channels:
       mapping:
         id: "$.title"
         name: "$.title"
+
+  static_categories:
+    - { id: "1", name: "Entertainment" }
+    - { id: "2", name: "News" }
 
 playback:
   stream:

@@ -1,6 +1,14 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# StreamMax TV – Example OTVI Provider Configuration
+# httpbin – Example OTVI Provider Configuration
 # ─────────────────────────────────────────────────────────────────────────────
+#
+# This example provider uses httpbin (https://httpbin.org) as the backend API.
+# httpbin echoes requests back, making it ideal for testing and demonstration.
+#
+# It works out of the box against the public https://httpbin.org service.
+# For local Docker testing, run:
+#   docker compose -f docker-compose.test.yml up -d
+# Then the integration test script patches base_url to http://localhost:8888.
 #
 # How to create your own provider YAML:
 #
@@ -19,33 +27,29 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 provider:
-  name: "StreamMax TV"
-  id: "streammax"
-  logo: "https://placehold.co/200x80?text=StreamMax"
+  name: "httpbin"
+  id: "httpbin"
+  logo: "https://httpbin.org/image/png"
 
 # Default HTTP settings applied to every outbound request.
-# Tip: copy the User-Agent and custom headers from your app's traffic.
 defaults:
-  base_url: "https://api.streammax.example.com"
+  base_url: "https://httpbin.org"
   headers:
-    User-Agent: "StreamMaxTV/3.2.1 (Linux; Android 13; Pixel 7)"
-    X-App-Version: "3.2.1"
-    X-Platform: "android"
+    User-Agent: "OTVI-Example/1.0"
     Accept: "application/json"
-    Content-Type: "application/json"
 
 # ── Authentication ──────────────────────────────────────────────────────────
 
 auth:
-  # You can define multiple login flows (email, phone, SSO, …)
+  scope: per_user
   flows:
-    # ── Email + Password ──
-    - id: "email_password"
-      name: "Email & Password"
+    # ── Simple login ──
+    - id: "simple"
+      name: "Username & Password"
       inputs:
-        - key: "email"
-          label: "Email Address"
-          type: "email"
+        - key: "username"
+          label: "Username"
+          type: "text"
           required: true
         - key: "password"
           label: "Password"
@@ -55,84 +59,22 @@ auth:
         - name: "Sign In"
           request:
             method: "POST"
-            path: "/v2/auth/login"
+            path: "/post"
             body: |
-              {
-                "email": "{{input.email}}",
-                "password": "{{input.password}}",
-                "device_id": "{{uuid}}"
-              }
+              {"username":"{{input.username}}","password":"{{input.password}}"}
           on_success:
             extract:
-              access_token: "$.data.access_token"
-              refresh_token: "$.data.refresh_token"
-              user_name: "$.data.user.display_name"
-              user_id: "$.data.user.id"
-
-    # ── Phone + OTP (multi-step) ──
-    - id: "phone_otp"
-      name: "Phone Number"
-      inputs:
-        - key: "phone"
-          label: "Phone Number"
-          type: "tel"
-          required: true
-      steps:
-        - name: "Send Verification Code"
-          request:
-            method: "POST"
-            path: "/v2/auth/otp/send"
-            body: |
-              {
-                "phone_number": "{{input.phone}}",
-                "country_code": "+1"
-              }
-          on_success:
-            extract:
-              request_id: "$.data.request_id"
-            # Prompt the user for the OTP before continuing to step 2
-            prompt:
-              - key: "otp"
-                label: "Enter Verification Code"
-                type: "text"
-                required: true
-
-        - name: "Verify Code"
-          request:
-            method: "POST"
-            path: "/v2/auth/otp/verify"
-            body: |
-              {
-                "phone_number": "{{input.phone}}",
-                "code": "{{input.otp}}",
-                "request_id": "{{stored.request_id}}"
-              }
-          on_success:
-            extract:
-              access_token: "$.data.access_token"
-              refresh_token: "$.data.refresh_token"
-              user_name: "$.data.user.display_name"
+              # httpbin echoes the posted JSON under $.json
+              access_token: "$.json.username"
+              user_name: "$.json.username"
 
   # Logout endpoint (optional)
   logout:
     request:
       method: "POST"
-      path: "/v2/auth/logout"
+      path: "/post"
       headers:
         Authorization: "Bearer {{stored.access_token}}"
-
-  # Token refresh (optional – the server can call this automatically)
-  refresh:
-    request:
-      method: "POST"
-      path: "/v2/auth/token/refresh"
-      body: |
-        {
-          "refresh_token": "{{stored.refresh_token}}"
-        }
-    on_success:
-      extract:
-        access_token: "$.data.access_token"
 
 # ── Channel Browsing ────────────────────────────────────────────────────────
 
@@ -140,36 +82,19 @@ channels:
   list:
     request:
       method: "GET"
-      path: "/v2/channels"
-      headers:
-        Authorization: "Bearer {{stored.access_token}}"
-      params:
-        category: "{{input.category}}"
-        page: "{{input.page}}"
-        per_page: "50"
+      path: "/json"
     response:
-      # Path to the JSON array containing channel objects
-      items_path: "$.data.channels"
-      # Map provider field names → canonical OTVI field names
+      # httpbin /json returns {"slideshow": {"slides": [...]}}
+      items_path: "$.slideshow.slides"
       mapping:
-        id: "$.channel_id"
+        id: "$.title"
         name: "$.title"
-        logo: "$.images.square"
-        category: "$.genre"
-        number: "$.lcn"
-        description: "$.synopsis"
 
-  categories:
-    request:
-      method: "GET"
-      path: "/v2/channels/categories"
-      headers:
-        Authorization: "Bearer {{stored.access_token}}"
-    response:
-      items_path: "$.data"
-      mapping:
-        id: "$.id"
-        name: "$.name"
+  # httpbin has no categories API, so we define static categories
+  static_categories:
+    - { id: "1", name: "Entertainment" }
+    - { id: "2", name: "News" }
+    - { id: "3", name: "Sports" }
 
 # ── Stream Playback ─────────────────────────────────────────────────────────
 
@@ -177,18 +102,10 @@ playback:
   stream:
     request:
       method: "GET"
-      path: "/v2/channels/{{input.channel_id}}/stream"
-      headers:
-        Authorization: "Bearer {{stored.access_token}}"
+      path: "/get"
+      params:
+        channel_id: "{{input.channel_id}}"
     response:
-      # JSONPath to the manifest URL
-      url: "$.data.manifest_url"
-      # JSONPath to the stream type ("hls" or "dash")
-      type: "$.data.stream_format"
-      # DRM info (optional – omit this section for clear streams)
-      drm:
-        system: "$.data.drm.type"
-        license_url: "$.data.drm.license_server_url"
-        headers:
-          Authorization: "Bearer {{stored.access_token}}"
-          X-Custom-Data: "{{stored.user_id}}"
+      # httpbin /get echoes the full request URL under $.url
+      url: "$.url"
+      type: "hls"
