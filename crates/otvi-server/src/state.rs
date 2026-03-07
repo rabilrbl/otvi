@@ -52,9 +52,14 @@ fn build_http_client() -> reqwest::Client {
 }
 
 /// Shared application state injected into every Axum handler.
+///
+/// The provider map is stored in an `RwLock` so the hot-reload watcher can
+/// atomically swap its contents without restarting the server.  All read
+/// accesses go through [`AppState::with_provider`] or
+/// [`AppState::with_providers`] which acquire a short-lived read guard.
 pub struct AppState {
-    /// Provider ID → parsed YAML configuration.
-    pub providers: HashMap<String, ProviderConfig>,
+    /// Provider ID → parsed YAML configuration (hot-reloadable).
+    pub providers_rw: RwLock<HashMap<String, ProviderConfig>>,
     /// Database connection pool (SQLite / PostgreSQL / MySQL via `AnyPool`).
     pub db: Db,
     /// JWT signing / verification keys.
@@ -69,6 +74,33 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Run `f` with an immutable reference to the provider identified by `id`.
+    ///
+    /// Returns `None` when the provider is not found or the lock is poisoned.
+    pub fn with_provider<F, R>(&self, id: &str, f: F) -> Option<R>
+    where
+        F: FnOnce(&ProviderConfig) -> R,
+    {
+        self.providers_rw
+            .read()
+            .ok()
+            .and_then(|guard| guard.get(id).map(f))
+    }
+
+    /// Run `f` with a snapshot clone of the provider map.
+    ///
+    /// Clones the entire map so the lock is held for the shortest possible
+    /// time.  Prefer [`with_provider`] for single-provider lookups.
+    pub fn with_providers<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&HashMap<String, ProviderConfig>) -> R,
+    {
+        match self.providers_rw.read() {
+            Ok(guard) => f(&guard),
+            Err(_) => f(&HashMap::new()),
+        }
+    }
+
     /// Scan `dir` for `*.yaml` / `*.yml` files and parse each as a
     /// [`ProviderConfig`].
     pub fn load_providers(dir: &str, db: Db, jwt_keys: JwtKeys) -> anyhow::Result<Self> {
@@ -81,7 +113,7 @@ impl AppState {
                     "Providers directory '{dir}' not found – starting with no providers"
                 );
                 return Ok(Self {
-                    providers,
+                    providers_rw: RwLock::new(providers),
                     db,
                     jwt_keys,
                     http_client: build_http_client(),
@@ -117,7 +149,7 @@ impl AppState {
         }
 
         Ok(Self {
-            providers,
+            providers_rw: RwLock::new(providers),
             db,
             jwt_keys,
             http_client: build_http_client(),
@@ -151,7 +183,7 @@ mod tests {
         let nonexistent = tmp.path().join("does-not-exist");
         let state = AppState::load_providers(nonexistent.to_str().unwrap(), db, test_keys())
             .expect("should succeed with warning");
-        assert!(state.providers.is_empty());
+        assert!(state.providers_rw.read().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -193,8 +225,63 @@ playback:
         std::fs::write(dir.path().join("test.yaml"), yaml).unwrap();
         let state =
             AppState::load_providers(dir.path().to_str().unwrap(), db, test_keys()).unwrap();
-        assert_eq!(state.providers.len(), 1);
-        assert!(state.providers.contains_key("test_tv"));
+        assert_eq!(state.providers_rw.read().unwrap().len(), 1);
+        assert!(state.providers_rw.read().unwrap().contains_key("test_tv"));
+    }
+
+    #[tokio::test]
+    async fn with_provider_returns_some_for_existing() {
+        let (db, _db_dir) = test_db().await;
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let yaml = r#"
+provider:
+  name: TestTV
+  id: test_tv
+auth:
+  flows:
+    - id: email
+      name: Email Login
+      inputs:
+        - key: email
+          label: Email
+      steps:
+        - name: login
+          request:
+            method: POST
+            path: /api/login
+channels:
+  list:
+    request:
+      method: GET
+      path: /api/channels
+    response:
+      items_path: "$.channels"
+playback:
+  stream:
+    request:
+      method: GET
+      path: /api/play/{{input.id}}
+    response:
+      url: "$.url"
+      type: "hls"
+"#;
+        std::fs::write(dir.path().join("test.yaml"), yaml).unwrap();
+        let state =
+            AppState::load_providers(dir.path().to_str().unwrap(), db, test_keys()).unwrap();
+
+        let name = state.with_provider("test_tv", |p| p.provider.name.clone());
+        assert_eq!(name, Some("TestTV".to_string()));
+    }
+
+    #[tokio::test]
+    async fn with_provider_returns_none_for_missing() {
+        let (db, _db_dir) = test_db().await;
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let state =
+            AppState::load_providers(dir.path().to_str().unwrap(), db, test_keys()).unwrap();
+
+        let result = state.with_provider("nonexistent", |p| p.provider.name.clone());
+        assert!(result.is_none());
     }
 
     #[tokio::test]
@@ -205,7 +292,7 @@ playback:
         std::fs::write(dir.path().join("data.json"), "{}").unwrap();
         let state =
             AppState::load_providers(dir.path().to_str().unwrap(), db, test_keys()).unwrap();
-        assert!(state.providers.is_empty());
+        assert!(state.providers_rw.read().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -247,7 +334,7 @@ playback:
         std::fs::write(dir.path().join("provider.yml"), yaml).unwrap();
         let state =
             AppState::load_providers(dir.path().to_str().unwrap(), db, test_keys()).unwrap();
-        assert_eq!(state.providers.len(), 1);
-        assert!(state.providers.contains_key("yml_tv"));
+        assert_eq!(state.providers_rw.read().unwrap().len(), 1);
+        assert!(state.providers_rw.read().unwrap().contains_key("yml_tv"));
     }
 }

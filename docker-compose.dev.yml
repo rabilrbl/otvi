@@ -1,0 +1,73 @@
+# ── OTVI – Local Development Compose ─────────────────────────────────────────
+#
+# Usage:
+#   docker compose -f docker-compose.dev.yml up --build
+#
+# Differences from the production compose:
+#   - Provider YAML files are bind-mounted read-write so hot-reload picks up
+#     changes immediately without rebuilding the image.
+#   - The SQLite database is stored in a local ./data/ directory so you can
+#     inspect it with any SQLite client.
+#   - RUST_LOG is set to DEBUG for verbose output.
+#   - LOG_FORMAT=text for human-readable logs.
+#   - CORS is fully permissive (all origins allowed).
+#   - A predictable JWT_SECRET is used so tokens survive restarts.
+#     ⚠  Never use this secret in production.
+#   - Port 3000 is forwarded to the host.
+#   - The container is NOT set to restart automatically (easier to stop/start).
+
+services:
+  otvi-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # Re-use the same multi-stage Dockerfile; no separate dev Dockerfile needed.
+    image: otvi:dev
+    container_name: otvi-dev
+    ports:
+      - "3000:3000"
+    volumes:
+      # ── Provider configs (hot-reload enabled) ──────────────────────────────
+      # Changes to *.yaml / *.yml files are detected by the file-system watcher
+      # and reloaded in-process without restarting the container.
+      - ./providers:/app/providers
+
+      # ── Persistent SQLite database ─────────────────────────────────────────
+      # Stored locally so you can open it with `sqlite3 ./data/data.db`.
+      - ./data:/app/data
+
+    environment:
+      PORT: "3000"
+      PROVIDERS_DIR: /app/providers
+      STATIC_DIR: /app/dist
+
+      # ── Database ─────────────────────────────────────────────────────────
+      # Use a local SQLite file by default.
+      # Switch to postgres:// or mysql:// to test against a real DB engine.
+      DATABASE_URL: "sqlite:///app/data/data.db"
+
+      # ── Logging ──────────────────────────────────────────────────────────
+      # Use "json" here if you want to pipe logs into a local Loki / Grafana
+      # stack for testing structured logging.
+      LOG_FORMAT: "text"
+      RUST_LOG: "otvi_server=debug,tower_http=debug"
+
+      # ── Auth ─────────────────────────────────────────────────────────────
+      # Predictable dev secret so JWTs survive container restarts.
+      # ⚠  Never use this value in production.
+      JWT_SECRET: "dev-only-insecure-jwt-secret-do-not-use-in-prod"
+
+      # ── CORS ─────────────────────────────────────────────────────────────
+      # Permit all origins in development so the Trunk dev server on :8080
+      # (or any other port) can reach the API on :3000.
+      CORS_ORIGINS: "*"
+
+    # No restart policy in dev – stop/start manually.
+    restart: "no"
+
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 10s

@@ -80,6 +80,10 @@ pub struct Channel {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelListResponse {
     pub channels: Vec<Channel>,
+    /// Total number of channels matching the filter, before pagination.
+    /// `None` when the backend did not compute a total (e.g. old API versions).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

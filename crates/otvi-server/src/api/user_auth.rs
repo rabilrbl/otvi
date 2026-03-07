@@ -4,10 +4,26 @@
 //! Provider-level authentication lives in `api/auth.rs`.
 //!
 //! Routes:
-//!   POST  /api/auth/register — create an account (disabled by admin if signup is off)
-//!   POST  /api/auth/login    — exchange username+password for a JWT
-//!   GET   /api/auth/me       — return the currently authenticated user's info
-//!   POST  /api/auth/logout   — no-op; clients simply discard their JWT
+//!   POST  /api/auth/register        — create an account (disabled by admin if signup is off)
+//!   POST  /api/auth/login           — exchange username+password for a JWT
+//!   GET   /api/auth/me              — return the currently authenticated user's info
+//!   POST  /api/auth/logout          — no-op; clients simply discard their JWT
+//!   POST  /api/auth/change-password — change password; clears `must_change_password`
+//!
+//! ## Password policy
+//!
+//! All passwords (registration, change, admin reset) are validated through the
+//! shared [`validate_password`] function which enforces:
+//! - Minimum 8 characters
+//! - At least one uppercase letter
+//! - At least one digit
+//!
+//! ## must_change_password enforcement
+//!
+//! When a user has `must_change_password = true` the server **rejects all API
+//! calls** (returning `403 Forbidden`) except for `POST /api/auth/change-password`
+//! and `GET /api/auth/me`.  This prevents admin-created accounts from accessing
+//! any functionality until they set a personal password.
 
 use std::sync::Arc;
 
@@ -21,10 +37,71 @@ use otvi_core::types::{
     AppLoginRequest, AppLoginResponse, ChangePasswordRequest, RegisterRequest, UserInfo, UserRole,
 };
 
+// ── Password policy ────────────────────────────────────────────────────────
+
+/// Shared password-strength validator used by registration, change-password,
+/// and admin reset.
+///
+/// # Rules
+/// - At least 8 characters.
+/// - At least one uppercase ASCII letter.
+/// - At least one ASCII digit.
+///
+/// Returns `Ok(())` on success or an `AppError::BadRequest` with a descriptive
+/// message on failure.
+pub fn validate_password(password: &str) -> Result<(), AppError> {
+    if password.len() < 8 {
+        return Err(AppError::BadRequest(
+            "Password must be at least 8 characters".into(),
+        ));
+    }
+    if !password.chars().any(|c| c.is_ascii_uppercase()) {
+        return Err(AppError::BadRequest(
+            "Password must contain at least one uppercase letter".into(),
+        ));
+    }
+    if !password.chars().any(|c| c.is_ascii_digit()) {
+        return Err(AppError::BadRequest(
+            "Password must contain at least one digit".into(),
+        ));
+    }
+    Ok(())
+}
+
+// ── must_change_password guard ─────────────────────────────────────────────
+
+/// Return `403 Forbidden` when the authenticated user still has an active
+/// `must_change_password` flag.
+///
+/// Call this at the top of every handler **except** `change_password` and `me`
+/// to enforce that admin-created accounts cannot access anything until they
+/// have set a personal password.
+pub async fn require_password_not_forced(
+    db: &crate::db::Db,
+    user_id: &str,
+) -> Result<(), AppError> {
+    let mcp = crate::db::get_user_by_id(db, user_id)
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+        .map(|r| r.must_change_password)
+        .unwrap_or(false);
+
+    if mcp {
+        return Err(AppError::Forbidden(
+            "You must change your password before using the application. \
+             Please visit the change-password page."
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
 use crate::auth_middleware::{Claims, create_token};
 use crate::db;
 use crate::error::AppError;
 use crate::state::AppState;
+
+// ── Handlers ──────────────────────────────────────────────────────────────
 
 /// `POST /api/auth/register`
 pub async fn register(
@@ -46,6 +123,8 @@ pub async fn register(
             "Username and password are required".into(),
         ));
     }
+    // Enforce shared password policy on self-registration.
+    validate_password(&req.password)?;
 
     // Check for duplicate username.
     if db::get_user_by_username(&state.db, &req.username)
@@ -157,21 +236,16 @@ pub async fn me(
 ///
 /// Authenticated users change their own password.  On success the
 /// `must_change_password` flag is cleared and a fresh JWT is returned.
+///
+/// This endpoint is intentionally **exempt** from the `require_password_not_forced`
+/// guard — it must remain reachable when the flag is set.
 pub async fn change_password(
     State(state): State<Arc<AppState>>,
     claims: Claims,
     Json(req): Json<ChangePasswordRequest>,
 ) -> Result<Json<AppLoginResponse>, AppError> {
-    if req.new_password.is_empty() {
-        return Err(AppError::BadRequest(
-            "New password must not be empty".into(),
-        ));
-    }
-    if req.new_password.len() < 8 {
-        return Err(AppError::BadRequest(
-            "New password must be at least 8 characters".into(),
-        ));
-    }
+    // Validate new password against the shared policy.
+    validate_password(&req.new_password)?;
 
     let row = db::get_user_by_id(&state.db, &claims.sub)
         .await
@@ -210,8 +284,9 @@ pub async fn logout() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "success": true }))
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────
 
+/// Hash `password` with Argon2id.
 pub fn hash_password(password: &str) -> Result<String, AppError> {
     let salt = SaltString::generate(&mut OsRng);
     Argon2::default()
@@ -220,6 +295,8 @@ pub fn hash_password(password: &str) -> Result<String, AppError> {
         .map_err(|e| AppError::Internal(format!("Password hash error: {e}")))
 }
 
+/// Verify `password` against an Argon2 `hash`.  Returns `AppError::Unauthorized`
+/// when the password does not match.
 pub fn verify_password(password: &str, hash: &str) -> Result<(), AppError> {
     let parsed =
         PasswordHash::new(hash).map_err(|e| AppError::Internal(format!("Invalid hash: {e}")))?;

@@ -1,5 +1,9 @@
 //! Admin-only endpoints for user and server management.
 //!
+//! Password policy is enforced via the shared [`validate_password`] function
+//! from `api::user_auth`, ensuring consistency across all password-setting
+//! paths (self-registration, change-password, admin create, admin reset).
+//!
 //! All routes under `/api/admin/…` require a valid JWT with `role == "admin"`.
 //!
 //! Routes:
@@ -17,7 +21,7 @@ use axum::extract::{Path, State};
 
 use otvi_core::types::*;
 
-use crate::api::user_auth::hash_password;
+use crate::api::user_auth::{hash_password, validate_password};
 use crate::auth_middleware::AdminClaims;
 use crate::db;
 use crate::error::AppError;
@@ -66,6 +70,8 @@ pub async fn create_user(
             "Username and password are required".into(),
         ));
     }
+    // Enforce shared password policy (min 8 chars, uppercase, digit).
+    validate_password(&req.password)?;
 
     if db::get_user_by_username(&state.db, &req.username)
         .await
@@ -145,6 +151,8 @@ pub async fn reset_user_password(
     if req.new_password.is_empty() {
         return Err(AppError::BadRequest("Password must not be empty".into()));
     }
+    // Enforce the same password policy used everywhere else.
+    validate_password(&req.new_password)?;
 
     let hash = hash_password(&req.new_password)?;
     db::update_password(&state.db, &user_id, &hash)

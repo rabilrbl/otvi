@@ -22,7 +22,7 @@ use axum::extract::{Path, State};
 use chrono::Utc;
 use uuid::Uuid;
 
-use otvi_core::config::AuthScope;
+use otvi_core::config::{AuthFlow, AuthScope};
 use otvi_core::template::{TemplateContext, extract_json_path};
 use otvi_core::types::*;
 
@@ -34,10 +34,7 @@ use crate::state::AppState;
 
 // ── Apply input transforms (base64, …) ────────────────────────────────────
 
-fn apply_transforms(
-    flow: &otvi_core::config::AuthFlow,
-    inputs: &HashMap<String, String>,
-) -> HashMap<String, String> {
+fn apply_transforms(flow: &AuthFlow, inputs: &HashMap<String, String>) -> HashMap<String, String> {
     let mut result = inputs.clone();
     for field in &flow.inputs {
         if let Some(transform) = &field.transform
@@ -79,34 +76,40 @@ pub async fn login(
     claims: Claims,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, AppError> {
-    let provider = state
-        .providers
-        .get(&provider_id)
+    // Extract everything we need from the provider config while holding the
+    // read lock for the shortest possible time, then drop the guard.
+    let provider_data = state
+        .with_provider(&provider_id, |p| {
+            let scope = p.auth.scope.clone();
+            let flow = p.auth.flows.iter().find(|f| f.id == req.flow_id).cloned();
+            let base_url = p.defaults.base_url.clone();
+            let default_headers = p.defaults.headers.clone();
+            (scope, flow, base_url, default_headers)
+        })
         .ok_or_else(|| AppError::NotFound("Provider not found".into()))?;
 
+    let (scope, maybe_flow, base_url, default_headers) = provider_data;
+
     // Scope check: global providers require admin.
-    if provider.auth.scope == AuthScope::Global && !claims.is_admin() {
+    if scope == AuthScope::Global && !claims.is_admin() {
         return Err(AppError::Forbidden(
             "Admin access required to manage global provider credentials".into(),
         ));
     }
 
-    let flow = provider
-        .auth
-        .flows
-        .iter()
-        .find(|f| f.id == req.flow_id)
-        .ok_or_else(|| AppError::NotFound("Auth flow not found".into()))?;
+    let flow = maybe_flow.ok_or_else(|| AppError::NotFound("Auth flow not found".into()))?;
 
     let step = flow
         .steps
         .get(req.step)
+        .cloned()
         .ok_or_else(|| AppError::BadRequest("Invalid step index".into()))?;
 
-    let transformed_inputs = apply_transforms(flow, &req.inputs);
+    let total_steps = flow.steps.len();
+    let transformed_inputs = apply_transforms(&flow, &req.inputs);
 
     // ── Build template context ────────────────────────────────────────────
-    let uid = session_user_id(&provider.auth.scope, &claims);
+    let uid = session_user_id(&scope, &claims);
     let stored = db::get_provider_session_values(&state.db, &uid, &provider_id)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -132,8 +135,8 @@ pub async fn login(
     // ── Execute provider request ──────────────────────────────────────────
     let response = provider_client::execute_request(
         &state.http_client,
-        &provider.defaults.base_url,
-        &provider.defaults.headers,
+        &base_url,
+        &default_headers,
         &step.request,
         &context,
     )
@@ -197,7 +200,7 @@ pub async fn login(
                     user_name: None,
                     error: None,
                 }))
-            } else if req.step + 1 < flow.steps.len() {
+            } else if req.step + 1 < total_steps {
                 Ok(Json(LoginResponse {
                     success: false,
                     session_id: None,
@@ -234,12 +237,11 @@ pub async fn check_session(
     Path(provider_id): Path<String>,
     claims: Claims,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let provider = state
-        .providers
-        .get(&provider_id)
+    let scope = state
+        .with_provider(&provider_id, |p| p.auth.scope.clone())
         .ok_or_else(|| AppError::NotFound("Provider not found".into()))?;
 
-    let uid = session_user_id(&provider.auth.scope, &claims);
+    let uid = session_user_id(&scope, &claims);
     let stored = db::get_provider_session_values(&state.db, &uid, &provider_id)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -258,26 +260,34 @@ pub async fn logout(
     Path(provider_id): Path<String>,
     claims: Claims,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let provider = state
-        .providers
-        .get(&provider_id)
+    let provider_data = state
+        .with_provider(&provider_id, |p| {
+            (
+                p.auth.scope.clone(),
+                p.auth.logout.clone(),
+                p.defaults.base_url.clone(),
+                p.defaults.headers.clone(),
+            )
+        })
         .ok_or_else(|| AppError::NotFound("Provider not found".into()))?;
 
-    if provider.auth.scope == AuthScope::Global && !claims.is_admin() {
+    let (scope, logout_cfg, base_url, default_headers) = provider_data;
+
+    if scope == AuthScope::Global && !claims.is_admin() {
         return Err(AppError::Forbidden(
             "Admin access required to manage global provider credentials".into(),
         ));
     }
 
-    let uid = session_user_id(&provider.auth.scope, &claims);
+    let uid = session_user_id(&scope, &claims);
 
-    if let Some(logout_cfg) = &provider.auth.logout {
+    if let Some(logout_req) = logout_cfg {
         let context = build_provider_context(&state, &uid, &provider_id).await?;
         let _ = provider_client::execute_request_body(
             &state.http_client,
-            &provider.defaults.base_url,
-            &provider.defaults.headers,
-            &logout_cfg.request,
+            &base_url,
+            &default_headers,
+            &logout_req.request,
             &context,
         )
         .await;
@@ -308,9 +318,6 @@ pub async fn build_provider_context(
         context.set(format!("stored.{k}"), v.clone());
     }
     context.set("uuid", uuid::Uuid::new_v4().to_string());
-    // Dynamic time helpers (same formats used by JioTV-Go's GenerateCurrentTime / GenerateDate).
-    // {{utcnow}} → YYYYMMDDTHHMMSS in UTC (JioTV `begin` param)
-    // {{utcdate}} → YYYYMMDD in UTC (JioTV `srno` param)
     let now = chrono::Utc::now();
     context.set("utcnow", now.format("%Y%m%dT%H%M%S").to_string());
     context.set("utcdate", now.format("%Y%m%d").to_string());

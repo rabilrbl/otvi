@@ -5,6 +5,7 @@ use axum::extract::{Path, State};
 
 use otvi_core::types::*;
 
+use crate::api::user_auth::require_password_not_forced;
 use crate::auth_middleware::Claims;
 use crate::db;
 use crate::error::AppError;
@@ -18,16 +19,18 @@ pub async fn list(
     State(state): State<Arc<AppState>>,
     claims: Claims,
 ) -> Result<Json<Vec<ProviderInfo>>, AppError> {
+    require_password_not_forced(&state.db, &claims.sub).await?;
+
     let allowed = db::get_user_providers(&state.db, &claims.sub)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let providers: Vec<ProviderInfo> = state
-        .providers
-        .values()
-        .filter(|cfg| allowed.is_empty() || allowed.contains(&cfg.provider.id))
-        .map(provider_to_info)
-        .collect();
+    let providers = state.with_providers(|map| {
+        map.values()
+            .filter(|cfg| allowed.is_empty() || allowed.contains(&cfg.provider.id))
+            .map(provider_to_info)
+            .collect::<Vec<_>>()
+    });
 
     Ok(Json(providers))
 }
@@ -38,6 +41,8 @@ pub async fn get_info(
     Path(id): Path<String>,
     claims: Claims,
 ) -> Result<Json<ProviderInfo>, AppError> {
+    require_password_not_forced(&state.db, &claims.sub).await?;
+
     // Check access.
     let allowed = db::get_user_providers(&state.db, &claims.sub)
         .await
@@ -47,15 +52,14 @@ pub async fn get_info(
         return Err(AppError::NotFound(format!("Provider '{id}' not found")));
     }
 
-    let cfg = state
-        .providers
-        .get(&id)
+    let info = state
+        .with_provider(&id, provider_to_info)
         .ok_or_else(|| AppError::NotFound(format!("Provider '{id}' not found")))?;
 
-    Ok(Json(provider_to_info(cfg)))
+    Ok(Json(info))
 }
 
-fn provider_to_info(cfg: &otvi_core::config::ProviderConfig) -> ProviderInfo {
+pub fn provider_to_info(cfg: &otvi_core::config::ProviderConfig) -> ProviderInfo {
     ProviderInfo {
         id: cfg.provider.id.clone(),
         name: cfg.provider.name.clone(),

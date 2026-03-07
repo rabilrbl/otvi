@@ -48,7 +48,7 @@ async fn build_test_app() -> (axum::Router, tempfile::TempDir) {
     providers.insert(provider.provider.id.clone(), provider);
 
     let state = Arc::new(AppState {
-        providers,
+        providers_rw: std::sync::RwLock::new(providers),
         db,
         jwt_keys,
         http_client: reqwest::Client::builder()
@@ -127,7 +127,7 @@ async fn register_admin(app: &axum::Router) -> (String, String) {
         app,
         post_json(
             "/api/auth/register",
-            &json!({"username": "admin", "password": "admin-password-123"}),
+            &json!({"username": "admin", "password": "Admin-Password-1"}),
         ),
     )
     .await;
@@ -147,7 +147,7 @@ async fn first_user_becomes_admin() {
         &app,
         post_json(
             "/api/auth/register",
-            &json!({"username": "first", "password": "password-123"}),
+            &json!({"username": "first", "password": "Password123"}),
         ),
     )
     .await;
@@ -163,7 +163,7 @@ async fn second_user_is_regular_user() {
         &app,
         post_json(
             "/api/auth/register",
-            &json!({"username": "user2", "password": "user-password-123"}),
+            &json!({"username": "user2", "password": "UserPass123"}),
         ),
     )
     .await;
@@ -178,7 +178,7 @@ async fn register_empty_username_rejected() {
         &app,
         post_json(
             "/api/auth/register",
-            &json!({"username": "", "password": "password-123"}),
+            &json!({"username": "", "password": "Password123"}),
         ),
     )
     .await;
@@ -194,7 +194,7 @@ async fn register_duplicate_username_rejected() {
         &app,
         post_json(
             "/api/auth/register",
-            &json!({"username": "admin", "password": "another-pass-123"}),
+            &json!({"username": "admin", "password": "AnotherPass1"}),
         ),
     )
     .await;
@@ -211,7 +211,7 @@ async fn login_success() {
         &app,
         post_json(
             "/api/auth/login",
-            &json!({"username": "admin", "password": "admin-password-123"}),
+            &json!({"username": "admin", "password": "Admin-Password-1"}),
         ),
     )
     .await;
@@ -229,7 +229,7 @@ async fn login_wrong_password() {
         &app,
         post_json(
             "/api/auth/login",
-            &json!({"username": "admin", "password": "wrong-password"}),
+            &json!({"username": "admin", "password": "WrongPassword"}),
         ),
     )
     .await;
@@ -245,7 +245,7 @@ async fn login_nonexistent_user() {
         &app,
         post_json(
             "/api/auth/login",
-            &json!({"username": "ghost", "password": "whatever"}),
+            &json!({"username": "ghost", "password": "Whatever1"}),
         ),
     )
     .await;
@@ -301,8 +301,8 @@ async fn change_password_success() {
         post_json_auth(
             "/api/auth/change-password",
             &json!({
-                "current_password": "admin-password-123",
-                "new_password": "new-secure-password-123"
+                "current_password": "Admin-Password-1",
+                "new_password": "NewSecurePass1"
             }),
             &token,
         ),
@@ -316,7 +316,7 @@ async fn change_password_success() {
         &app,
         post_json(
             "/api/auth/login",
-            &json!({"username": "admin", "password": "new-secure-password-123"}),
+            &json!({"username": "admin", "password": "NewSecurePass1"}),
         ),
     )
     .await;
@@ -334,7 +334,7 @@ async fn change_password_wrong_current() {
             "/api/auth/change-password",
             &json!({
                 "current_password": "wrong",
-                "new_password": "new-password-123"
+                "new_password": "NewPassword1"
             }),
             &token,
         ),
@@ -353,7 +353,7 @@ async fn change_password_too_short() {
         post_json_auth(
             "/api/auth/change-password",
             &json!({
-                "current_password": "admin-password-123",
+                "current_password": "Admin-Password-1",
                 "new_password": "short"
             }),
             &token,
@@ -694,7 +694,7 @@ async fn admin_create_user() {
             "/api/admin/users",
             &json!({
                 "username": "newuser",
-                "password": "user-password-123",
+                "password": "UserPass123",
                 "role": "user",
                 "providers": []
             }),
@@ -719,7 +719,7 @@ async fn admin_create_user_duplicate() {
             "/api/admin/users",
             &json!({
                 "username": "dupuser",
-                "password": "password-123",
+                "password": "Password123",
                 "role": "user"
             }),
             &token,
@@ -733,7 +733,7 @@ async fn admin_create_user_duplicate() {
             "/api/admin/users",
             &json!({
                 "username": "dupuser",
-                "password": "password-123",
+                "password": "Password123",
                 "role": "user"
             }),
             &token,
@@ -755,7 +755,7 @@ async fn admin_delete_user() {
             "/api/admin/users",
             &json!({
                 "username": "todelete",
-                "password": "password-123",
+                "password": "Password123",
                 "role": "user"
             }),
             &token,
@@ -802,7 +802,7 @@ async fn admin_set_user_providers() {
             "/api/admin/users",
             &json!({
                 "username": "limited",
-                "password": "password-123",
+                "password": "Password123",
                 "role": "user"
             }),
             &token,
@@ -835,7 +835,7 @@ async fn admin_reset_user_password() {
             "/api/admin/users",
             &json!({
                 "username": "resetme",
-                "password": "password-123",
+                "password": "Password123",
                 "role": "user"
             }),
             &token,
@@ -848,7 +848,7 @@ async fn admin_reset_user_password() {
         &app,
         put_json_auth(
             &format!("/api/admin/users/{user_id}/password"),
-            &json!({"new_password": "new-password-123"}),
+            &json!({"new_password": "NewPassword1"}),
             &token,
         ),
     )
@@ -860,7 +860,7 @@ async fn admin_reset_user_password() {
         &app,
         post_json(
             "/api/auth/login",
-            &json!({"username": "resetme", "password": "new-password-123"}),
+            &json!({"username": "resetme", "password": "NewPassword1"}),
         ),
     )
     .await;
@@ -879,7 +879,7 @@ async fn admin_reset_password_empty_rejected() {
             "/api/admin/users",
             &json!({
                 "username": "emptypass",
-                "password": "password-123",
+                "password": "Password123",
                 "role": "user"
             }),
             &token,
@@ -934,7 +934,7 @@ async fn admin_update_settings_disable_signup() {
         &app,
         post_json(
             "/api/auth/register",
-            &json!({"username": "newguy", "password": "password-123"}),
+            &json!({"username": "newguy", "password": "Password123"}),
         ),
     )
     .await;
@@ -951,7 +951,7 @@ async fn regular_user_cannot_access_admin() {
         &app,
         post_json(
             "/api/auth/register",
-            &json!({"username": "regular", "password": "user-password-123"}),
+            &json!({"username": "regular", "password": "UserPass123"}),
         ),
     )
     .await;
@@ -977,7 +977,7 @@ async fn user_with_restricted_providers() {
             "/api/admin/users",
             &json!({
                 "username": "restricted",
-                "password": "password-123",
+                "password": "Password123",
                 "role": "user",
                 "providers": ["nonexistent-provider"]
             }),
@@ -991,10 +991,26 @@ async fn user_with_restricted_providers() {
         &app,
         post_json(
             "/api/auth/login",
-            &json!({"username": "restricted", "password": "password-123"}),
+            &json!({"username": "restricted", "password": "Password123"}),
         ),
     )
     .await;
+    let user_token = body["token"].as_str().unwrap();
+
+    // Admin-created accounts have must_change_password=true; change it first.
+    let (status, body) = send(
+        &app,
+        post_json_auth(
+            "/api/auth/change-password",
+            &json!({
+                "current_password": "Password123",
+                "new_password": "NewPassword1"
+            }),
+            user_token,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "change password: {body}");
     let user_token = body["token"].as_str().unwrap();
 
     let (status, body) = send(&app, get_auth("/api/providers", user_token)).await;
@@ -1102,7 +1118,7 @@ async fn full_e2e_flow() {
             "/api/admin/users",
             &json!({
                 "username": "viewer",
-                "password": "viewer-pass-123",
+                "password": "ViewerPass1",
                 "role": "user"
             }),
             &admin_token,
