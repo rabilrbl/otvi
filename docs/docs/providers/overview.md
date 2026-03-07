@@ -12,9 +12,36 @@ Providers are the heart of OTVI. Each provider is defined in a single YAML file 
 1. **Capture traffic** from the provider's mobile or Android TV app using tools like mitmproxy, Charles Proxy, or HTTP Toolkit.
 2. **Create a YAML file** based on the captured API endpoints, headers, and body structures.
 3. **Place the file** in the `providers/` directory.
-4. **Restart** the server to load the new provider.
+4. **Save** — the running server picks up the change within ~300 ms. No restart is required.
 
 No code changes are required — everything is defined declaratively in YAML.
+
+## Hot-Reload
+
+The server **watches the `providers/` directory** for file-system events. Any time you create, modify, or delete a `.yaml` / `.yml` file, the provider map is atomically updated in memory:
+
+```bash
+# While the server is running, just edit a provider file:
+$EDITOR providers/myprovider.yaml
+# → Changes are reflected within ~300 ms, no restart needed.
+```
+
+This makes iterating on a provider config fast: capture a new endpoint, add it to the YAML, save, and the change is live immediately.
+
+## VS Code Auto-Complete
+
+Point the [YAML extension](https://marketplace.visualstudio.com/items?itemName=redhat.vscode-yaml) at the live JSON Schema endpoint for inline validation and auto-complete while editing:
+
+```jsonc
+// .vscode/settings.json
+{
+  "yaml.schemas": {
+    "http://localhost:3000/api/schema/provider": "providers/*.yaml"
+  }
+}
+```
+
+This is pre-configured in `.vscode/settings.json` in the repository. The schema is served by `GET /api/schema/provider` and is generated live from the `ProviderConfig` struct via [`schemars`](https://graham.cool/schemars/).
 
 ## Provider YAML Structure
 
@@ -52,7 +79,6 @@ channels:
 # Stream playback
 playback:
   stream: ...
-  proxy: ...
 ```
 
 ## Key Concepts
@@ -61,34 +87,74 @@ playback:
 
 OTVI supports dynamic request building through template variables:
 
-| Variable | Description |
-|----------|-------------|
-| `{{input.X}}` | Value entered by the user in a form field |
-| `{{stored.X}}` | Value extracted from a previous API response and persisted in the session |
-| `{{extract.X}}` | Value extracted in the previous authentication step |
-| `{{uuid}}` | Auto-generated UUID (useful for device IDs) |
-| `{{utcnow}}` | Current UTC timestamp |
-| `{{utcdate}}` | Current UTC date |
+| Variable        | Description                                                                 |
+| --------------- | --------------------------------------------------------------------------- |
+| `{{input.X}}`   | Value entered by the user in a form field                                   |
+| `{{stored.X}}`  | Value extracted from a previous API response and persisted in the session   |
+| `{{extract.X}}` | Value extracted in the immediately preceding authentication step            |
+| `{{uuid}}`      | Auto-generated UUID v4 (useful for device IDs, request IDs)                 |
+| `{{utcnow}}`    | Current UTC timestamp (`YYYYMMDDTHHmmSS`)                                   |
+| `{{utcdate}}`   | Current UTC date (`YYYYMMDD`)                                               |
+
+The template engine logs a **`WARN`-level message** for every placeholder that cannot be resolved, making misconfigured YAMLs easy to spot:
+
+```
+WARN otvi_server::provider_client: unresolved placeholder {{stored.access_token}} in header Authorization
+```
 
 ### Response Extraction
 
-Values are extracted from JSON responses using JSONPath-like dot notation:
+Values are extracted from JSON responses using full **JSONPath** expressions, powered by [`jsonpath-rust`](https://github.com/besok/jsonpath-rust). This supports filter expressions, recursive descent, and wildcards — not just simple dot notation.
+
+#### Simple paths
 
 ```yaml
 on_success:
   extract:
     access_token: "$.data.access_token"
-    user_name: "$.data.user.display_name"
+    user_name:    "$.data.user.display_name"
+    first_item:   "$.data.items[0].id"
 ```
 
-`$.data.access_token` navigates into `{"data": {"access_token": "..."}}`.
+#### Filter expressions
+
+```yaml
+on_success:
+  extract:
+    # Extract the id of the first active item
+    active_id: "$.items[?(@.active == true)].id"
+    # Extract channels with more than 1000 viewers
+    popular:   "$.channels[?(@.viewers > 1000)].name"
+```
+
+#### Recursive descent
+
+```yaml
+on_success:
+  extract:
+    # Find 'token' anywhere in the response tree
+    any_token: "$..token"
+    # Find all 'id' fields at any depth
+    all_ids:   "$..id"
+```
+
+#### Wildcards
+
+```yaml
+on_success:
+  extract:
+    # All items in the array
+    all_names: "$.data[*].name"
+```
+
+A simple dot-notation walker is used as a fallback for paths that are not standard JSONPath expressions, preserving compatibility with existing configs.
 
 ### Authentication Scopes
 
-| Scope | Description |
-|-------|-------------|
-| `per_user` | Each user authenticates independently with the provider |
-| `global` | Admin authenticates once, session shared across all users |
+| Scope      | Description                                                      |
+| ---------- | ---------------------------------------------------------------- |
+| `per_user` | Each OTVI user authenticates independently with the provider     |
+| `global`   | Admin authenticates once; the session is shared across all users |
 
 ## Getting Started
 
@@ -168,3 +234,7 @@ playback:
       url: "$.stream_url"
       type: "$.stream_type"
 ```
+
+## Complete Example
+
+See `providers/example.yaml` in the repository for a fully-annotated example configuration covering every available option.
