@@ -79,7 +79,10 @@ impl TemplateContext {
             result = result.replace(&format!("{{{{{key}}}}}"), value);
         }
 
-        ResolveResult { rendered: result, unresolved }
+        ResolveResult {
+            rendered: result,
+            unresolved,
+        }
     }
 
     /// Convenience wrapper: resolve and return only the rendered string.
@@ -113,9 +116,7 @@ impl TemplateContext {
 /// ```
 pub fn extract_json_path(json: &Value, path: &str) -> Option<String> {
     // Normalise: ensure the path starts with "$."
-    let normalised: String = if path.starts_with("$.") || path == "$" {
-        path.to_string()
-    } else if path.starts_with("$[") {
+    let normalised: String = if path.starts_with("$.") || path == "$" || path.starts_with("$[") {
         path.to_string()
     } else {
         format!("$.{path}")
@@ -359,10 +360,7 @@ mod tests {
     fn extract_wildcard_returns_first() {
         let data = json!({"scores": [10, 20, 30]});
         // $.scores[*] matches all; we return the first one
-        assert_eq!(
-            extract_json_path(&data, "$.scores[*]"),
-            Some("10".into())
-        );
+        assert_eq!(extract_json_path(&data, "$.scores[*]"), Some("10".into()));
     }
 
     #[test]
@@ -374,9 +372,6 @@ mod tests {
                 }
             }
         });
-        assert_eq!(
-            extract_json_path(&data, "$..target"),
-            Some("found".into())
-        );
+        assert_eq!(extract_json_path(&data, "$..target"), Some("found".into()));
     }
 }

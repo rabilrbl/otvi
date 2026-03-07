@@ -51,12 +51,12 @@ pub fn PlayerPage() -> impl IntoView {
             // This runs in parallel with the stream fetch below.
             let meta_future = async {
                 let params = std::collections::HashMap::new();
-                if let Ok(list) = api::fetch_channels(&pid, &params).await {
-                    if let Some(ch) = list.channels.into_iter().find(|c| c.id == cid) {
-                        set_channel_name.set(ch.name);
-                        set_channel_logo.set(ch.logo);
-                        return;
-                    }
+                if let Ok(list) = api::fetch_channels(&pid, &params).await
+                    && let Some(ch) = list.channels.into_iter().find(|c| c.id == cid)
+                {
+                    set_channel_name.set(ch.name);
+                    set_channel_logo.set(ch.logo);
+                    return;
                 }
                 // Fall back to the raw channel ID when the list fetch fails
                 // or the channel is not found.

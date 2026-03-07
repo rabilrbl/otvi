@@ -118,18 +118,18 @@ pub async fn list(
     let mut channels = map_channels(&response, &list_response)?;
 
     // ── Server-side category filter ──────────────────────────────────────
-    if let Some(cat) = &query.category {
-        if !cat.is_empty() {
-            channels.retain(|ch| ch.category.as_deref() == Some(cat.as_str()));
-        }
+    if let Some(cat) = &query.category
+        && !cat.is_empty()
+    {
+        channels.retain(|ch| ch.category.as_deref() == Some(cat.as_str()));
     }
 
     // ── Server-side text search ──────────────────────────────────────────
-    if let Some(term) = &query.search {
-        if !term.is_empty() {
-            let term_lower = term.to_lowercase();
-            channels.retain(|ch| ch.name.to_lowercase().contains(&term_lower));
-        }
+    if let Some(term) = &query.search
+        && !term.is_empty()
+    {
+        let term_lower = term.to_lowercase();
+        channels.retain(|ch| ch.name.to_lowercase().contains(&term_lower));
     }
 
     // ── Pagination ────────────────────────────────────────────────────────
