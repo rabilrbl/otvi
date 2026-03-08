@@ -7,13 +7,18 @@ pub mod state;
 pub mod watcher;
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{delete, get, post, put};
+use tower::Layer;
+use tower_governor::GovernorLayer;
+use tower_governor::governor::GovernorConfigBuilder;
 use tower_http::cors::CorsLayer;
+
 use utoipa::OpenApi;
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa_swagger_ui::SwaggerUi;
@@ -115,19 +120,41 @@ impl utoipa::Modify for BearerSecurityAddon {
     }
 }
 
-/// Build the API router with the given application state.
+/// Build the route tree shared between production and tests.
 ///
-/// This is extracted from `main()` so that integration tests can construct
-/// the full router without starting a TCP listener.
-///
-/// ## Notable routes
-///
-/// | Path | Description |
-/// |------|-------------|
-/// | `GET /api/docs` | Swagger UI (redirects to `/api/docs/`) |
-/// | `GET /api/docs/` | Swagger UI index |
-/// | `GET /api/docs/openapi.json` | Raw OpenAPI JSON document |
-pub fn build_router(state: Arc<AppState>) -> axum::Router {
+/// Accepts two Tower layers — one applied to the auth-sensitive endpoints
+/// (login / register / provider-auth) and one applied to all API routes.
+/// Pass `tower::layer::util::Identity::new()` for both to skip rate limiting
+/// (used by integration tests which have no peer socket address).
+fn build_route_tree<AuthL, GeneralL>(
+    state: Arc<AppState>,
+    auth_layer: AuthL,
+    general_layer: GeneralL,
+) -> axum::Router
+where
+    AuthL: Layer<axum::routing::Route> + Clone + Send + Sync + 'static,
+    AuthL::Service: Clone
+        + Send
+        + Sync
+        + 'static
+        + tower::Service<
+            axum::extract::Request,
+            Response = axum::response::Response,
+            Error = std::convert::Infallible,
+        >,
+    <AuthL::Service as tower::Service<axum::extract::Request>>::Future: Send + 'static,
+    GeneralL: Layer<axum::routing::Route> + Clone + Send + Sync + 'static,
+    GeneralL::Service: Clone
+        + Send
+        + Sync
+        + 'static
+        + tower::Service<
+            axum::extract::Request,
+            Response = axum::response::Response,
+            Error = std::convert::Infallible,
+        >,
+    <GeneralL::Service as tower::Service<axum::extract::Request>>::Future: Send + 'static,
+{
     let user_auth_routes = axum::Router::new()
         .route("/register", post(api::user_auth::register))
         .route("/login", post(api::user_auth::login))
@@ -135,12 +162,15 @@ pub fn build_router(state: Arc<AppState>) -> axum::Router {
         .route("/logout", post(api::user_auth::logout))
         .route("/change-password", post(api::user_auth::change_password));
 
-    let provider_routes = axum::Router::new()
-        .route("/providers", get(api::providers::list))
-        .route("/providers/{id}", get(api::providers::get_info))
+    let provider_auth_routes = axum::Router::new()
         .route("/providers/{id}/auth/login", post(api::auth::login))
         .route("/providers/{id}/auth/logout", post(api::auth::logout))
         .route("/providers/{id}/auth/check", get(api::auth::check_session))
+        .layer(auth_layer.clone());
+
+    let provider_routes = axum::Router::new()
+        .route("/providers", get(api::providers::list))
+        .route("/providers/{id}", get(api::providers::get_info))
         .route("/providers/{id}/channels", get(api::channels::list))
         .route(
             "/providers/{id}/channels/categories",
@@ -161,27 +191,119 @@ pub fn build_router(state: Arc<AppState>) -> axum::Router {
         .route("/settings", get(api::admin::get_settings))
         .route("/settings", put(api::admin::update_settings));
 
-    let api_routes = axum::Router::new()
+    let auth_limited_routes = axum::Router::new()
         .nest("/auth", user_auth_routes)
-        .merge(provider_routes)
-        .nest("/admin", admin_routes);
+        .layer(auth_layer);
 
-    // ── Build CORS layer from environment ────────────────────────────────
+    let api_routes = axum::Router::new()
+        .merge(auth_limited_routes)
+        .merge(provider_routes)
+        .merge(provider_auth_routes)
+        .nest("/admin", admin_routes)
+        .layer(general_layer);
+
     let cors = build_cors_layer();
 
     let stateful = axum::Router::new()
         .nest("/api", api_routes)
-        // ── Health / readiness checks ────────────────────────────────────
         .route("/healthz", get(health_check))
         .route("/readyz", get(ready_check))
-        // ── Provider YAML JSON Schema ────────────────────────────────────
         .route("/api/schema/provider", get(provider_schema))
         .layer(cors)
         .with_state(state);
 
-    // SwaggerUi is a stateless Router<()>; it must be merged after
-    // with_state() so both sides share the same type parameter Router<()>.
     stateful.merge(SwaggerUi::new("/api/docs").url("/api/docs/openapi.json", ApiDoc::openapi()))
+}
+
+/// Build the production API router with rate limiting applied.
+///
+/// ## Rate limiting
+///
+/// Two tiers are applied, both keyed by peer IP address:
+///
+/// | Tier | Routes | Quota |
+/// |------|--------|-------|
+/// | Auth | `POST /api/auth/login`, `POST /api/auth/register`, `POST /api/*/auth/login` | 5 req burst, replenish 1 every 10 s |
+/// | General | All other `/api` routes | 20 req burst, replenish 1 every 1 s |
+///
+/// The server **must** be started with
+/// `axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())`
+/// for the peer IP to be available to the extractor.
+///
+/// ## Notable routes
+///
+/// | Path | Description |
+/// |------|-------------|
+/// | `GET /api/docs` | Swagger UI (redirects to `/api/docs/`) |
+/// | `GET /api/docs/` | Swagger UI index |
+/// | `GET /api/docs/openapi.json` | Raw OpenAPI JSON document |
+pub fn build_router(state: Arc<AppState>) -> axum::Router {
+    // Auth tier: protects login / register against brute-force.
+    // Burst of 5, then 1 token replenished every 10 seconds per IP.
+    let auth_governor_conf = Arc::new(
+        GovernorConfigBuilder::default()
+            .burst_size(5)
+            .per_second(10)
+            .use_headers()
+            .finish()
+            .expect("invalid auth rate-limit config"),
+    );
+
+    // General tier: broad API protection.
+    // Burst of 20, then 1 token replenished every second per IP.
+    let general_governor_conf = Arc::new(
+        GovernorConfigBuilder::default()
+            .burst_size(20)
+            .per_second(1)
+            .use_headers()
+            .finish()
+            .expect("invalid general rate-limit config"),
+    );
+
+    // Spawn background threads to evict stale entries every 60 s.
+    let auth_limiter = auth_governor_conf.limiter().clone();
+    spawn_governor_cleanup(Box::new(move || auth_limiter.retain_recent()));
+
+    let general_limiter = general_governor_conf.limiter().clone();
+    spawn_governor_cleanup(Box::new(move || general_limiter.retain_recent()));
+
+    build_route_tree(
+        state,
+        GovernorLayer::new(auth_governor_conf),
+        GovernorLayer::new(general_governor_conf),
+    )
+}
+
+/// Build the API router **without** rate limiting.
+///
+/// Intended for integration tests that use `tower::ServiceExt::oneshot`
+/// directly on the router without a real TCP connection, where no peer
+/// `SocketAddr` is available for `PeerIpKeyExtractor` to inspect.
+#[cfg(any(test, feature = "test-helpers"))]
+pub fn build_router_without_rate_limit(state: Arc<AppState>) -> axum::Router {
+    use tower::layer::util::Identity;
+    build_route_tree(state, Identity::new(), Identity::new())
+}
+
+// ── Rate-limit helpers ────────────────────────────────────────────────────
+
+/// Spawn a background thread that calls `retain_recent()` on the given
+/// governor limiter every 60 seconds, evicting entries that have fully
+/// replenished their quota and will never be read again.
+///
+/// This prevents the in-memory dashmap inside governor from growing without
+/// bound on servers with many distinct client IPs.
+///
+/// Accepts a `Box<dyn Fn() + Send>` so we never need to name any internal
+/// `governor` types directly (avoiding a direct `governor` dependency).
+fn spawn_governor_cleanup(cleanup: Box<dyn Fn() + Send + 'static>) {
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(Duration::from_secs(60));
+            cleanup();
+            tracing::debug!("Rate-limit store pruned");
+        }
+    });
 }
 
 // ── CORS ──────────────────────────────────────────────────────────────────

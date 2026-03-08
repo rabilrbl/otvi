@@ -7,8 +7,8 @@ license = "CC-BY-NC-SA-4.0"
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
-jsonpath-rust = "0.7"
-schemars = { version = "0.8", features = ["derive"] }
+jsonpath-rust = "1.0"
+schemars = { version = "1.2" }
 utoipa = { version = "5", features = ["uuid"] }
 
 [dev-dependencies]

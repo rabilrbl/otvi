@@ -44,4 +44,4 @@ for i in $(seq 1 30); do
 done
 
 echo "── Running integration tests ──"
-HTTPBIN_URL="${HTTPBIN_URL}" cargo test -p otvi-server --test integration -- --include-ignored "$@"
+HTTPBIN_URL="${HTTPBIN_URL}" cargo test -p otvi-server --test integration --features otvi-server/test-helpers -- --include-ignored "$@"

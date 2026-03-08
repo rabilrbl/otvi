@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2024"
 license = "CC-BY-NC-SA-4.0"
 
+[features]
+# Exposes build_router_without_rate_limit for integration tests that run
+# via tower::ServiceExt::oneshot (no real TCP connection / peer SocketAddr).
+test-helpers = []
+
 [dependencies]
 otvi-core = { path = "../otvi-core" }
 
@@ -52,20 +57,20 @@ jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 chrono = { version = "0.4", features = ["serde"] }
 
 # Rate limiting
-tower_governor = { version = "0.4", features = ["axum"] }
+tower_governor = { version = "0.8", features = ["axum"] }
 
 # In-memory TTL cache (channel list / categories)
 moka = { version = "0.12", features = ["future"] }
 
 # File-system watcher (hot-reload provider configs)
-notify = { version = "6", features = ["macos_kqueue"] }
+notify = { version = "8.2" }
 
 # OpenAPI / Swagger
 utoipa = { version = "5", features = ["axum_extras", "chrono", "uuid"] }
 utoipa-swagger-ui = { version = "9", features = ["axum"] }
 
 # JSON Schema generation (for provider YAML schema export)
-schemars = { version = "0.8", features = ["derive"] }
+schemars = { version = "1.2" }
 
 [dev-dependencies]
 tempfile = "3"

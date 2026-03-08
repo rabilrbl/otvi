@@ -122,20 +122,13 @@ pub fn extract_json_path(json: &Value, path: &str) -> Option<String> {
         format!("$.{path}")
     };
 
-    // Try full JSONPath via jsonpath-rust.
+    // Try full JSONPath via jsonpath-rust 1.x trait-based API.
+    // `JsonPath::query` is implemented directly on `serde_json::Value` and
+    // returns `Queried<Vec<&Value>>` (Ok on valid paths, Err on parse failure).
     use jsonpath_rust::JsonPath;
-    use std::str::FromStr;
 
-    match JsonPath::from_str(&normalised) {
-        Ok(jp) => {
-            let results = jp.find(json);
-            // `find` returns a `Value` that is either the matched node(s) or Null.
-            match &results {
-                Value::Array(arr) => arr.first().and_then(scalar_to_string),
-                Value::Null => None,
-                other => scalar_to_string(other),
-            }
-        }
+    match json.query(&normalised) {
+        Ok(results) => results.into_iter().next().and_then(scalar_to_string),
         // If the JSONPath parser rejects the expression fall back to the
         // original simple dot-notation walk so existing configs keep working.
         Err(_) => extract_dot_path(json, path),
