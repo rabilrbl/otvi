@@ -144,54 +144,63 @@ pub fn App() -> impl IntoView {
                 </div>
             </Show>
 
-            // ── App shell – always mounted so Router/Routes are never disposed ──
-            <nav class="bg-gray-900 px-6 py-3 flex items-center justify-between sticky top-0 z-40 shadow-lg shadow-black/30">
-                <a
-                    class="text-xl font-bold text-rose-500 hover:text-rose-400 transition-colors"
-                    href="/"
-                >
-                    "OTVI"
-                </a>
-                <div class="flex gap-3 items-center">
-                    <span class="text-sm text-gray-400 hidden sm:inline">
-                        {move || auth_ctx.username()}
-                    </span>
-                    <Show when=move || auth_ctx.is_admin()>
-                        <span class="text-xs bg-rose-500/20 text-rose-400 px-2 py-0.5 rounded-full hidden sm:inline">
-                            "admin"
+            <Show
+                when=move || {
+                    matches!(
+                        boot_state.get(),
+                        BootState::Ready | BootState::NeedsPasswordChange
+                    )
+                }
+                fallback=|| ()
+            >
+                <nav class="bg-gray-900 px-6 py-3 flex items-center justify-between sticky top-0 z-40 shadow-lg shadow-black/30">
+                    <a
+                        class="text-xl font-bold text-rose-500 hover:text-rose-400 transition-colors"
+                        href="/"
+                    >
+                        "OTVI"
+                    </a>
+                    <div class="flex gap-3 items-center">
+                        <span class="text-sm text-gray-400 hidden sm:inline">
+                            {move || auth_ctx.username()}
                         </span>
-                        <a
-                            href="/admin"
-                            class="px-3 py-1.5 text-sm rounded-lg bg-gray-800 text-gray-300 hover:bg-gray-700 transition-colors no-underline hidden sm:inline-block"
-                        >
-                            "Dashboard"
-                        </a>
-                    </Show>
-                    <Show when=move || boot_state.get() == BootState::Ready>
+                        <Show when=move || auth_ctx.is_admin()>
+                            <span class="text-xs bg-rose-500/20 text-rose-400 px-2 py-0.5 rounded-full hidden sm:inline">
+                                "admin"
+                            </span>
+                            <a
+                                href="/admin"
+                                class="px-3 py-1.5 text-sm rounded-lg bg-gray-800 text-gray-300 hover:bg-gray-700 transition-colors no-underline hidden sm:inline-block"
+                            >
+                                "Dashboard"
+                            </a>
+                        </Show>
+                        <Show when=move || boot_state.get() == BootState::Ready>
+                            <button
+                                class="px-3 py-1.5 text-sm rounded-lg bg-gray-800 text-gray-300 hover:bg-gray-700 transition-colors cursor-pointer"
+                                on:click=move |_| show_change_pw.set(true)
+                            >
+                                "Change Password"
+                            </button>
+                        </Show>
                         <button
                             class="px-3 py-1.5 text-sm rounded-lg bg-gray-800 text-gray-300 hover:bg-gray-700 transition-colors cursor-pointer"
-                            on:click=move |_| show_change_pw.set(true)
+                            on:click=logout
                         >
-                            "Change Password"
+                            "Sign out"
                         </button>
-                    </Show>
-                    <button
-                        class="px-3 py-1.5 text-sm rounded-lg bg-gray-800 text-gray-300 hover:bg-gray-700 transition-colors cursor-pointer"
-                        on:click=logout
-                    >
-                        "Sign out"
-                    </button>
-                </div>
-            </nav>
-            <main>
-                <Routes fallback=NotFoundPage>
-                    <Route path=path!("/") view=HomePage />
-                    <Route path=path!("/admin") view=AdminPage />
-                    <Route path=path!("/login/:provider_id") view=LoginPage />
-                    <Route path=path!("/providers/:provider_id/channels") view=ChannelsPage />
-                    <Route path=path!("/providers/:provider_id/play/:channel_id") view=PlayerPage />
-                </Routes>
-            </main>
+                    </div>
+                </nav>
+                <main>
+                    <Routes fallback=NotFoundPage>
+                        <Route path=path!("/") view=HomePage />
+                        <Route path=path!("/admin") view=AdminPage />
+                        <Route path=path!("/login/:provider_id") view=LoginPage />
+                        <Route path=path!("/providers/:provider_id/channels") view=ChannelsPage />
+                        <Route path=path!("/providers/:provider_id/play/:channel_id") view=PlayerPage />
+                    </Routes>
+                </main>
+            </Show>
         </Router>
     }
 }
