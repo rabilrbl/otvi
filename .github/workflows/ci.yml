@@ -36,6 +36,7 @@ jobs:
 
   test:
     name: Test
+    needs: [fmt, clippy]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -46,6 +47,7 @@ jobs:
 
   coverage:
     name: Coverage
+    needs: [fmt, clippy, test]
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     permissions:
@@ -75,7 +77,7 @@ jobs:
           HTTPBIN_URL: http://localhost:8888
         run: |
           cargo llvm-cov --workspace --exclude otvi-web --all-features --lcov --output-path lcov.info -- --include-ignored
-          cargo llvm-cov --workspace --exclude otvi-web --all-features --summary-only -- --include-ignored > coverage-summary.txt
+          cargo llvm-cov report --workspace --exclude otvi-web --summary-only > coverage-summary.txt
       - name: Upload coverage report
         uses: actions/upload-artifact@v7
         with:
@@ -84,7 +86,6 @@ jobs:
             lcov.info
             coverage-summary.txt
       - name: Post coverage comment
-        if: github.event_name == 'pull_request'
         uses: actions/github-script@v8
         with:
           script: |
@@ -132,6 +133,7 @@ jobs:
 
   integration:
     name: Integration Tests
+    needs: [fmt, clippy, test]
     runs-on: ubuntu-latest
     services:
       httpbin:
