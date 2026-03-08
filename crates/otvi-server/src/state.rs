@@ -5,13 +5,15 @@ use std::time::Duration;
 // ── Rate limiting ──────────────────────────────────────────────────────────
 
 /// Default burst size for the auth-tier rate limiter (login / register).
-pub const DEFAULT_RATE_LIMIT_AUTH_BURST: u32 = 5;
+pub const DEFAULT_RATE_LIMIT_AUTH_BURST: u32 = 10;
 /// Default replenishment period (seconds) for the auth-tier rate limiter.
-pub const DEFAULT_RATE_LIMIT_AUTH_PERIOD_SECS: u64 = 10;
+pub const DEFAULT_RATE_LIMIT_AUTH_PERIOD_SECS: u64 = 3;
 /// Default burst size for the general-tier rate limiter (all other API routes).
-pub const DEFAULT_RATE_LIMIT_GENERAL_BURST: u32 = 20;
+pub const DEFAULT_RATE_LIMIT_GENERAL_BURST: u32 = 60;
 /// Default replenishment period (seconds) for the general-tier rate limiter.
 pub const DEFAULT_RATE_LIMIT_GENERAL_PERIOD_SECS: u64 = 1;
+/// Rate limiting is enabled by default in all build modes.
+pub const DEFAULT_RATE_LIMIT_ENABLED: bool = true;
 
 /// Configuration for the two-tier IP-based rate limiter.
 ///
@@ -22,19 +24,22 @@ pub const DEFAULT_RATE_LIMIT_GENERAL_PERIOD_SECS: u64 = 1;
 ///
 /// | Tier    | Protects                                          | Default quota                  |
 /// |---------|---------------------------------------------------|--------------------------------|
-/// | Auth    | `POST /api/auth/login`, `/api/auth/register`, `POST /api/*/auth/login` | 5 req burst, +1 every 10 s |
-/// | General | All other `/api` routes                           | 20 req burst, +1 every 1 s    |
+/// | Auth    | `POST /api/auth/login`, `/api/auth/register`, `POST /api/*/auth/login` | 10 req burst, +1 every 3 s |
+/// | General | All other `/api` routes                           | 60 req burst, +1 every 1 s    |
 ///
 /// ## Environment variables
 ///
 /// | Variable                          | Default | Description                                       |
 /// |-----------------------------------|---------|---------------------------------------------------|
-/// | `RATE_LIMIT_AUTH_BURST`           | `5`     | Auth-tier token bucket burst capacity             |
-/// | `RATE_LIMIT_AUTH_PERIOD_SECS`     | `10`    | Auth-tier replenishment interval in seconds       |
-/// | `RATE_LIMIT_GENERAL_BURST`        | `20`    | General-tier token bucket burst capacity          |
+/// | `RATE_LIMIT_AUTH_BURST`           | `10`    | Auth-tier token bucket burst capacity             |
+/// | `RATE_LIMIT_AUTH_PERIOD_SECS`     | `3`     | Auth-tier replenishment interval in seconds       |
+/// | `RATE_LIMIT_GENERAL_BURST`        | `60`    | General-tier token bucket burst capacity          |
 /// | `RATE_LIMIT_GENERAL_PERIOD_SECS`  | `1`     | General-tier replenishment interval in seconds    |
+/// | `RATE_LIMIT_ENABLED`              | `true`  | Enables the API rate limiter |
 #[derive(Debug, Clone)]
 pub struct RateLimitConfig {
+    /// Global on/off switch for API rate limiting.
+    pub enabled: bool,
     /// Burst capacity for auth-sensitive endpoints.
     pub auth_burst: u32,
     /// Token replenishment interval (seconds) for auth-sensitive endpoints.
@@ -48,6 +53,7 @@ pub struct RateLimitConfig {
 impl Default for RateLimitConfig {
     fn default() -> Self {
         Self {
+            enabled: DEFAULT_RATE_LIMIT_ENABLED,
             auth_burst: DEFAULT_RATE_LIMIT_AUTH_BURST,
             auth_period_secs: DEFAULT_RATE_LIMIT_AUTH_PERIOD_SECS,
             general_burst: DEFAULT_RATE_LIMIT_GENERAL_BURST,
@@ -57,6 +63,17 @@ impl Default for RateLimitConfig {
 }
 
 impl RateLimitConfig {
+    fn parse_env_bool(name: &str, default: bool) -> bool {
+        match std::env::var(name) {
+            Ok(value) => match value.trim().to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => true,
+                "0" | "false" | "no" | "off" => false,
+                _ => default,
+            },
+            Err(_) => default,
+        }
+    }
+
     /// Construct a `RateLimitConfig` from environment variables, falling back
     /// to the compiled-in defaults for any variable that is absent or cannot
     /// be parsed.
@@ -69,6 +86,7 @@ impl RateLimitConfig {
         }
 
         let cfg = Self {
+            enabled: Self::parse_env_bool("RATE_LIMIT_ENABLED", DEFAULT_RATE_LIMIT_ENABLED),
             auth_burst: parse_env("RATE_LIMIT_AUTH_BURST", DEFAULT_RATE_LIMIT_AUTH_BURST),
             auth_period_secs: parse_env(
                 "RATE_LIMIT_AUTH_PERIOD_SECS",
@@ -82,6 +100,7 @@ impl RateLimitConfig {
         };
 
         tracing::info!(
+            enabled = cfg.enabled,
             auth_burst = cfg.auth_burst,
             auth_period_secs = cfg.auth_period_secs,
             general_burst = cfg.general_burst,
