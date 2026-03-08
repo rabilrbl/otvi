@@ -140,9 +140,11 @@ pub fn PlayerPage() -> impl IntoView {
                     // Logo thumbnail (if available)
                     {move || channel_logo.get().map(|url| view! {
                         <img
+                            class="w-14 h-14 object-contain rounded bg-gray-800 p-1 shrink-0"
                             src=url
                             alt="channel logo"
-                            class="w-14 h-14 object-contain rounded bg-gray-800 p-1 shrink-0"
+                            loading="lazy"
+                            decoding="async"
                         />
                     })}
 
