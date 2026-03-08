@@ -7,6 +7,7 @@ use otvi_core::config::RequestSpec;
 use otvi_core::template::TemplateContext;
 use reqwest::Client;
 use serde_json::Value;
+use tracing::warn;
 
 /// Result of executing a provider request, including the HTTP status code.
 #[derive(Debug)]
@@ -21,13 +22,31 @@ pub struct ProviderResponse {
 fn resolve_warn(context: &TemplateContext, template: &str, field: &str) -> String {
     let result = context.resolve(template);
     if !result.unresolved.is_empty() {
-        tracing::warn!(
+        warn!(
             field,
             unresolved = ?result.unresolved,
             "Unresolved template placeholders in provider request – check your YAML config"
         );
     }
     result.rendered
+}
+
+async fn parse_response_body(response: reqwest::Response) -> anyhow::Result<(u16, Value)> {
+    let status = response.status();
+    let status_code = status.as_u16();
+    let bytes = response.bytes().await?;
+
+    if bytes.is_empty() {
+        return Ok((status_code, Value::Null));
+    }
+
+    match serde_json::from_slice::<Value>(&bytes) {
+        Ok(json) => Ok((status_code, json)),
+        Err(_) => {
+            let text = String::from_utf8_lossy(&bytes).into_owned();
+            Ok((status_code, Value::String(text)))
+        }
+    }
 }
 
 /// Build and send an HTTP request described by `spec`, resolving template
@@ -96,8 +115,7 @@ pub async fn execute_request(
 
     let response = builder.send().await?;
     let status = response.status();
-    let status_code = status.as_u16();
-    let body: Value = response.json().await.unwrap_or(Value::Null);
+    let (status_code, body) = parse_response_body(response).await?;
 
     if !status.is_success() {
         anyhow::bail!("Provider API returned {status}: {body}");
@@ -374,6 +392,25 @@ mod tests {
             execute_request(&client, &server.uri(), &Default::default(), &spec, &ctx).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("401"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_request_plain_text_response() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/text"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+            .mount(&server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let ctx = TemplateContext::new();
+        let spec = minimal_spec("GET", "/text");
+        let result = execute_request(&client, &server.uri(), &Default::default(), &spec, &ctx)
+            .await
+            .unwrap();
+        assert_eq!(result.status, 200);
+        assert_eq!(result.body, Value::String("ok".into()));
     }
 
     #[tokio::test]

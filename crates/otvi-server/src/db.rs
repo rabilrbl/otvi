@@ -350,13 +350,14 @@ pub async fn upsert_provider_session(
 ) -> anyhow::Result<String> {
     let now = Utc::now().to_rfc3339();
     let json = serde_json::to_string(stored_values)?;
+    let mut tx = db.begin().await?;
 
     // Check for existing session
     let existing =
         sqlx::query("SELECT id FROM provider_sessions WHERE user_id = ? AND provider_id = ?")
             .bind(user_id)
             .bind(provider_id)
-            .fetch_optional(db)
+            .fetch_optional(&mut *tx)
             .await?;
 
     if let Some(row) = existing {
@@ -365,8 +366,9 @@ pub async fn upsert_provider_session(
             .bind(&json)
             .bind(&now)
             .bind(&id)
-            .execute(db)
+            .execute(&mut *tx)
             .await?;
+        tx.commit().await?;
         Ok(id)
     } else {
         let id = Uuid::new_v4().to_string();
@@ -381,8 +383,9 @@ pub async fn upsert_provider_session(
         .bind(&json)
         .bind(&now)
         .bind(&now)
-        .execute(db)
+        .execute(&mut *tx)
         .await?;
+        tx.commit().await?;
         Ok(id)
     }
 }
@@ -417,7 +420,7 @@ pub async fn get_provider_session_values(
         None => Ok(HashMap::new()),
         Some(r) => {
             let json: String = r.get("stored_values");
-            Ok(serde_json::from_str(&json).unwrap_or_default())
+            serde_json::from_str(&json).context("Invalid provider session JSON")
         }
     }
 }
@@ -434,15 +437,20 @@ pub async fn get_setting(db: &Db, key: &str) -> anyhow::Result<Option<String>> {
 
 pub async fn set_setting(db: &Db, key: &str, value: &str) -> anyhow::Result<()> {
     // Portable upsert: delete + insert works in SQLite, PostgreSQL, MySQL.
+    // Wrap both statements in a transaction so the setting is never transiently absent.
+    let mut tx = db.begin().await?;
+
     sqlx::query("DELETE FROM settings WHERE key = ?")
         .bind(key)
-        .execute(db)
+        .execute(&mut *tx)
         .await?;
     sqlx::query("INSERT INTO settings (key, value) VALUES (?, ?)")
         .bind(key)
         .bind(value)
-        .execute(db)
+        .execute(&mut *tx)
         .await?;
+
+    tx.commit().await?;
     Ok(())
 }
 
