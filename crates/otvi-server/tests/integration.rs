@@ -1,5 +1,10 @@
 //! End-to-end integration tests for every otvi-server API endpoint.
 //!
+//! Rate limiting is intentionally skipped here: these tests drive the router
+//! via `tower::ServiceExt::oneshot` with no real TCP connection, so no peer
+//! `SocketAddr` is available for `PeerIpKeyExtractor`.  We pass
+//! `tower::layer::util::Identity` for both layer slots instead.
+//!
 //! These tests spin up the full Axum router in-process (no TCP listener) with
 //! an in-memory SQLite database and the httpbin test provider.  Requests are
 //! sent directly through `tower::ServiceExt::oneshot`.
@@ -75,7 +80,7 @@ async fn build_test_app() -> (axum::Router, tempfile::TempDir) {
         channel_cache: otvi_server::state::ChannelCache::new(std::time::Duration::from_secs(300)),
     });
 
-    (otvi_server::build_router_without_rate_limit(state), dir)
+    (otvi_server::build_router_for_tests(state), dir)
 }
 
 /// Send a request and return (status, body as Value).
@@ -914,7 +919,7 @@ async fn global_provider_login_requires_admin() {
         proxy_ctx: std::sync::RwLock::new(std::collections::HashMap::new()),
         channel_cache: otvi_server::state::ChannelCache::new(std::time::Duration::from_secs(300)),
     });
-    let app = otvi_server::build_router_without_rate_limit(state);
+    let app = otvi_server::build_router_for_tests(state);
 
     // Register admin + regular user.
     let (admin_token, _) = {

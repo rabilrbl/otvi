@@ -2,6 +2,97 @@ use std::collections::HashMap;
 use std::sync::RwLock;
 use std::time::Duration;
 
+// ── Rate limiting ──────────────────────────────────────────────────────────
+
+/// Default burst size for the auth-tier rate limiter (login / register).
+pub const DEFAULT_RATE_LIMIT_AUTH_BURST: u32 = 5;
+/// Default replenishment period (seconds) for the auth-tier rate limiter.
+pub const DEFAULT_RATE_LIMIT_AUTH_PERIOD_SECS: u64 = 10;
+/// Default burst size for the general-tier rate limiter (all other API routes).
+pub const DEFAULT_RATE_LIMIT_GENERAL_BURST: u32 = 20;
+/// Default replenishment period (seconds) for the general-tier rate limiter.
+pub const DEFAULT_RATE_LIMIT_GENERAL_PERIOD_SECS: u64 = 1;
+
+/// Configuration for the two-tier IP-based rate limiter.
+///
+/// Both tiers use a [token-bucket](https://en.wikipedia.org/wiki/Token_bucket)
+/// algorithm keyed by peer IP address.  Each IP starts with a full bucket of
+/// `burst` tokens; one token is consumed per request, and one token is
+/// replenished every `period_secs` seconds.
+///
+/// | Tier    | Protects                                          | Default quota                  |
+/// |---------|---------------------------------------------------|--------------------------------|
+/// | Auth    | `POST /api/auth/login`, `/api/auth/register`, `POST /api/*/auth/login` | 5 req burst, +1 every 10 s |
+/// | General | All other `/api` routes                           | 20 req burst, +1 every 1 s    |
+///
+/// ## Environment variables
+///
+/// | Variable                          | Default | Description                                       |
+/// |-----------------------------------|---------|---------------------------------------------------|
+/// | `RATE_LIMIT_AUTH_BURST`           | `5`     | Auth-tier token bucket burst capacity             |
+/// | `RATE_LIMIT_AUTH_PERIOD_SECS`     | `10`    | Auth-tier replenishment interval in seconds       |
+/// | `RATE_LIMIT_GENERAL_BURST`        | `20`    | General-tier token bucket burst capacity          |
+/// | `RATE_LIMIT_GENERAL_PERIOD_SECS`  | `1`     | General-tier replenishment interval in seconds    |
+#[derive(Debug, Clone)]
+pub struct RateLimitConfig {
+    /// Burst capacity for auth-sensitive endpoints.
+    pub auth_burst: u32,
+    /// Token replenishment interval (seconds) for auth-sensitive endpoints.
+    pub auth_period_secs: u64,
+    /// Burst capacity for general API endpoints.
+    pub general_burst: u32,
+    /// Token replenishment interval (seconds) for general API endpoints.
+    pub general_period_secs: u64,
+}
+
+impl Default for RateLimitConfig {
+    fn default() -> Self {
+        Self {
+            auth_burst: DEFAULT_RATE_LIMIT_AUTH_BURST,
+            auth_period_secs: DEFAULT_RATE_LIMIT_AUTH_PERIOD_SECS,
+            general_burst: DEFAULT_RATE_LIMIT_GENERAL_BURST,
+            general_period_secs: DEFAULT_RATE_LIMIT_GENERAL_PERIOD_SECS,
+        }
+    }
+}
+
+impl RateLimitConfig {
+    /// Construct a `RateLimitConfig` from environment variables, falling back
+    /// to the compiled-in defaults for any variable that is absent or cannot
+    /// be parsed.
+    pub fn from_env() -> Self {
+        fn parse_env<T: std::str::FromStr>(name: &str, default: T) -> T {
+            std::env::var(name)
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default)
+        }
+
+        let cfg = Self {
+            auth_burst: parse_env("RATE_LIMIT_AUTH_BURST", DEFAULT_RATE_LIMIT_AUTH_BURST),
+            auth_period_secs: parse_env(
+                "RATE_LIMIT_AUTH_PERIOD_SECS",
+                DEFAULT_RATE_LIMIT_AUTH_PERIOD_SECS,
+            ),
+            general_burst: parse_env("RATE_LIMIT_GENERAL_BURST", DEFAULT_RATE_LIMIT_GENERAL_BURST),
+            general_period_secs: parse_env(
+                "RATE_LIMIT_GENERAL_PERIOD_SECS",
+                DEFAULT_RATE_LIMIT_GENERAL_PERIOD_SECS,
+            ),
+        };
+
+        tracing::info!(
+            auth_burst = cfg.auth_burst,
+            auth_period_secs = cfg.auth_period_secs,
+            general_burst = cfg.general_burst,
+            general_period_secs = cfg.general_period_secs,
+            "Rate limit configured",
+        );
+
+        cfg
+    }
+}
+
 use moka::future::Cache;
 use otvi_core::config::ProviderConfig;
 use otvi_core::types::{Category, Channel};

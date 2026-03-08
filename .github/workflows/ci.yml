@@ -151,4 +151,4 @@ jobs:
       - name: Run integration tests
         env:
           HTTPBIN_URL: http://localhost:8888
-        run: cargo test -p otvi-server --test integration --features otvi-server/test-helpers -- --include-ignored
+        run: cargo test -p otvi-server --test integration -- --include-ignored

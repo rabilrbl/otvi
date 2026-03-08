@@ -4,11 +4,6 @@ version = "0.1.0"
 edition = "2024"
 license = "CC-BY-NC-SA-4.0"
 
-[features]
-# Exposes build_router_without_rate_limit for integration tests that run
-# via tower::ServiceExt::oneshot (no real TCP connection / peer SocketAddr).
-test-helpers = []
-
 [dependencies]
 otvi-core = { path = "../otvi-core" }
 
@@ -71,10 +66,6 @@ utoipa-swagger-ui = { version = "9", features = ["axum"] }
 
 # JSON Schema generation (for provider YAML schema export)
 schemars = { version = "1.2" }
-
-[[test]]
-name = "integration"
-required-features = ["test-helpers"]
 
 [dev-dependencies]
 tempfile = "3"

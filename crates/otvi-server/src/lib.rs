@@ -23,7 +23,7 @@ use utoipa::OpenApi;
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa_swagger_ui::SwaggerUi;
 
-use state::AppState;
+use state::{AppState, RateLimitConfig};
 
 // ── OpenAPI root document ─────────────────────────────────────────────────
 
@@ -120,13 +120,78 @@ impl utoipa::Modify for BearerSecurityAddon {
     }
 }
 
-/// Build the route tree shared between production and tests.
+/// Build the production API router with rate limiting applied.
 ///
-/// Accepts two Tower layers — one applied to the auth-sensitive endpoints
-/// (login / register / provider-auth) and one applied to all API routes.
-/// Pass `tower::layer::util::Identity::new()` for both to skip rate limiting
-/// (used by integration tests which have no peer socket address).
-fn build_route_tree<AuthL, GeneralL>(
+/// ## Rate limiting
+///
+/// Two tiers are applied, both keyed by peer IP address, configured via
+/// [`RateLimitConfig`] (read from environment variables by [`RateLimitConfig::from_env`]).
+///
+/// | Tier    | Routes | Default quota |
+/// |---------|--------|---------------|
+/// | Auth    | `POST /api/auth/login`, `POST /api/auth/register`, `POST /api/*/auth/login` | 5 req burst, +1 every 10 s |
+/// | General | All other `/api` routes | 20 req burst, +1 every 1 s |
+///
+/// The server **must** be started with
+/// `axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())`
+/// for the peer IP to be available to the extractor.
+///
+/// ## Notable routes
+///
+/// | Path | Description |
+/// |------|-------------|
+/// | `GET /api/docs` | Swagger UI (redirects to `/api/docs/`) |
+/// | `GET /api/docs/` | Swagger UI index |
+/// | `GET /api/docs/openapi.json` | Raw OpenAPI JSON document |
+pub fn build_router(state: Arc<AppState>, rate_limit: RateLimitConfig) -> axum::Router {
+    // Auth tier: protects login / register / provider-auth against brute-force.
+    let auth_governor_conf = Arc::new(
+        GovernorConfigBuilder::default()
+            .burst_size(rate_limit.auth_burst)
+            .per_second(rate_limit.auth_period_secs)
+            .use_headers()
+            .finish()
+            .expect("invalid auth rate-limit config"),
+    );
+
+    // General tier: broad throttling for all other API routes.
+    let general_governor_conf = Arc::new(
+        GovernorConfigBuilder::default()
+            .burst_size(rate_limit.general_burst)
+            .per_second(rate_limit.general_period_secs)
+            .use_headers()
+            .finish()
+            .expect("invalid general rate-limit config"),
+    );
+
+    // Spawn background threads to evict stale entries every 60 s.
+    let auth_limiter = auth_governor_conf.limiter().clone();
+    spawn_governor_cleanup(Box::new(move || auth_limiter.retain_recent()));
+
+    let general_limiter = general_governor_conf.limiter().clone();
+    spawn_governor_cleanup(Box::new(move || general_limiter.retain_recent()));
+
+    let auth_layer = GovernorLayer::new(auth_governor_conf);
+    let general_layer = GovernorLayer::new(general_governor_conf);
+
+    build_routes(state, auth_layer, general_layer)
+}
+
+/// Build the router without rate limiting, for use in integration tests.
+///
+/// Integration tests drive the router via `tower::ServiceExt::oneshot` with no
+/// real TCP connection, so no peer `SocketAddr` is available for
+/// `PeerIpKeyExtractor`. Passing `Identity` for both layer slots skips the
+/// governor middleware entirely.
+pub fn build_router_for_tests(state: Arc<AppState>) -> axum::Router {
+    build_routes(
+        state,
+        tower::layer::util::Identity::new(),
+        tower::layer::util::Identity::new(),
+    )
+}
+
+fn build_routes<AuthL, GeneralL>(
     state: Arc<AppState>,
     auth_layer: AuthL,
     general_layer: GeneralL,
@@ -213,76 +278,6 @@ where
         .with_state(state);
 
     stateful.merge(SwaggerUi::new("/api/docs").url("/api/docs/openapi.json", ApiDoc::openapi()))
-}
-
-/// Build the production API router with rate limiting applied.
-///
-/// ## Rate limiting
-///
-/// Two tiers are applied, both keyed by peer IP address:
-///
-/// | Tier | Routes | Quota |
-/// |------|--------|-------|
-/// | Auth | `POST /api/auth/login`, `POST /api/auth/register`, `POST /api/*/auth/login` | 5 req burst, replenish 1 every 10 s |
-/// | General | All other `/api` routes | 20 req burst, replenish 1 every 1 s |
-///
-/// The server **must** be started with
-/// `axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())`
-/// for the peer IP to be available to the extractor.
-///
-/// ## Notable routes
-///
-/// | Path | Description |
-/// |------|-------------|
-/// | `GET /api/docs` | Swagger UI (redirects to `/api/docs/`) |
-/// | `GET /api/docs/` | Swagger UI index |
-/// | `GET /api/docs/openapi.json` | Raw OpenAPI JSON document |
-pub fn build_router(state: Arc<AppState>) -> axum::Router {
-    // Auth tier: protects login / register against brute-force.
-    // Burst of 5, then 1 token replenished every 10 seconds per IP.
-    let auth_governor_conf = Arc::new(
-        GovernorConfigBuilder::default()
-            .burst_size(5)
-            .per_second(10)
-            .use_headers()
-            .finish()
-            .expect("invalid auth rate-limit config"),
-    );
-
-    // General tier: broad API protection.
-    // Burst of 20, then 1 token replenished every second per IP.
-    let general_governor_conf = Arc::new(
-        GovernorConfigBuilder::default()
-            .burst_size(20)
-            .per_second(1)
-            .use_headers()
-            .finish()
-            .expect("invalid general rate-limit config"),
-    );
-
-    // Spawn background threads to evict stale entries every 60 s.
-    let auth_limiter = auth_governor_conf.limiter().clone();
-    spawn_governor_cleanup(Box::new(move || auth_limiter.retain_recent()));
-
-    let general_limiter = general_governor_conf.limiter().clone();
-    spawn_governor_cleanup(Box::new(move || general_limiter.retain_recent()));
-
-    build_route_tree(
-        state,
-        GovernorLayer::new(auth_governor_conf),
-        GovernorLayer::new(general_governor_conf),
-    )
-}
-
-/// Build the API router **without** rate limiting.
-///
-/// Intended for integration tests that use `tower::ServiceExt::oneshot`
-/// directly on the router without a real TCP connection, where no peer
-/// `SocketAddr` is available for `PeerIpKeyExtractor` to inspect.
-#[cfg(any(test, feature = "test-helpers"))]
-pub fn build_router_without_rate_limit(state: Arc<AppState>) -> axum::Router {
-    use tower::layer::util::Identity;
-    build_route_tree(state, Identity::new(), Identity::new())
 }
 
 // ── Rate-limit helpers ────────────────────────────────────────────────────
@@ -454,7 +449,7 @@ mod tests {
             crate::state::AppState::load_providers("nonexistent_dir_for_test", db, test_keys())
                 .unwrap(),
         );
-        (build_router(state), dir)
+        (build_router_for_tests(state), dir)
     }
 
     #[tokio::test]

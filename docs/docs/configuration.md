@@ -51,6 +51,47 @@ If `JWT_SECRET` is not set, a random value is generated on each server start. Th
 PORT=3000
 ```
 
+### Rate Limiting
+
+OTVI applies a two-tier IP-based rate limiter to all API routes using a
+[token-bucket](https://en.wikipedia.org/wiki/Token_bucket) algorithm. Each IP
+address gets its own independent bucket per tier.
+
+| Tier    | Protected routes | Default quota |
+| ------- | ---------------- | ------------- |
+| Auth    | `POST /api/auth/login`, `POST /api/auth/register`, `POST /api/*/auth/login` | 5 req burst, +1 token every 10 s |
+| General | All other `/api` routes | 20 req burst, +1 token every 1 s |
+
+```bash
+# Auth tier — protects login and register against brute-force attacks.
+# Burst: maximum requests an IP can make before being throttled.
+# Period: seconds between each token replenishment.
+RATE_LIMIT_AUTH_BURST=5
+RATE_LIMIT_AUTH_PERIOD_SECS=10
+
+# General tier — broad throttling for all other API routes.
+RATE_LIMIT_GENERAL_BURST=20
+RATE_LIMIT_GENERAL_PERIOD_SECS=1
+```
+
+| Variable | Default | Description |
+| -------- | ------- | ----------- |
+| `RATE_LIMIT_AUTH_BURST` | `5` | Auth-tier token bucket burst capacity |
+| `RATE_LIMIT_AUTH_PERIOD_SECS` | `10` | Auth-tier replenishment interval (seconds) |
+| `RATE_LIMIT_GENERAL_BURST` | `20` | General-tier token bucket burst capacity |
+| `RATE_LIMIT_GENERAL_PERIOD_SECS` | `1` | General-tier replenishment interval (seconds) |
+
+When a client exceeds its quota the server responds with `429 Too Many Requests`
+and includes a `X-RateLimit-*` header set indicating when the bucket will
+refill.
+
+:::note
+Rate limiting is keyed by peer IP address. If OTVI runs behind a reverse proxy,
+ensure the proxy forwards the real client IP (e.g. via `X-Forwarded-For`) and
+that your network configuration is trusted, otherwise all clients will share the
+same bucket.
+:::
+
 ### Paths
 
 ```bash
@@ -90,6 +131,23 @@ Setting `LOG_FORMAT=json` switches the `tracing-subscriber` formatter to JSON ou
 {"timestamp":"2024-01-15T10:23:45Z","level":"INFO","target":"otvi_server","message":"server listening on 0.0.0.0:3000"}
 {"timestamp":"2024-01-15T10:23:46Z","level":"WARN","target":"otvi_server::provider_client","message":"unresolved placeholder {{stored.token}} in header Authorization"}
 ```
+
+### Channel Cache
+
+```bash
+# Time-to-live for cached channel and category lists, in seconds.
+# Default: 86400 (24 hours). Set to 0 to disable caching.
+CHANNEL_CACHE_TTL_SECS=86400
+```
+
+Channel lists and category lists fetched from upstream providers are cached
+in memory to avoid hammering provider APIs on every request. The cache is
+invalidated automatically on provider login and logout, so stale data is never
+served after a credential change regardless of the TTL.
+
+| Variable | Default | Description |
+| -------- | ------- | ----------- |
+| `CHANNEL_CACHE_TTL_SECS` | `86400` | Channel/category cache TTL in seconds |
 
 ### CORS
 
@@ -149,6 +207,19 @@ LOG_FORMAT=text
 # ── CORS ─────────────────────────────────────────────────
 # Comma-separated allowed origins. Leave unset for permissive (dev only).
 # CORS_ORIGINS=https://tv.example.com,https://admin.example.com
+
+# ── Rate limiting ─────────────────────────────────────────
+# Auth tier (login / register / provider-auth) — brute-force protection.
+# RATE_LIMIT_AUTH_BURST=5
+# RATE_LIMIT_AUTH_PERIOD_SECS=10
+
+# General tier (all other /api routes) — broad throttling.
+# RATE_LIMIT_GENERAL_BURST=20
+# RATE_LIMIT_GENERAL_PERIOD_SECS=1
+
+# ── Channel cache ─────────────────────────────────────────
+# TTL for cached channel and category lists (seconds). Default: 86400 (24 h).
+# CHANNEL_CACHE_TTL_SECS=86400
 ```
 
 ## Server Settings

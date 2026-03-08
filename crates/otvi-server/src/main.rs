@@ -6,6 +6,7 @@ use tower_http::services::{ServeDir, ServeFile};
 use otvi_server::auth_middleware;
 use otvi_server::db;
 use otvi_server::state;
+use otvi_server::state::RateLimitConfig;
 use otvi_server::watcher;
 
 #[tokio::main]
@@ -62,6 +63,9 @@ async fn main() -> anyhow::Result<()> {
     let provider_count = app_state.providers_rw.read().map(|g| g.len()).unwrap_or(0);
     tracing::info!("Loaded {provider_count} provider(s)");
 
+    // ── Rate limiting ───────────────────────────────────────────────────────
+    let rate_limit = RateLimitConfig::from_env();
+
     // ── Routes ──────────────────────────────────────────────────────────────
     let state = Arc::new(app_state);
 
@@ -71,7 +75,7 @@ async fn main() -> anyhow::Result<()> {
     watcher::spawn(state.clone(), providers_dir.clone());
     tracing::info!(dir = %providers_dir, "Provider hot-reload enabled");
 
-    let app = otvi_server::build_router(state).fallback_service(
+    let app = otvi_server::build_router(state, rate_limit).fallback_service(
         ServeDir::new(&static_dir)
             .append_index_html_on_directories(true)
             .fallback(ServeFile::new(format!("{static_dir}/index.html"))),
