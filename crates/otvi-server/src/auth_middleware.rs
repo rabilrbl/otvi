@@ -205,16 +205,18 @@ impl IntoResponse for AuthError {
 ///
 /// Returns a `403 Forbidden` response when the flag is set, `Ok(())` otherwise.
 /// Used by [`ActiveClaims`] and [`AdminClaims`] so the check lives in one place.
-fn assert_password_not_forced(claims: &Claims) -> Result<(), Response> {
+fn assert_password_not_forced(claims: &Claims) -> Result<(), Box<Response>> {
     if claims.must_change_password {
-        return Err((
-            StatusCode::FORBIDDEN,
-            axum::Json(serde_json::json!({
-                "error": "You must change your password before using the application. \
-                          Please visit the change-password page."
-            })),
-        )
-            .into_response());
+        return Err(Box::new(
+            (
+                StatusCode::FORBIDDEN,
+                axum::Json(serde_json::json!({
+                    "error": "You must change your password before using the application. \
+                              Please visit the change-password page."
+                })),
+            )
+                .into_response(),
+        ));
     }
     Ok(())
 }
@@ -251,7 +253,7 @@ where
             .map_err(IntoResponse::into_response)?;
 
         // Guard is evaluated against the JWT claim — zero DB round-trips.
-        assert_password_not_forced(&claims)?;
+        assert_password_not_forced(&claims).map_err(|e| *e)?;
 
         Ok(ActiveClaims(claims))
     }
@@ -286,7 +288,7 @@ where
             .map_err(IntoResponse::into_response)?;
 
         // Guard is evaluated against the JWT claim — zero DB round-trips.
-        assert_password_not_forced(&claims)?;
+        assert_password_not_forced(&claims).map_err(|e| *e)?;
 
         if !claims.is_admin() {
             return Err((
