@@ -279,7 +279,6 @@ pub fn build_router(state: Arc<AppState>) -> axum::Router {
 /// Intended for integration tests that use `tower::ServiceExt::oneshot`
 /// directly on the router without a real TCP connection, where no peer
 /// `SocketAddr` is available for `PeerIpKeyExtractor` to inspect.
-#[cfg(any(test, feature = "test-helpers"))]
 pub fn build_router_without_rate_limit(state: Arc<AppState>) -> axum::Router {
     use tower::layer::util::Identity;
     build_route_tree(state, Identity::new(), Identity::new())
