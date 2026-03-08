@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use anyhow::Context;
 use chrono::Utc;
 use sqlx::{
-    AnyPool, Row,
+    Any, AnyPool, QueryBuilder, Row,
     any::{AnyConnectOptions, AnyPoolOptions},
 };
 use std::str::FromStr;
@@ -222,18 +222,22 @@ pub async fn set_must_change_password(db: &Db, user_id: &str, value: bool) -> an
 }
 
 pub async fn delete_user(db: &Db, user_id: &str) -> anyhow::Result<()> {
+    let mut tx = db.begin().await?;
+
     sqlx::query("DELETE FROM user_providers WHERE user_id = ?")
         .bind(user_id)
-        .execute(db)
+        .execute(&mut *tx)
         .await?;
     sqlx::query("DELETE FROM provider_sessions WHERE user_id = ?")
         .bind(user_id)
-        .execute(db)
+        .execute(&mut *tx)
         .await?;
     sqlx::query("DELETE FROM users WHERE id = ?")
         .bind(user_id)
-        .execute(db)
+        .execute(&mut *tx)
         .await?;
+
+    tx.commit().await?;
     Ok(())
 }
 
@@ -278,18 +282,23 @@ pub async fn set_user_providers(
     user_id: &str,
     provider_ids: &[String],
 ) -> anyhow::Result<()> {
+    let mut tx = db.begin().await?;
+
     sqlx::query("DELETE FROM user_providers WHERE user_id = ?")
         .bind(user_id)
-        .execute(db)
+        .execute(&mut *tx)
         .await?;
 
-    for pid in provider_ids {
-        sqlx::query("INSERT INTO user_providers (user_id, provider_id) VALUES (?, ?)")
-            .bind(user_id)
-            .bind(pid)
-            .execute(db)
-            .await?;
+    if !provider_ids.is_empty() {
+        let mut builder =
+            QueryBuilder::<Any>::new("INSERT INTO user_providers (user_id, provider_id) ");
+        builder.push_values(provider_ids, |mut row, pid| {
+            row.push_bind(user_id).push_bind(pid);
+        });
+        builder.build().execute(&mut *tx).await?;
     }
+
+    tx.commit().await?;
     Ok(())
 }
 

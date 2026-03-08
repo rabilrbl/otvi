@@ -56,31 +56,40 @@ impl TemplateContext {
     /// a (possibly empty) list of placeholder keys that could not be resolved.
     /// Unresolved placeholders are left verbatim in `rendered`.
     pub fn resolve(&self, template: &str) -> ResolveResult {
-        let mut result = template.to_string();
+        let mut rendered = String::with_capacity(template.len());
         let mut unresolved = Vec::new();
 
-        // Collect all placeholder keys that appear in the template.
-        let mut search = template;
-        while let Some(start) = search.find("{{") {
-            search = &search[start + 2..];
-            if let Some(end) = search.find("}}") {
-                let key = &search[..end];
-                if !self.values.contains_key(key) {
-                    unresolved.push(key.to_string());
-                }
-                search = &search[end + 2..];
+        let mut remaining = template;
+        while let Some(start) = remaining.find("{{") {
+            let (prefix, after_prefix) = remaining.split_at(start);
+            rendered.push_str(prefix);
+
+            let after_open = &after_prefix[2..];
+            let Some(end) = after_open.find("}}") else {
+                rendered.push_str(after_prefix);
+                return ResolveResult {
+                    rendered,
+                    unresolved,
+                };
+            };
+
+            let key = &after_open[..end];
+            if let Some(value) = self.values.get(key) {
+                rendered.push_str(value);
             } else {
-                break;
+                unresolved.push(key.to_string());
+                rendered.push_str("{{");
+                rendered.push_str(key);
+                rendered.push_str("}}");
             }
+
+            remaining = &after_open[end + 2..];
         }
 
-        // Replace all resolved placeholders.
-        for (key, value) in &self.values {
-            result = result.replace(&format!("{{{{{key}}}}}"), value);
-        }
+        rendered.push_str(remaining);
 
         ResolveResult {
-            rendered: result,
+            rendered,
             unresolved,
         }
     }

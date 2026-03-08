@@ -54,17 +54,10 @@ pub async fn proxy_stream(
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid URL: {e}")))?;
 
     // Look up the proxy context for this token.
-    let ctx = query
-        .ctx
-        .as_deref()
-        .and_then(|token| {
-            state
-                .proxy_ctx
-                .read()
-                .ok()
-                .and_then(|store| store.get(token).cloned())
-        })
-        .unwrap_or_default();
+    let mut ctx = match query.ctx.as_deref() {
+        Some(token) => state.proxy_ctx.get(token).await.unwrap_or_default(),
+        None => Default::default(),
+    };
 
     // Fetch upstream
     let mut req = state.http_client.get(parsed.as_str());
@@ -78,7 +71,11 @@ pub async fn proxy_stream(
         debug!(url = %upstream_url, headers = ?ctx.headers, "proxy key request headers");
     }
     // Fall back to a generic UA only when none was supplied
-    if !ctx.headers.keys().any(|k| k.to_lowercase() == "user-agent") {
+    if !ctx
+        .headers
+        .keys()
+        .any(|k| k.eq_ignore_ascii_case("user-agent"))
+    {
         req = req.header("User-Agent", "Mozilla/5.0");
     }
     // Generic URL-param → cookie forwarding.
@@ -182,7 +179,7 @@ pub async fn proxy_stream(
         // this manifest URL into the context so that sub-requests that have
         // no query params (e.g. bare .pkey key files) still get the cookies.
         if let Some(token) = query.ctx.as_deref()
-            && !ctx.url_param_cookies.is_empty()
+            && let Some(mut entry) = state.proxy_ctx.get(token).await
         {
             // Use query_pairs() so percent-encoded values are decoded before
             // being stored (same decoding used when building the Cookie header).
@@ -199,21 +196,28 @@ pub async fn proxy_stream(
                         .map(|val| (cookie_name.clone(), val.clone()))
                 })
                 .collect();
+
+            let mut changed = false;
             if !freshened.is_empty() {
                 debug!(url = %upstream_url, ?freshened, "persisting resolved_cookies from manifest");
-                if let Ok(mut store) = state.proxy_ctx.write()
-                    && let Some(entry) = store.get_mut(token)
-                {
-                    entry.resolved_cookies.extend(freshened);
-                    // Also persist the raw query string so that key URLs (.pkey/.key)
-                    // can have it appended before fetching upstream (JioTV-Go pattern).
-                    if let Some(q) = parsed.query()
-                        && entry.manifest_query.is_none()
-                    {
-                        entry.manifest_query = Some(q.to_owned());
-                        debug!(url = %upstream_url, manifest_query = %q, "persisting manifest_query");
-                    }
-                }
+                entry.resolved_cookies.extend(freshened.clone());
+                ctx.resolved_cookies.extend(freshened);
+                changed = true;
+            }
+            // Persist the raw query string independently of cookie extraction so
+            // key URI rewriting still works for providers that only need the
+            // manifest query appended and do not map any cookies.
+            if let Some(q) = parsed.query()
+                && entry.manifest_query.is_none()
+            {
+                entry.manifest_query = Some(q.to_owned());
+                ctx.manifest_query = Some(q.to_owned());
+                changed = true;
+                debug!(url = %upstream_url, manifest_query = %q, "persisting manifest_query");
+            }
+
+            if changed {
+                state.proxy_ctx.insert(token.to_owned(), entry).await;
             }
         }
 

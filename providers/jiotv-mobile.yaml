@@ -256,7 +256,7 @@ playback:
     # Allow the resolved __hdnea__ cookie to be forwarded to key requests.
     # Empirically the key server (tv.media.jio.com) requires it even though its
     # path (/fallback/bpk-tv/…) doesn't match the CDN ACL (/bpk-tv/…).
-    key_exclude_resolved_cookies: false
+    key_exclude_resolved_cookies: true
     # key_uri_patterns is not needed here because append_manifest_query_to_key_uris
     # is false — the manifest query is never appended for JioTV.
     key_uri_patterns: [".pkey", ".key"]

@@ -76,7 +76,7 @@ async fn build_test_app() -> (axum::Router, tempfile::TempDir) {
         http_client: reqwest::Client::builder()
             .build()
             .expect("build HTTP client"),
-        proxy_ctx: std::sync::RwLock::new(std::collections::HashMap::new()),
+        proxy_ctx: otvi_server::state::new_proxy_context_cache(std::time::Duration::from_secs(300)),
         channel_cache: otvi_server::state::ChannelCache::new(std::time::Duration::from_secs(300)),
     });
 
@@ -916,7 +916,7 @@ async fn global_provider_login_requires_admin() {
         db,
         jwt_keys: otvi_server::auth_middleware::JwtKeys::new(b"global-test-secret"),
         http_client: reqwest::Client::new(),
-        proxy_ctx: std::sync::RwLock::new(std::collections::HashMap::new()),
+        proxy_ctx: otvi_server::state::new_proxy_context_cache(std::time::Duration::from_secs(300)),
         channel_cache: otvi_server::state::ChannelCache::new(std::time::Duration::from_secs(300)),
     });
     let app = otvi_server::build_router_for_tests(state);
