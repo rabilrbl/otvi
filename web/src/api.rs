@@ -62,15 +62,11 @@ pub async fn boot_check() -> AppBoot {
 }
 
 pub async fn app_login(username: &str, password: &str) -> Result<AppLoginResponse, String> {
-    let body = serde_json::to_string(&AppLoginRequest {
-        username: username.to_string(),
-        password: password.to_string(),
-    })
-    .map_err(|e| e.to_string())?;
-
     let resp = Request::post("/api/auth/login")
-        .header("Content-Type", "application/json")
-        .body(body)
+        .json(&AppLoginRequest {
+            username: username.to_string(),
+            password: password.to_string(),
+        })
         .map_err(|e| format!("{e:?}"))?
         .send()
         .await
@@ -86,15 +82,11 @@ pub async fn app_login(username: &str, password: &str) -> Result<AppLoginRespons
 }
 
 pub async fn app_register(username: &str, password: &str) -> Result<AppLoginResponse, String> {
-    let body = serde_json::to_string(&RegisterRequest {
-        username: username.to_string(),
-        password: password.to_string(),
-    })
-    .map_err(|e| e.to_string())?;
-
     let resp = Request::post("/api/auth/register")
-        .header("Content-Type", "application/json")
-        .body(body)
+        .json(&RegisterRequest {
+            username: username.to_string(),
+            password: password.to_string(),
+        })
         .map_err(|e| format!("{e:?}"))?
         .send()
         .await
@@ -116,15 +108,11 @@ pub async fn change_password(
     current_password: &str,
     new_password: &str,
 ) -> Result<AppLoginResponse, String> {
-    let body = serde_json::to_string(&ChangePasswordRequest {
-        current_password: current_password.to_string(),
-        new_password: new_password.to_string(),
-    })
-    .map_err(|e| e.to_string())?;
-
     let resp = post_authed("/api/auth/change-password")
-        .header("Content-Type", "application/json")
-        .body(body)
+        .json(&ChangePasswordRequest {
+            current_password: current_password.to_string(),
+            new_password: new_password.to_string(),
+        })
         .map_err(|e| format!("{e:?}"))?
         .send()
         .await
@@ -214,10 +202,8 @@ pub async fn check_provider_session(provider_id: &str) -> bool {
 }
 
 pub async fn login(provider_id: &str, req: &LoginRequest) -> Result<LoginResponse, String> {
-    let body = serde_json::to_string(req).map_err(|e| e.to_string())?;
     let resp = post_authed(&format!("/api/providers/{provider_id}/auth/login"))
-        .header("Content-Type", "application/json")
-        .body(body)
+        .json(req)
         .map_err(|e| format!("{e:?}"))?
         .send()
         .await
@@ -279,10 +265,8 @@ pub async fn admin_list_users() -> Result<Vec<UserInfo>, String> {
 }
 
 pub async fn admin_create_user(req: CreateUserRequest) -> Result<UserInfo, String> {
-    let body = serde_json::to_string(&req).map_err(|e| e.to_string())?;
     let resp = post_authed("/api/admin/users")
-        .header("Content-Type", "application/json")
-        .body(body)
+        .json(&req)
         .map_err(|e| format!("{e:?}"))?
         .send()
         .await
@@ -313,11 +297,8 @@ pub async fn admin_delete_user(user_id: &str) -> Result<(), String> {
 }
 
 pub async fn admin_set_user_providers(user_id: &str, providers: Vec<String>) -> Result<(), String> {
-    let body = serde_json::to_string(&UpdateUserProvidersRequest { providers })
-        .map_err(|e| e.to_string())?;
     let resp = put_authed(&format!("/api/admin/users/{user_id}/providers"))
-        .header("Content-Type", "application/json")
-        .body(body)
+        .json(&UpdateUserProvidersRequest { providers })
         .map_err(|e| format!("{e:?}"))?
         .send()
         .await
@@ -333,13 +314,10 @@ pub async fn admin_set_user_providers(user_id: &str, providers: Vec<String>) -> 
 }
 
 pub async fn admin_reset_password(user_id: &str, new_password: &str) -> Result<(), String> {
-    let body = serde_json::to_string(&AdminResetPasswordRequest {
-        new_password: new_password.to_string(),
-    })
-    .map_err(|e| e.to_string())?;
     let resp = put_authed(&format!("/api/admin/users/{user_id}/password"))
-        .header("Content-Type", "application/json")
-        .body(body)
+        .json(&AdminResetPasswordRequest {
+            new_password: new_password.to_string(),
+        })
         .map_err(|e| format!("{e:?}"))?
         .send()
         .await
@@ -370,10 +348,8 @@ pub async fn admin_get_settings() -> Result<ServerSettings, String> {
 }
 
 pub async fn admin_update_settings(settings: ServerSettings) -> Result<(), String> {
-    let body = serde_json::to_string(&settings).map_err(|e| e.to_string())?;
     let resp = put_authed("/api/admin/settings")
-        .header("Content-Type", "application/json")
-        .body(body)
+        .json(&settings)
         .map_err(|e| format!("{e:?}"))?
         .send()
         .await
@@ -397,13 +373,9 @@ pub async fn fetch_channels(
     let Some(b) = bearer() else {
         return Err("Not logged in".into());
     };
-    let mut url = format!("/api/providers/{provider_id}/channels");
-    if !params.is_empty() {
-        let qs: Vec<String> = params.iter().map(|(k, v)| format!("{k}={v}")).collect();
-        url = format!("{url}?{}", qs.join("&"));
-    }
-    let resp = Request::get(&url)
+    let resp = Request::get(&format!("/api/providers/{provider_id}/channels"))
         .header("Authorization", &b)
+        .query(params.iter().map(|(k, v)| (k.as_str(), v.as_str())))
         .send()
         .await
         .map_err(|e| e.to_string())?;

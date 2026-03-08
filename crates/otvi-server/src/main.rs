@@ -2,12 +2,28 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use tower_http::services::{ServeDir, ServeFile};
+use url::Url;
 
 use otvi_server::auth_middleware;
 use otvi_server::db;
 use otvi_server::state;
 use otvi_server::state::RateLimitConfig;
 use otvi_server::watcher;
+
+fn redact_database_url(database_url: &str) -> String {
+    match Url::parse(database_url) {
+        Ok(mut url) => {
+            if !url.username().is_empty() {
+                let _ = url.set_username("REDACTED");
+            }
+            if url.password().is_some() {
+                let _ = url.set_password(Some("REDACTED"));
+            }
+            url.to_string()
+        }
+        Err(_) => database_url.to_string(),
+    }
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -46,7 +62,10 @@ async fn main() -> anyhow::Result<()> {
 
     let database_url =
         std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite://data.db".to_string());
-    tracing::info!("Connecting to database: {database_url}");
+    tracing::info!(
+        database_url = %redact_database_url(&database_url),
+        "Connecting to database"
+    );
     let db = db::init(&database_url).await?;
 
     // ── JWT secret ──────────────────────────────────────────────────────────

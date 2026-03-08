@@ -1,4 +1,4 @@
-use leptos::either::{Either, EitherOf3};
+use leptos::either::EitherOf3;
 use leptos::prelude::*;
 
 use crate::api;
@@ -33,12 +33,6 @@ pub fn HomePage() -> impl IntoView {
                                     key=|p| p.id.clone()
                                     children=move |provider| {
                                         let pid = provider.id.clone();
-                                        let pid2 = pid.clone();
-                                        // Check provider session status asynchronously.
-                                        let session_status = LocalResource::new(move || {
-                                            let id = pid2.clone();
-                                            async move { api::check_provider_session(&id).await }
-                                        });
                                         let flows_text = provider
                                             .auth_flows
                                             .iter()
@@ -47,30 +41,21 @@ pub fn HomePage() -> impl IntoView {
                                             .join(", ");
                                         view! {
                                             <a
-                                                href=move || {
-                                                    if session_status.get().unwrap_or(false) {
-                                                        format!("/providers/{}/channels", pid)
-                                                    } else {
-                                                        format!("/login/{}", pid)
-                                                    }
-                                                }
+                                                href=format!("/login/{pid}")
                                                 class="block bg-gray-900 border border-white/5 rounded-lg p-6 hover:-translate-y-1 hover:border-rose-500 transition-all duration-200 cursor-pointer no-underline"
                                             >
                                                 {provider.logo.map(|url| view! {
-                                                    <img class="max-w-full h-15 object-contain mb-4" src=url alt="logo" />
+                                                    <img
+                                                        class="max-w-full h-15 object-contain mb-4"
+                                                        src=url
+                                                        alt="provider logo"
+                                                        loading="lazy"
+                                                        decoding="async"
+                                                    />
                                                 })}
                                                 <h3 class="font-semibold text-lg mb-1">{provider.name}</h3>
                                                 <div class="text-sm text-gray-400">{flows_text}</div>
-                                                {move || {
-                                                    match session_status.get() {
-                                                        Some(true) => Either::Left(view! {
-                                                            <div class="text-sm text-emerald-400 mt-2 font-medium">"Signed in ✓"</div>
-                                                        }),
-                                                        _ => Either::Right(view! {
-                                                            <div class="text-sm text-gray-400 mt-2">"Sign in →"</div>
-                                                        }),
-                                                    }
-                                                }}
+                                                <div class="text-sm text-gray-400 mt-2">"Continue →"</div>
                                             </a>
                                         }
                                     }

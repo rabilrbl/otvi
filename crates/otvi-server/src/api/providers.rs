@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use axum::Json;
@@ -32,6 +33,7 @@ pub async fn list(
     let allowed = db::get_user_providers(&state.db, &claims.sub)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
+    let allowed: HashSet<String> = allowed.into_iter().collect();
 
     let providers = state.with_providers(|map| {
         map.values()
@@ -68,6 +70,7 @@ pub async fn get_info(
     let allowed = db::get_user_providers(&state.db, &claims.sub)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
+    let allowed: HashSet<String> = allowed.into_iter().collect();
 
     if !allowed.is_empty() && !allowed.contains(&id) {
         return Err(AppError::NotFound(format!("Provider '{id}' not found")));

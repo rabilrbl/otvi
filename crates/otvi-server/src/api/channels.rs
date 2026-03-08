@@ -136,7 +136,7 @@ pub async fn list(
     };
 
     // ── Cache lookup ──────────────────────────────────────────────────────
-    let all_channels: Vec<Channel> =
+    let all_channels: Arc<[Channel]> =
         if let Some(cached) = state.channel_cache.channels.get(&cache_key).await {
             debug!(provider = %provider_id, "channel list cache HIT");
             cached.channels
@@ -167,7 +167,7 @@ pub async fn list(
                 AppError::Internal(e.to_string())
             })?;
 
-            let channels = map_channels(&response, &list_response)?;
+            let channels = Arc::<[Channel]>::from(map_channels(&response, &list_response)?);
 
             // Populate the cache with the full unfiltered list.
             state
@@ -185,7 +185,7 @@ pub async fn list(
         };
 
     // ── Server-side filtering ─────────────────────────────────────────────
-    let mut channels = all_channels;
+    let mut channels: Vec<&Channel> = all_channels.iter().collect();
 
     // ── Server-side category filter ──────────────────────────────────────
     if let Some(cat) = &query.category
@@ -210,11 +210,16 @@ pub async fn list(
             .into_iter()
             .skip(offset)
             .take(limit)
+            .cloned()
             .collect::<Vec<_>>()
     } else if offset > 0 {
-        channels.into_iter().skip(offset).collect::<Vec<_>>()
-    } else {
         channels
+            .into_iter()
+            .skip(offset)
+            .cloned()
+            .collect::<Vec<_>>()
+    } else {
+        channels.into_iter().cloned().collect::<Vec<_>>()
     };
 
     Ok(Json(ChannelListResponse {
@@ -289,7 +294,7 @@ pub async fn categories(
     };
 
     // ── Cache lookup ──────────────────────────────────────────────────────
-    let categories: Vec<Category> =
+    let categories: Arc<[Category]> =
         if let Some(cached) = state.channel_cache.categories.get(&cache_key).await {
             debug!(provider = %provider_id, "categories cache HIT");
             cached.categories
@@ -311,7 +316,7 @@ pub async fn categories(
                 AppError::Internal(e.to_string())
             })?;
 
-            let cats = map_categories(&response, &cat_endpoint.response)?;
+            let cats = Arc::<[Category]>::from(map_categories(&response, &cat_endpoint.response)?);
 
             state
                 .channel_cache
@@ -327,7 +332,9 @@ pub async fn categories(
             cats
         };
 
-    Ok(Json(CategoryListResponse { categories }))
+    Ok(Json(CategoryListResponse {
+        categories: categories.iter().cloned().collect(),
+    }))
 }
 
 /// `GET /api/providers/:id/channels/:channel_id/stream`
@@ -476,7 +483,7 @@ pub async fn stream(
                 key_uri_patterns: stream_endpoint.key_uri_patterns.clone(),
             };
             let token = uuid::Uuid::new_v4().to_string();
-            state.proxy_ctx.write().unwrap().insert(token.clone(), ctx);
+            state.proxy_ctx.insert(token.clone(), ctx).await;
             format!("{base}&ctx={token}")
         } else {
             base
@@ -496,25 +503,25 @@ fn map_channels(
     response: &Value,
     mapping: &otvi_core::config::ResponseMapping,
 ) -> Result<Vec<Channel>, AppError> {
-    let items: Vec<Value> = get_items_array(response, mapping.items_path.as_deref())?;
+    let items = get_items_array(response, mapping.items_path.as_deref())?;
 
     let logo_base = mapping.logo_base_url.as_deref().unwrap_or("");
 
     let channels = items
-        .into_iter()
+        .iter()
         .filter_map(|item| {
-            let id = extract_mapped_field(&item, &mapping.mapping, "id")?;
-            let name = extract_mapped_field(&item, &mapping.mapping, "name")?;
-            let logo = extract_mapped_field(&item, &mapping.mapping, "logo").map(|raw| {
+            let id = extract_mapped_field(item, &mapping.mapping, "id")?;
+            let name = extract_mapped_field(item, &mapping.mapping, "name")?;
+            let logo = extract_mapped_field(item, &mapping.mapping, "logo").map(|raw| {
                 if raw.starts_with("http://") || raw.starts_with("https://") {
                     raw
                 } else {
                     format!("{logo_base}{raw}")
                 }
             });
-            let category = extract_mapped_field(&item, &mapping.mapping, "category");
-            let number = extract_mapped_field(&item, &mapping.mapping, "number");
-            let description = extract_mapped_field(&item, &mapping.mapping, "description");
+            let category = extract_mapped_field(item, &mapping.mapping, "category");
+            let number = extract_mapped_field(item, &mapping.mapping, "number");
+            let description = extract_mapped_field(item, &mapping.mapping, "description");
             Some(Channel {
                 id,
                 name,
@@ -533,13 +540,13 @@ fn map_categories(
     response: &Value,
     mapping: &otvi_core::config::ResponseMapping,
 ) -> Result<Vec<Category>, AppError> {
-    let items: Vec<Value> = get_items_array(response, mapping.items_path.as_deref())?;
+    let items = get_items_array(response, mapping.items_path.as_deref())?;
 
     let categories = items
-        .into_iter()
+        .iter()
         .filter_map(|item| {
-            let id = extract_mapped_field(&item, &mapping.mapping, "id")?;
-            let name = extract_mapped_field(&item, &mapping.mapping, "name")?;
+            let id = extract_mapped_field(item, &mapping.mapping, "id")?;
+            let name = extract_mapped_field(item, &mapping.mapping, "name")?;
             Some(Category { id, name })
         })
         .collect();
@@ -548,24 +555,27 @@ fn map_categories(
 }
 
 /// Navigate to the array indicated by `items_path` in the response JSON and
-/// return it as an owned `Vec<Value>`.
+/// return it by reference.
 ///
 /// When `items_path` is `None` the response itself is expected to be a JSON
 /// array.  When a path is given it is resolved via [`navigate_json`] and
 /// the matched node is expected to be an array.
-fn get_items_array(response: &Value, items_path: Option<&str>) -> Result<Vec<Value>, AppError> {
+fn get_items_array<'a>(
+    response: &'a Value,
+    items_path: Option<&str>,
+) -> Result<&'a [Value], AppError> {
     match items_path {
         Some(path) => {
             let node = navigate_json(response, path).ok_or_else(|| {
                 AppError::Internal(format!("items_path '{path}' not found in response"))
             })?;
             node.as_array()
-                .cloned()
+                .map(Vec::as_slice)
                 .ok_or_else(|| AppError::Internal(format!("items_path '{path}' is not an array")))
         }
         None => response
             .as_array()
-            .cloned()
+            .map(Vec::as_slice)
             .ok_or_else(|| AppError::Internal("Response root is not an array".into())),
     }
 }
@@ -1054,7 +1064,7 @@ mod tests {
         let cache = ChannelCache::new(Duration::from_secs(60));
         let key = ChannelCacheKey::per_user("provider-a", "user-1");
         let payload = CachedChannels {
-            channels: vec![channel("ch1", "Channel 1", None)],
+            channels: vec![channel("ch1", "Channel 1", None)].into(),
         };
         cache.channels.insert(key.clone(), payload).await;
 
@@ -1079,7 +1089,8 @@ mod tests {
                     id: "2".into(),
                     name: "Sports".into(),
                 },
-            ],
+            ]
+            .into(),
         };
         cache.categories.insert(key.clone(), payload).await;
 
@@ -1096,7 +1107,12 @@ mod tests {
 
         cache
             .channels
-            .insert(global_key.clone(), CachedChannels { channels: vec![] })
+            .insert(
+                global_key.clone(),
+                CachedChannels {
+                    channels: Vec::new().into(),
+                },
+            )
             .await;
 
         // Both user-a and user-b resolve to the same global key and must see the entry.
@@ -1118,7 +1134,7 @@ mod tests {
             .insert(
                 key_a.clone(),
                 CachedChannels {
-                    channels: vec![channel("1", "User A Channel", None)],
+                    channels: vec![channel("1", "User A Channel", None)].into(),
                 },
             )
             .await;
@@ -1137,11 +1153,21 @@ mod tests {
 
         cache
             .channels
-            .insert(key.clone(), CachedChannels { channels: vec![] })
+            .insert(
+                key.clone(),
+                CachedChannels {
+                    channels: Vec::new().into(),
+                },
+            )
             .await;
         cache
             .categories
-            .insert(key.clone(), CachedCategories { categories: vec![] })
+            .insert(
+                key.clone(),
+                CachedCategories {
+                    categories: Vec::new().into(),
+                },
+            )
             .await;
 
         assert!(cache.channels.get(&key).await.is_some());
@@ -1161,11 +1187,21 @@ mod tests {
 
         cache
             .channels
-            .insert(key_target.clone(), CachedChannels { channels: vec![] })
+            .insert(
+                key_target.clone(),
+                CachedChannels {
+                    channels: Vec::new().into(),
+                },
+            )
             .await;
         cache
             .channels
-            .insert(key_other.clone(), CachedChannels { channels: vec![] })
+            .insert(
+                key_other.clone(),
+                CachedChannels {
+                    channels: Vec::new().into(),
+                },
+            )
             .await;
 
         cache.invalidate(&key_target).await;
@@ -1188,11 +1224,21 @@ mod tests {
 
         cache
             .channels
-            .insert(key_a.clone(), CachedChannels { channels: vec![] })
+            .insert(
+                key_a.clone(),
+                CachedChannels {
+                    channels: Vec::new().into(),
+                },
+            )
             .await;
         cache
             .channels
-            .insert(key_b.clone(), CachedChannels { channels: vec![] })
+            .insert(
+                key_b.clone(),
+                CachedChannels {
+                    channels: Vec::new().into(),
+                },
+            )
             .await;
 
         cache.invalidate(&key_a).await;
@@ -1208,7 +1254,12 @@ mod tests {
 
         cache
             .channels
-            .insert(key.clone(), CachedChannels { channels: vec![] })
+            .insert(
+                key.clone(),
+                CachedChannels {
+                    channels: Vec::new().into(),
+                },
+            )
             .await;
 
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -1227,7 +1278,7 @@ mod tests {
             .insert(
                 key.clone(),
                 CachedChannels {
-                    channels: vec![channel("1", "Old", None)],
+                    channels: vec![channel("1", "Old", None)].into(),
                 },
             )
             .await;
@@ -1236,7 +1287,7 @@ mod tests {
             .insert(
                 key.clone(),
                 CachedChannels {
-                    channels: vec![channel("2", "New A", None), channel("3", "New B", None)],
+                    channels: vec![channel("2", "New A", None), channel("3", "New B", None)].into(),
                 },
             )
             .await;
@@ -1253,7 +1304,7 @@ mod tests {
         for i in 0..5u32 {
             let key = ChannelCacheKey::per_user(format!("provider-{i}"), "uid");
             let payload = CachedChannels {
-                channels: vec![channel(&i.to_string(), &format!("Ch {i}"), None)],
+                channels: vec![channel(&i.to_string(), &format!("Ch {i}"), None)].into(),
             };
             cache.channels.insert(key, payload).await;
         }

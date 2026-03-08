@@ -1,17 +1,19 @@
 use std::collections::HashMap;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 // ── Rate limiting ──────────────────────────────────────────────────────────
 
 /// Default burst size for the auth-tier rate limiter (login / register).
-pub const DEFAULT_RATE_LIMIT_AUTH_BURST: u32 = 5;
+pub const DEFAULT_RATE_LIMIT_AUTH_BURST: u32 = 10;
 /// Default replenishment period (seconds) for the auth-tier rate limiter.
-pub const DEFAULT_RATE_LIMIT_AUTH_PERIOD_SECS: u64 = 10;
+pub const DEFAULT_RATE_LIMIT_AUTH_PERIOD_SECS: u64 = 3;
 /// Default burst size for the general-tier rate limiter (all other API routes).
-pub const DEFAULT_RATE_LIMIT_GENERAL_BURST: u32 = 20;
+pub const DEFAULT_RATE_LIMIT_GENERAL_BURST: u32 = 60;
 /// Default replenishment period (seconds) for the general-tier rate limiter.
 pub const DEFAULT_RATE_LIMIT_GENERAL_PERIOD_SECS: u64 = 1;
+/// Rate limiting is enabled by default in all build modes.
+pub const DEFAULT_RATE_LIMIT_ENABLED: bool = true;
 
 /// Configuration for the two-tier IP-based rate limiter.
 ///
@@ -22,19 +24,22 @@ pub const DEFAULT_RATE_LIMIT_GENERAL_PERIOD_SECS: u64 = 1;
 ///
 /// | Tier    | Protects                                          | Default quota                  |
 /// |---------|---------------------------------------------------|--------------------------------|
-/// | Auth    | `POST /api/auth/login`, `/api/auth/register`, `POST /api/*/auth/login` | 5 req burst, +1 every 10 s |
-/// | General | All other `/api` routes                           | 20 req burst, +1 every 1 s    |
+/// | Auth    | `POST /api/auth/login`, `/api/auth/register`, `POST /api/*/auth/login` | 10 req burst, +1 every 3 s |
+/// | General | All other `/api` routes                           | 60 req burst, +1 every 1 s    |
 ///
 /// ## Environment variables
 ///
 /// | Variable                          | Default | Description                                       |
 /// |-----------------------------------|---------|---------------------------------------------------|
-/// | `RATE_LIMIT_AUTH_BURST`           | `5`     | Auth-tier token bucket burst capacity             |
-/// | `RATE_LIMIT_AUTH_PERIOD_SECS`     | `10`    | Auth-tier replenishment interval in seconds       |
-/// | `RATE_LIMIT_GENERAL_BURST`        | `20`    | General-tier token bucket burst capacity          |
+/// | `RATE_LIMIT_AUTH_BURST`           | `10`    | Auth-tier token bucket burst capacity             |
+/// | `RATE_LIMIT_AUTH_PERIOD_SECS`     | `3`     | Auth-tier replenishment interval in seconds       |
+/// | `RATE_LIMIT_GENERAL_BURST`        | `60`    | General-tier token bucket burst capacity          |
 /// | `RATE_LIMIT_GENERAL_PERIOD_SECS`  | `1`     | General-tier replenishment interval in seconds    |
+/// | `RATE_LIMIT_ENABLED`              | `true`  | Enables the API rate limiter |
 #[derive(Debug, Clone)]
 pub struct RateLimitConfig {
+    /// Global on/off switch for API rate limiting.
+    pub enabled: bool,
     /// Burst capacity for auth-sensitive endpoints.
     pub auth_burst: u32,
     /// Token replenishment interval (seconds) for auth-sensitive endpoints.
@@ -48,6 +53,7 @@ pub struct RateLimitConfig {
 impl Default for RateLimitConfig {
     fn default() -> Self {
         Self {
+            enabled: DEFAULT_RATE_LIMIT_ENABLED,
             auth_burst: DEFAULT_RATE_LIMIT_AUTH_BURST,
             auth_period_secs: DEFAULT_RATE_LIMIT_AUTH_PERIOD_SECS,
             general_burst: DEFAULT_RATE_LIMIT_GENERAL_BURST,
@@ -57,6 +63,17 @@ impl Default for RateLimitConfig {
 }
 
 impl RateLimitConfig {
+    fn parse_env_bool(name: &str, default: bool) -> bool {
+        match std::env::var(name) {
+            Ok(value) => match value.trim().to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => true,
+                "0" | "false" | "no" | "off" => false,
+                _ => default,
+            },
+            Err(_) => default,
+        }
+    }
+
     /// Construct a `RateLimitConfig` from environment variables, falling back
     /// to the compiled-in defaults for any variable that is absent or cannot
     /// be parsed.
@@ -69,6 +86,7 @@ impl RateLimitConfig {
         }
 
         let cfg = Self {
+            enabled: Self::parse_env_bool("RATE_LIMIT_ENABLED", DEFAULT_RATE_LIMIT_ENABLED),
             auth_burst: parse_env("RATE_LIMIT_AUTH_BURST", DEFAULT_RATE_LIMIT_AUTH_BURST),
             auth_period_secs: parse_env(
                 "RATE_LIMIT_AUTH_PERIOD_SECS",
@@ -82,6 +100,7 @@ impl RateLimitConfig {
         };
 
         tracing::info!(
+            enabled = cfg.enabled,
             auth_burst = cfg.auth_burst,
             auth_period_secs = cfg.auth_period_secs,
             general_burst = cfg.general_burst,
@@ -136,6 +155,39 @@ pub struct ProxyContext {
     /// when deciding whether to append the manifest query.  An empty list
     /// means "apply to all key-tag URIs".
     pub key_uri_patterns: Vec<String>,
+}
+
+/// Default time-to-idle for per-stream proxy contexts.
+///
+/// A context is created when the player requests a stream URL and refreshed on
+/// every proxied segment or manifest request. Idle contexts can be discarded
+/// safely once playback stops.
+pub const DEFAULT_PROXY_CONTEXT_TTL_SECS: u64 = 3_600;
+
+/// Maximum number of live proxy contexts retained in memory.
+const PROXY_CONTEXT_MAX_ENTRIES: u64 = 10_000;
+
+/// Create a bounded proxy-context cache with time-to-idle expiry.
+pub fn new_proxy_context_cache(ttl: Duration) -> Cache<String, ProxyContext> {
+    Cache::builder()
+        .max_capacity(PROXY_CONTEXT_MAX_ENTRIES)
+        .time_to_idle(ttl)
+        .build()
+}
+
+fn proxy_context_cache_from_env() -> Cache<String, ProxyContext> {
+    let secs = std::env::var("PROXY_CONTEXT_TTL_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_PROXY_CONTEXT_TTL_SECS);
+
+    tracing::info!(
+        ttl_secs = secs,
+        ttl_minutes = secs / 60,
+        "Proxy context cache TTL configured",
+    );
+
+    new_proxy_context_cache(Duration::from_secs(secs))
 }
 
 // ── Channel cache ──────────────────────────────────────────────────────────
@@ -225,13 +277,13 @@ impl ChannelCacheKey {
 #[derive(Debug, Clone)]
 pub struct CachedChannels {
     /// The full, unfiltered, unpaginated list returned by the upstream provider.
-    pub channels: Vec<Channel>,
+    pub channels: Arc<[Channel]>,
 }
 
 /// Cached payload for the categories endpoint.
 #[derive(Debug, Clone)]
 pub struct CachedCategories {
-    pub categories: Vec<Category>,
+    pub categories: Arc<[Category]>,
 }
 
 /// In-memory TTL caches for the channel and category listing endpoints.
@@ -327,7 +379,7 @@ pub struct AppState {
     ///
     /// Populated by the stream endpoint; contains resolved headers and
     /// cookie mappings.  Only the opaque token is embedded in proxy URLs.
-    pub proxy_ctx: RwLock<HashMap<String, ProxyContext>>,
+    pub proxy_ctx: Cache<String, ProxyContext>,
     /// In-memory TTL cache for channel list and category responses.
     ///
     /// Caching the full upstream response server-side means that server-side
@@ -351,10 +403,10 @@ impl AppState {
             .and_then(|guard| guard.get(id).map(f))
     }
 
-    /// Run `f` with a snapshot clone of the provider map.
+    /// Run `f` while holding a read lock on the provider map.
     ///
-    /// Clones the entire map so the lock is held for the shortest possible
-    /// time.  Prefer [`with_provider`] for single-provider lookups.
+    /// The closure must stay synchronous and must not perform blocking or
+    /// async work. Prefer [`with_provider`] for single-provider lookups.
     pub fn with_providers<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&HashMap<String, ProviderConfig>) -> R,
@@ -381,7 +433,7 @@ impl AppState {
                     db,
                     jwt_keys,
                     http_client: build_http_client(),
-                    proxy_ctx: RwLock::new(HashMap::new()),
+                    proxy_ctx: proxy_context_cache_from_env(),
                     channel_cache: ChannelCache::from_env(),
                 });
             }
@@ -418,7 +470,7 @@ impl AppState {
             db,
             jwt_keys,
             http_client: build_http_client(),
-            proxy_ctx: RwLock::new(HashMap::new()),
+            proxy_ctx: proxy_context_cache_from_env(),
             channel_cache: ChannelCache::from_env(),
         })
     }
@@ -552,7 +604,8 @@ mod tests {
                 category: None,
                 number: None,
                 description: None,
-            }],
+            }]
+            .into(),
         };
         cache.channels.insert(key.clone(), payload).await;
         let hit = cache.channels.get(&key).await;
@@ -574,7 +627,8 @@ mod tests {
                     id: "2".into(),
                     name: "Sports".into(),
                 },
-            ],
+            ]
+            .into(),
         };
         cache.categories.insert(key.clone(), payload).await;
         let hit = cache.categories.get(&key).await;
@@ -589,11 +643,21 @@ mod tests {
 
         cache
             .channels
-            .insert(key.clone(), CachedChannels { channels: vec![] })
+            .insert(
+                key.clone(),
+                CachedChannels {
+                    channels: Vec::new().into(),
+                },
+            )
             .await;
         cache
             .categories
-            .insert(key.clone(), CachedCategories { categories: vec![] })
+            .insert(
+                key.clone(),
+                CachedCategories {
+                    categories: Vec::new().into(),
+                },
+            )
             .await;
 
         assert!(cache.channels.get(&key).await.is_some());
@@ -613,11 +677,21 @@ mod tests {
 
         cache
             .channels
-            .insert(key_a.clone(), CachedChannels { channels: vec![] })
+            .insert(
+                key_a.clone(),
+                CachedChannels {
+                    channels: Vec::new().into(),
+                },
+            )
             .await;
         cache
             .channels
-            .insert(key_b.clone(), CachedChannels { channels: vec![] })
+            .insert(
+                key_b.clone(),
+                CachedChannels {
+                    channels: Vec::new().into(),
+                },
+            )
             .await;
 
         cache.invalidate(&key_a).await;
@@ -641,11 +715,21 @@ mod tests {
 
         cache
             .channels
-            .insert(global_key.clone(), CachedChannels { channels: vec![] })
+            .insert(
+                global_key.clone(),
+                CachedChannels {
+                    channels: Vec::new().into(),
+                },
+            )
             .await;
         cache
             .channels
-            .insert(per_user_key.clone(), CachedChannels { channels: vec![] })
+            .insert(
+                per_user_key.clone(),
+                CachedChannels {
+                    channels: Vec::new().into(),
+                },
+            )
             .await;
 
         cache.invalidate(&per_user_key).await;
@@ -665,7 +749,12 @@ mod tests {
 
         cache
             .channels
-            .insert(key_p1.clone(), CachedChannels { channels: vec![] })
+            .insert(
+                key_p1.clone(),
+                CachedChannels {
+                    channels: Vec::new().into(),
+                },
+            )
             .await;
 
         assert!(cache.channels.get(&key_p1).await.is_some());
@@ -680,7 +769,12 @@ mod tests {
 
         cache
             .channels
-            .insert(key.clone(), CachedChannels { channels: vec![] })
+            .insert(
+                key.clone(),
+                CachedChannels {
+                    channels: Vec::new().into(),
+                },
+            )
             .await;
 
         // Sleep well beyond the TTL.

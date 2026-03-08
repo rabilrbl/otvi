@@ -59,26 +59,30 @@ address gets its own independent bucket per tier.
 
 | Tier    | Protected routes | Default quota |
 | ------- | ---------------- | ------------- |
-| Auth    | `POST /api/auth/login`, `POST /api/auth/register`, `POST /api/*/auth/login` | 5 req burst, +1 token every 10 s |
-| General | All other `/api` routes | 20 req burst, +1 token every 1 s |
+| Auth    | `POST /api/auth/login`, `POST /api/auth/register`, `POST /api/*/auth/login` | 10 req burst, +1 token every 3 s |
+| General | All other `/api` routes | 60 req burst, +1 token every 1 s |
 
 ```bash
+# Global switch for the limiter.
+RATE_LIMIT_ENABLED=true
+
 # Auth tier — protects login and register against brute-force attacks.
 # Burst: maximum requests an IP can make before being throttled.
 # Period: seconds between each token replenishment.
-RATE_LIMIT_AUTH_BURST=5
-RATE_LIMIT_AUTH_PERIOD_SECS=10
+RATE_LIMIT_AUTH_BURST=10
+RATE_LIMIT_AUTH_PERIOD_SECS=3
 
 # General tier — broad throttling for all other API routes.
-RATE_LIMIT_GENERAL_BURST=20
+RATE_LIMIT_GENERAL_BURST=60
 RATE_LIMIT_GENERAL_PERIOD_SECS=1
 ```
 
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
-| `RATE_LIMIT_AUTH_BURST` | `5` | Auth-tier token bucket burst capacity |
-| `RATE_LIMIT_AUTH_PERIOD_SECS` | `10` | Auth-tier replenishment interval (seconds) |
-| `RATE_LIMIT_GENERAL_BURST` | `20` | General-tier token bucket burst capacity |
+| `RATE_LIMIT_ENABLED` | `true` | Enables the API rate limiter |
+| `RATE_LIMIT_AUTH_BURST` | `10` | Auth-tier token bucket burst capacity |
+| `RATE_LIMIT_AUTH_PERIOD_SECS` | `3` | Auth-tier replenishment interval (seconds) |
+| `RATE_LIMIT_GENERAL_BURST` | `60` | General-tier token bucket burst capacity |
 | `RATE_LIMIT_GENERAL_PERIOD_SECS` | `1` | General-tier replenishment interval (seconds) |
 
 When a client exceeds its quota the server responds with `429 Too Many Requests`
@@ -209,12 +213,15 @@ LOG_FORMAT=text
 # CORS_ORIGINS=https://tv.example.com,https://admin.example.com
 
 # ── Rate limiting ─────────────────────────────────────────
+# Global switch for the limiter.
+# RATE_LIMIT_ENABLED=true
+
 # Auth tier (login / register / provider-auth) — brute-force protection.
-# RATE_LIMIT_AUTH_BURST=5
-# RATE_LIMIT_AUTH_PERIOD_SECS=10
+# RATE_LIMIT_AUTH_BURST=10
+# RATE_LIMIT_AUTH_PERIOD_SECS=3
 
 # General tier (all other /api routes) — broad throttling.
-# RATE_LIMIT_GENERAL_BURST=20
+# RATE_LIMIT_GENERAL_BURST=60
 # RATE_LIMIT_GENERAL_PERIOD_SECS=1
 
 # ── Channel cache ─────────────────────────────────────────

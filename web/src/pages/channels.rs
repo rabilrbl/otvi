@@ -305,15 +305,8 @@ pub fn ChannelsPage() -> impl IntoView {
                                                                             class="max-w-full max-h-full object-contain rounded"
                                                                             src=url
                                                                             alt=ch_name.clone()
-                                                                            // Replace broken images with a placeholder
-                                                                            on:error=|ev| {
-                                                                                use wasm_bindgen::JsCast;
-                                                                                if let Some(img) = ev.target()
-                                                                                    .and_then(|t| t.dyn_into::<web_sys::HtmlImageElement>().ok())
-                                                                                {
-                                                                                    img.set_src("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64' fill='%23374151' viewBox='0 0 24 24'%3E%3Cpath d='M21 3H3a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h18a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm0 16H3V5h18v14zM8 15l5-3-5-3v6z'/%3E%3C/svg%3E");
-                                                                                }
-                                                                            }
+                                                                            loading="lazy"
+                                                                            decoding="async"
                                                                         />
                                                                     </div>
                                                                 }.into_any(),

@@ -129,8 +129,8 @@ impl utoipa::Modify for BearerSecurityAddon {
 ///
 /// | Tier    | Routes | Default quota |
 /// |---------|--------|---------------|
-/// | Auth    | `POST /api/auth/login`, `POST /api/auth/register`, `POST /api/*/auth/login` | 5 req burst, +1 every 10 s |
-/// | General | All other `/api` routes | 20 req burst, +1 every 1 s |
+/// | Auth    | `POST /api/auth/login`, `POST /api/auth/register`, `POST /api/*/auth/login` | 10 req burst, +1 every 3 s |
+/// | General | All other `/api` routes | 60 req burst, +1 every 1 s |
 ///
 /// The server **must** be started with
 /// `axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())`
@@ -144,6 +144,15 @@ impl utoipa::Modify for BearerSecurityAddon {
 /// | `GET /api/docs/` | Swagger UI index |
 /// | `GET /api/docs/openapi.json` | Raw OpenAPI JSON document |
 pub fn build_router(state: Arc<AppState>, rate_limit: RateLimitConfig) -> axum::Router {
+    if !rate_limit.enabled {
+        tracing::warn!("API rate limiting is disabled; set RATE_LIMIT_ENABLED=true to enable it");
+        return build_routes(
+            state,
+            tower::layer::util::Identity::new(),
+            tower::layer::util::Identity::new(),
+        );
+    }
+
     // Auth tier: protects login / register / provider-auth against brute-force.
     let auth_governor_conf = Arc::new(
         GovernorConfigBuilder::default()
