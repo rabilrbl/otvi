@@ -1,5 +1,5 @@
 # ── Stage 1: Build the WASM frontend ─────────────────────────────────────────
-FROM rust:1.83-bookworm AS build-web
+FROM rust:1.94-bookworm AS build-web
 
 RUN rustup target add wasm32-unknown-unknown \
     && cargo install trunk --locked
@@ -13,7 +13,7 @@ WORKDIR /app/web
 RUN trunk build --release
 
 # ── Stage 2: Build the server binary ─────────────────────────────────────────
-FROM rust:1.83-bookworm AS build-server
+FROM rust:1.94-bookworm AS build-server
 
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
