@@ -55,6 +55,7 @@ async fn build_test_app() -> (axum::Router, tempfile::TempDir) {
             .build()
             .expect("build HTTP client"),
         proxy_ctx: std::sync::RwLock::new(std::collections::HashMap::new()),
+        channel_cache: otvi_server::state::ChannelCache::new(std::time::Duration::from_secs(300)),
     });
 
     (otvi_server::build_router(state), dir)

@@ -1,5 +1,12 @@
 //! Provider-level authentication.
 //!
+//! ## Cache invalidation
+//!
+//! The channel-list and category caches are keyed by `(provider_id, session_uid)`.
+//! Whenever a provider session is created (login completes) or destroyed (logout),
+//! the corresponding cache entries are evicted so that the next listing always
+//! reflects the updated credentials.
+//!
 //! Endpoints let OTVI users authenticate with a TV provider via the configured
 //! multi-step flow.  Each step advances the provider's auth process (e.g.
 //! send OTP → verify OTP).
@@ -31,7 +38,7 @@ use crate::auth_middleware::Claims;
 use crate::db;
 use crate::error::AppError;
 use crate::provider_client;
-use crate::state::AppState;
+use crate::state::{AppState, ChannelCacheKey};
 
 // ── Apply input transforms (base64, …) ────────────────────────────────────
 
@@ -181,6 +188,11 @@ pub async fn login(
             db::upsert_provider_session(&state.db, &uid, &provider_id, &new_stored)
                 .await
                 .map_err(|e| AppError::Internal(e.to_string()))?;
+
+            // Invalidate the channel/category cache for this provider + uid so
+            // the next listing fetches fresh data with the new credentials.
+            let cache_key = ChannelCacheKey::from_auth_scope(&provider_id, &scope, &uid);
+            state.channel_cache.invalidate(&cache_key).await;
 
             let has_prompt = step
                 .on_success
@@ -343,6 +355,12 @@ pub async fn logout(
     db::delete_provider_session(&state.db, &uid, &provider_id)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    // Evict any cached channel/category data for this provider + uid.
+    // After logout the upstream credentials are gone, so cached data from the
+    // authenticated session must not be served to future (unauthenticated) calls.
+    let cache_key = ChannelCacheKey::from_auth_scope(&provider_id, &scope, &uid);
+    state.channel_cache.invalidate(&cache_key).await;
 
     Ok(Json(serde_json::json!({ "success": true })))
 }

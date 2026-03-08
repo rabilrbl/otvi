@@ -68,16 +68,17 @@ docker compose -f docker-compose.dev.yml up --build
 
 ## Environment Variables
 
-| Variable       | Default              | Description                                                                                      |
-| -------------- | -------------------- | ------------------------------------------------------------------------------------------------ |
-| `DATABASE_URL` | `sqlite://data.db`   | Database connection string. Supports `sqlite://`, `postgres://`, `mysql://`                      |
-| `JWT_SECRET`   | *(random)*           | Secret for signing JWTs. **Always set a persistent value in production.**                        |
-| `PORT`         | `3000`               | Port the server listens on                                                                       |
-| `PROVIDERS_DIR`| `providers`          | Directory scanned for `*.yaml` / `*.yml` provider configs (hot-reloaded on change)              |
-| `STATIC_DIR`   | `dist`               | Directory served as the static frontend build                                                    |
-| `RUST_LOG`     | `otvi_server=info`   | Log filter ([`tracing` format](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/))   |
-| `LOG_FORMAT`   | `text`               | Set to `json` for structured log output (Loki, Datadog, CloudWatch, etc.)                        |
-| `CORS_ORIGINS` | *(permissive)*       | Comma-separated allowed origins, e.g. `https://tv.example.com`. Unset = allow all (dev only)     |
+| Variable                  | Default              | Description                                                                                      |
+| ------------------------- | -------------------- | ------------------------------------------------------------------------------------------------ |
+| `DATABASE_URL`            | `sqlite://data.db`   | Database connection string. Supports `sqlite://`, `postgres://`, `mysql://`                      |
+| `JWT_SECRET`              | *(random)*           | Secret for signing JWTs. **Always set a persistent value in production.**                        |
+| `PORT`                    | `3000`               | Port the server listens on                                                                       |
+| `PROVIDERS_DIR`           | `providers`          | Directory scanned for `*.yaml` / `*.yml` provider configs (hot-reloaded on change)              |
+| `STATIC_DIR`              | `dist`               | Directory served as the static frontend build                                                    |
+| `RUST_LOG`                | `otvi_server=info`   | Log filter ([`tracing` format](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/))   |
+| `LOG_FORMAT`              | `text`               | Set to `json` for structured log output (Loki, Datadog, CloudWatch, etc.)                        |
+| `CORS_ORIGINS`            | *(permissive)*       | Comma-separated allowed origins, e.g. `https://tv.example.com`. Unset = allow all (dev only)     |
+| `CHANNEL_CACHE_TTL_SECS`  | `86400` (24 h)       | TTL for the server-side channel and category list cache. Entries are also invalidated immediately on provider login / logout. |
 
 ## Creating a Provider Config
 
@@ -247,7 +248,7 @@ otvi/
 │       ├── src/
 │       │   ├── main.rs             # Bootstrap (logging format, hot-reload watcher)
 │       │   ├── lib.rs              # Router, CORS, /healthz, /readyz, /api/schema/provider
-│       │   ├── state.rs            # AppState (RwLock provider map, proxy context cache)
+│       │   ├── state.rs            # AppState (RwLock provider map, channel cache, proxy context cache)
 │       │   ├── watcher.rs          # File-system watcher for hot-reloading YAMLs
 │       │   ├── db.rs               # SQLx database layer
 │       │   ├── auth_middleware.rs  # JWT creation / validation / extractors

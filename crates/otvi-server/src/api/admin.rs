@@ -48,27 +48,31 @@ pub async fn list_users(
     State(state): State<Arc<AppState>>,
     _: AdminClaims,
 ) -> Result<Json<Vec<UserInfo>>, AppError> {
-    let rows = db::list_users(&state.db)
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+    // Fetch all users and all user→provider mappings in two queries rather than
+    // N+1 (one per user).  The provider map is then looked up in-memory.
+    let (rows, mut providers_by_user) = tokio::try_join!(
+        db::list_users(&state.db),
+        db::get_all_user_providers(&state.db),
+    )
+    .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let mut users = Vec::new();
-    for row in rows {
-        let providers = db::get_user_providers(&state.db, &row.id)
-            .await
-            .map_err(|e| AppError::Internal(e.to_string()))?;
-        let role = match row.role.as_str() {
-            "admin" => UserRole::Admin,
-            _ => UserRole::User,
-        };
-        users.push(UserInfo {
-            id: row.id,
-            username: row.username,
-            role,
-            providers,
-            must_change_password: row.must_change_password,
-        });
-    }
+    let users = rows
+        .into_iter()
+        .map(|row| {
+            let providers = providers_by_user.remove(&row.id).unwrap_or_default();
+            let role = match row.role.as_str() {
+                "admin" => UserRole::Admin,
+                _ => UserRole::User,
+            };
+            UserInfo {
+                id: row.id,
+                username: row.username,
+                role,
+                providers,
+                must_change_password: row.must_change_password,
+            }
+        })
+        .collect();
 
     Ok(Json(users))
 }

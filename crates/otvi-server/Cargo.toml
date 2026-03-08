@@ -54,6 +54,9 @@ chrono = { version = "0.4", features = ["serde"] }
 # Rate limiting
 tower_governor = { version = "0.4", features = ["axum"] }
 
+# In-memory TTL cache (channel list / categories)
+moka = { version = "0.12", features = ["future"] }
+
 # File-system watcher (hot-reload provider configs)
 notify = { version = "6", features = ["macos_kqueue"] }
 

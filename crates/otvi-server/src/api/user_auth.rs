@@ -26,6 +26,9 @@
 //! extractor in `auth_middleware` — handlers that must remain reachable while
 //! the flag is set use the plain [`Claims`] extractor instead.
 //!
+//! The `must_change_password` flag is embedded directly in the JWT at issuance
+//! time so the middleware guard requires **no database round-trip** per request.
+//!
 //! [`ActiveClaims`]: crate::auth_middleware::ActiveClaims
 //! [`Claims`]: crate::auth_middleware::Claims
 
@@ -132,7 +135,9 @@ pub async fn register(
     };
 
     let hash = hash_password(&req.password)?;
-    let user_id = db::create_user(&state.db, &req.username, &hash, &role, false)
+    // Self-registered users never have must_change_password set.
+    let must_change_password = false;
+    let user_id = db::create_user(&state.db, &req.username, &hash, &role, must_change_password)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
@@ -140,7 +145,13 @@ pub async fn register(
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let token = create_token(&state.jwt_keys, &user_id, &req.username, &role);
+    let token = create_token(
+        &state.jwt_keys,
+        &user_id,
+        &req.username,
+        &role,
+        must_change_password,
+    );
 
     Ok(Json(AppLoginResponse {
         token,
@@ -149,7 +160,7 @@ pub async fn register(
             username: req.username,
             role,
             providers,
-            must_change_password: false,
+            must_change_password,
         },
     }))
 }
@@ -185,7 +196,15 @@ pub async fn login(
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let token = create_token(&state.jwt_keys, &row.id, &row.username, &role);
+    // Embed must_change_password in the JWT so middleware guards need no DB
+    // query per request.
+    let token = create_token(
+        &state.jwt_keys,
+        &row.id,
+        &row.username,
+        &role,
+        row.must_change_password,
+    );
 
     Ok(Json(AppLoginResponse {
         token,
@@ -200,6 +219,10 @@ pub async fn login(
 }
 
 /// `GET /api/auth/me`
+///
+/// Returns current user info.  A single DB query fetches the full user row
+/// (which includes `must_change_password`) along with the provider list,
+/// avoiding the previous two-query pattern.
 #[utoipa::path(
     get,
     path = "/api/auth/me",
@@ -214,34 +237,38 @@ pub async fn me(
     State(state): State<Arc<AppState>>,
     claims: Claims,
 ) -> Result<Json<UserInfo>, AppError> {
+    // Single query covers both must_change_password and basic user fields.
+    // We still need a separate providers query since they live in a different
+    // table, but we save one DB round-trip vs. the old pattern.
+    let row = db::get_user_by_id(&state.db, &claims.sub)
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?
+        .ok_or(AppError::Unauthorized)?;
+
     let providers = db::get_user_providers(&state.db, &claims.sub)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    // Fetch must_change_password from DB (not stored in JWT).
-    let must_change_password = db::get_user_by_id(&state.db, &claims.sub)
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?
-        .map(|r| r.must_change_password)
-        .unwrap_or(false);
-
-    let role = claims.role();
-    let id = claims.sub;
-    let username = claims.username;
+    let role = match row.role.as_str() {
+        "admin" => UserRole::Admin,
+        _ => UserRole::User,
+    };
 
     Ok(Json(UserInfo {
-        id,
-        username,
+        id: row.id,
+        username: row.username,
         role,
         providers,
-        must_change_password,
+        must_change_password: row.must_change_password,
     }))
 }
 
 /// `POST /api/auth/change-password`
 ///
 /// Authenticated users change their own password.  On success the
-/// `must_change_password` flag is cleared and a fresh JWT is returned.
+/// `must_change_password` flag is cleared, the DB is updated, and a fresh
+/// JWT (with `must_change_password = false` embedded) is returned so the
+/// client's next request is immediately unblocked without a re-login.
 ///
 /// This endpoint is intentionally **exempt** from the `must_change_password`
 /// guard (uses plain [`Claims`] instead of `ActiveClaims`) — it must remain
@@ -274,6 +301,7 @@ pub async fn change_password(
     verify_password(&req.current_password, &row.password_hash)?;
 
     let new_hash = hash_password(&req.new_password)?;
+    // update_password also clears must_change_password = 0 in the DB.
     db::update_password(&state.db, &claims.sub, &new_hash)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -283,7 +311,15 @@ pub async fn change_password(
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
-    let token = create_token(&state.jwt_keys, &claims.sub, &claims.username, &role);
+    // Issue a fresh token with must_change_password = false so the client is
+    // immediately unblocked without needing to re-login.
+    let token = create_token(
+        &state.jwt_keys,
+        &claims.sub,
+        &claims.username,
+        &role,
+        false, // flag cleared
+    );
 
     Ok(Json(AppLoginResponse {
         token,

@@ -99,9 +99,13 @@ The backend REST API built on [Axum](https://github.com/tokio-rs/axum).
   - Changes are reflected within ~300 ms; no server restart is required
 
 - **`state.rs`** — Application state management
-  - `AppState`: holds an `RwLock<HashMap>` of providers, database pool, JWT keys, HTTP client, and proxy context cache
+  - `AppState`: holds an `RwLock<HashMap>` of providers, database pool, JWT keys, HTTP client, channel cache, and proxy context cache
   - `with_provider(id, f)` / `with_providers(f)`: safe accessor methods that acquire the read lock for the shortest possible time
   - `ProxyContext`: per-stream cache for headers and cookie mappings
+  - `ChannelCache`: in-memory TTL cache for channel list and category responses, backed by [`moka`](https://github.com/moka-rs/moka)
+    - Keyed by `(provider_id, CacheScope)` where `CacheScope` is either `Global` (one shared entry for all users) or `PerUser(user_id)` (isolated per user)
+    - Default TTL: **24 hours** — overridable via `CHANNEL_CACHE_TTL_SECS`
+    - Entries are invalidated explicitly on provider login / logout so a credential change is always reflected immediately, regardless of TTL
   - `load_providers()`: scans directory for `*.yaml`/`*.yml` files
 
 - **`db.rs`** — Database abstraction layer
@@ -112,10 +116,11 @@ The backend REST API built on [Axum](https://github.com/tokio-rs/axum).
   - Supports SQLite, PostgreSQL, and MySQL through SQLx's `AnyPool`
 
 - **`auth_middleware.rs`** — JWT authentication middleware
-  - Token creation and validation
+  - Token creation and validation — tokens have a **24-hour lifetime**
   - `Claims` extractor for authenticated routes
-  - `AdminClaims` extractor for admin-only routes
-  - 24-hour token lifetime
+  - `ActiveClaims` extractor: requires a valid JWT **and** `must_change_password == false` — enforced from the JWT claim alone, no database query
+  - `AdminClaims` extractor: requires a valid JWT, admin role, and `must_change_password == false`
+  - `must_change_password` is embedded directly in the JWT at issuance time so every protected request can check the flag without a database round-trip; the token is re-issued whenever the flag changes (login, change-password, admin password-reset)
 
 - **`provider_client.rs`** — HTTP client for provider APIs
   - Template variable resolution via `resolve_warn()` — logs a warning for every unresolved placeholder
@@ -132,7 +137,7 @@ The backend REST API built on [Axum](https://github.com/tokio-rs/axum).
 |--------|--------|-------------|
 | `api/providers.rs` | `GET /api/providers`, `GET /api/providers/:id` | Provider listing and details; enforces `must_change_password` guard |
 | `api/auth.rs` | `POST /api/providers/:id/auth/login`, `POST .../logout`, `GET .../check` | Provider authentication |
-| `api/channels.rs` | `GET /api/providers/:id/channels`, `.../categories`, `.../stream` | Channel browsing (server-side search + pagination), categories, stream info |
+| `api/channels.rs` | `GET /api/providers/:id/channels`, `.../categories`, `.../stream` | Channel browsing (server-side search + pagination), categories, stream info; full upstream response cached in `ChannelCache` |
 | `api/proxy.rs` | `GET /api/proxy` | HLS/DASH stream proxying with M3U8 rewriting and CDN cookie injection |
 | `api/user_auth.rs` | `POST /api/auth/register`, `.../login`, `.../change-password`, `GET .../me`, `POST .../logout` | OTVI user auth + shared password-policy validation + force-change guard |
 | `api/admin.rs` | `/api/admin/users`, `/api/admin/settings` | User and system administration |
@@ -219,6 +224,26 @@ User → Frontend → POST /api/auth/login (OTVI login)
                 → Channel browsing enabled
 ```
 
+### Channel List Flow
+
+```
+Frontend → GET /api/providers/:id/channels[?search=…&category=…&limit=…&offset=…]
+         → ChannelCache lookup by (provider_id, CacheScope)
+         → HIT:  return cached full list, apply filters + pagination server-side
+         → MISS: fetch from upstream provider API
+                 → store full unfiltered list in cache (TTL: 24 h)
+                 → apply filters + pagination, return result
+```
+
+Cache entries are invalidated immediately when the provider session changes:
+
+```
+POST /api/providers/:id/auth/login  (or /logout)
+    → session written to / deleted from DB
+    → ChannelCache.invalidate(provider_id, scope) called
+    → next channel request fetches fresh data from upstream
+```
+
 ### Streaming Flow
 
 ```
@@ -247,12 +272,17 @@ File system event (inotify / kqueue / FSEvents)
 Admin creates user (POST /api/admin/users)
     → user.must_change_password = true stored in DB
 
-User logs in → JWT issued
-    → GET /api/providers or GET /api/providers/:id
-    → require_password_not_forced() middleware → 403 Forbidden
+User logs in (POST /api/auth/login)
+    → must_change_password = true embedded in JWT payload
+    → JWT returned to client
+
+Client calls any protected endpoint (ActiveClaims / AdminClaims extractor)
+    → flag read directly from JWT claim — zero DB round-trips
+    → 403 Forbidden returned
 
 User calls POST /api/auth/change-password
     → password validated against policy
     → must_change_password cleared in DB
-    → all protected endpoints now accessible
+    → fresh JWT issued with must_change_password = false embedded
+    → all protected endpoints immediately accessible with the new token
 ```

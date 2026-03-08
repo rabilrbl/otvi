@@ -211,16 +211,17 @@ healthcheck:
 
 ## Environment Variables
 
-| Variable        | Default              | Description                                                                                       |
-| --------------- | -------------------- | ------------------------------------------------------------------------------------------------- |
-| `DATABASE_URL`  | `sqlite://data.db`   | Database connection string — supports `sqlite://`, `postgres://`, `mysql://`                      |
-| `JWT_SECRET`    | *(random)*           | Secret for signing JWTs. **Always set a persistent value in production.**                         |
-| `PORT`          | `3000`               | Port the server listens on                                                                        |
-| `PROVIDERS_DIR` | `providers`          | Directory scanned for `*.yaml` / `*.yml` provider configs (hot-reloaded on change)               |
-| `STATIC_DIR`    | `dist`               | Directory served as the static frontend build                                                     |
-| `RUST_LOG`      | `otvi_server=info`   | Log filter ([`tracing` format](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/))   |
-| `LOG_FORMAT`    | `text`               | `text` for human-readable logs, `json` for structured output (Loki, Datadog, CloudWatch, etc.)   |
-| `CORS_ORIGINS`  | *(permissive)*       | Comma-separated allowed origins, e.g. `https://tv.example.com`. Unset = allow all (dev only).    |
+| Variable                 | Default              | Description                                                                                       |
+| ------------------------ | -------------------- | ------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`           | `sqlite://data.db`   | Database connection string — supports `sqlite://`, `postgres://`, `mysql://`                      |
+| `JWT_SECRET`             | *(random)*           | Secret for signing JWTs. **Always set a persistent value in production.**                         |
+| `PORT`                   | `3000`               | Port the server listens on                                                                        |
+| `PROVIDERS_DIR`          | `providers`          | Directory scanned for `*.yaml` / `*.yml` provider configs (hot-reloaded on change)               |
+| `STATIC_DIR`             | `dist`               | Directory served as the static frontend build                                                     |
+| `RUST_LOG`               | `otvi_server=info`   | Log filter ([`tracing` format](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/))   |
+| `LOG_FORMAT`             | `text`               | `text` for human-readable logs, `json` for structured output (Loki, Datadog, CloudWatch, etc.)   |
+| `CORS_ORIGINS`           | *(permissive)*       | Comma-separated allowed origins, e.g. `https://tv.example.com`. Unset = allow all (dev only).    |
+| `CHANNEL_CACHE_TTL_SECS` | `86400` (24 h)       | TTL for the server-side channel and category list cache. Entries are also invalidated immediately on provider login / logout, so reducing this is rarely necessary. |
 
 ## Production Considerations
 
