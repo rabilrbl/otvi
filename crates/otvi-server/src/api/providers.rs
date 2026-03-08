@@ -5,8 +5,7 @@ use axum::extract::{Path, State};
 
 use otvi_core::types::*;
 
-use crate::api::user_auth::require_password_not_forced;
-use crate::auth_middleware::Claims;
+use crate::auth_middleware::ActiveClaims;
 use crate::db;
 use crate::error::AppError;
 use crate::state::AppState;
@@ -15,12 +14,21 @@ use crate::state::AppState;
 ///
 /// If the user has an explicit provider allow-list, only those providers are
 /// returned.  An empty allow-list means access to all loaded providers.
+#[utoipa::path(
+    get,
+    path = "/api/providers",
+    tag = "providers",
+    security(("bearer_token" = [])),
+    responses(
+        (status = 200, description = "List of providers accessible to the user", body = Vec<ProviderInfo>),
+        (status = 401, description = "Missing or invalid token"),
+        (status = 403, description = "Password change required"),
+    ),
+)]
 pub async fn list(
     State(state): State<Arc<AppState>>,
-    claims: Claims,
+    claims: ActiveClaims,
 ) -> Result<Json<Vec<ProviderInfo>>, AppError> {
-    require_password_not_forced(&state.db, &claims.sub).await?;
-
     let allowed = db::get_user_providers(&state.db, &claims.sub)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -36,13 +44,26 @@ pub async fn list(
 }
 
 /// `GET /api/providers/:id` — get details for a single provider, if accessible.
+#[utoipa::path(
+    get,
+    path = "/api/providers/{id}",
+    tag = "providers",
+    security(("bearer_token" = [])),
+    params(
+        ("id" = String, Path, description = "Provider ID"),
+    ),
+    responses(
+        (status = 200, description = "Provider details and auth flow definitions", body = ProviderInfo),
+        (status = 401, description = "Missing or invalid token"),
+        (status = 403, description = "Password change required or access denied"),
+        (status = 404, description = "Provider not found or not accessible"),
+    ),
+)]
 pub async fn get_info(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-    claims: Claims,
+    claims: ActiveClaims,
 ) -> Result<Json<ProviderInfo>, AppError> {
-    require_password_not_forced(&state.db, &claims.sub).await?;
-
     // Check access.
     let allowed = db::get_user_providers(&state.db, &claims.sub)
         .await

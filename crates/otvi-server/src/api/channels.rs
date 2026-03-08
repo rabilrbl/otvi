@@ -32,7 +32,7 @@ use otvi_core::types::*;
 
 use tracing::error;
 
-use crate::auth_middleware::Claims;
+use crate::auth_middleware::ActiveClaims;
 use crate::error::AppError;
 use crate::provider_client;
 use crate::state::AppState;
@@ -56,7 +56,7 @@ pub struct ChannelListQuery {
 // ── Session UID helper ─────────────────────────────────────────────────────
 
 /// Resolve the provider-session user ID based on the provider's auth scope.
-fn session_uid(scope: &AuthScope, claims: &Claims) -> String {
+fn session_uid(scope: &AuthScope, claims: &crate::auth_middleware::Claims) -> String {
     match scope {
         AuthScope::Global => String::new(),
         AuthScope::PerUser => claims.sub.clone(),
@@ -71,11 +71,30 @@ fn session_uid(scope: &AuthScope, claims: &Claims) -> String {
 /// given provider.  The upstream API is always called with the full request;
 /// filtering and pagination are applied server-side so that providers that
 /// do not natively support those features still work.
+#[utoipa::path(
+    get,
+    path = "/api/providers/{id}/channels",
+    tag = "channels",
+    security(("bearer_token" = [])),
+    params(
+        ("id" = String, Path, description = "Provider ID"),
+        ("category" = Option<String>, Query, description = "Filter by category ID"),
+        ("search" = Option<String>, Query, description = "Case-insensitive substring search on channel names"),
+        ("limit" = Option<usize>, Query, description = "Maximum number of channels to return"),
+        ("offset" = Option<usize>, Query, description = "Zero-based offset for pagination"),
+    ),
+    responses(
+        (status = 200, description = "Filtered and paginated channel list", body = ChannelListResponse),
+        (status = 401, description = "Missing or invalid token"),
+        (status = 403, description = "Password change required"),
+        (status = 404, description = "Provider not found"),
+    ),
+)]
 pub async fn list(
     State(state): State<Arc<AppState>>,
     Path(provider_id): Path<String>,
     Query(query): Query<ChannelListQuery>,
-    claims: Claims,
+    claims: ActiveClaims,
 ) -> Result<Json<ChannelListResponse>, AppError> {
     // Extract everything we need from the provider while holding the lock
     // for the shortest possible time.
@@ -154,10 +173,25 @@ pub async fn list(
 }
 
 /// `GET /api/providers/:id/channels/categories`
+#[utoipa::path(
+    get,
+    path = "/api/providers/{id}/channels/categories",
+    tag = "channels",
+    security(("bearer_token" = [])),
+    params(
+        ("id" = String, Path, description = "Provider ID"),
+    ),
+    responses(
+        (status = 200, description = "List of channel categories for the provider", body = CategoryListResponse),
+        (status = 401, description = "Missing or invalid token"),
+        (status = 403, description = "Password change required"),
+        (status = 404, description = "Provider not found or categories not configured"),
+    ),
+)]
 pub async fn categories(
     State(state): State<Arc<AppState>>,
     Path(provider_id): Path<String>,
-    claims: Claims,
+    claims: ActiveClaims,
 ) -> Result<Json<CategoryListResponse>, AppError> {
     // Extract what we need under a short lock window.
     let provider_data = state
@@ -209,10 +243,27 @@ pub async fn categories(
 }
 
 /// `GET /api/providers/:id/channels/:channel_id/stream`
+#[utoipa::path(
+    get,
+    path = "/api/providers/{id}/channels/{channel_id}/stream",
+    tag = "channels",
+    security(("bearer_token" = [])),
+    params(
+        ("id" = String, Path, description = "Provider ID"),
+        ("channel_id" = String, Path, description = "Channel ID"),
+    ),
+    responses(
+        (status = 200, description = "Proxied stream URL with optional DRM info", body = StreamInfo),
+        (status = 401, description = "Missing or invalid token"),
+        (status = 403, description = "Password change required"),
+        (status = 404, description = "Provider not found"),
+        (status = 500, description = "Upstream provider API error or stream URL not found in response"),
+    ),
+)]
 pub async fn stream(
     State(state): State<Arc<AppState>>,
     Path((provider_id, channel_id)): Path<(String, String)>,
-    claims: Claims,
+    claims: ActiveClaims,
 ) -> Result<Json<StreamInfo>, AppError> {
     // Extract everything we need from the provider config under a short lock.
     let provider_data = state

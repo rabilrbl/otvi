@@ -7,6 +7,14 @@
 //! The signing secret is read from the `JWT_SECRET` environment variable;
 //! if not set, a random secret is generated at startup (tokens will not
 //! survive a server restart in that case).
+//!
+//! ## Extractors
+//!
+//! | Extractor      | Requirement                                                   |
+//! |----------------|---------------------------------------------------------------|
+//! | [`Claims`]     | Valid JWT only — use for `me` and `change-password`          |
+//! | [`ActiveClaims`] | Valid JWT **and** `must_change_password == false`           |
+//! | [`AdminClaims`]  | Valid JWT, role `admin`, and `must_change_password == false` |
 
 use axum::RequestPartsExt;
 use axum::extract::FromRequestParts;
@@ -155,9 +163,88 @@ impl IntoResponse for AuthError {
     }
 }
 
-/// Extractor that requires the user to be an **admin**.
+// ── must_change_password guard ─────────────────────────────────────────────
+
+/// Check whether the authenticated user still has `must_change_password = true`.
+///
+/// Returns a `403 Forbidden` response when the flag is set, `Ok(())` otherwise.
+/// Used by [`ActiveClaims`] and [`AdminClaims`] so the check lives in one place.
+async fn assert_password_not_forced<S>(claims: &Claims, state: &S) -> Result<(), Response>
+where
+    S: Send + Sync + std::ops::Deref<Target = crate::state::AppState>,
+{
+    let must_change = db::get_user_by_id(&state.db, &claims.sub)
+        .await
+        .unwrap_or(None)
+        .map(|r| r.must_change_password)
+        .unwrap_or(false);
+
+    if must_change {
+        return Err((
+            StatusCode::FORBIDDEN,
+            axum::Json(serde_json::json!({
+                "error": "You must change your password before using the application. \
+                          Please visit the change-password page."
+            })),
+        )
+            .into_response());
+    }
+    Ok(())
+}
+
+// ── ActiveClaims ───────────────────────────────────────────────────────────
+
+/// Extractor that requires a valid JWT **and** that the user does not have an
+/// active `must_change_password` flag.
+///
+/// Use this on every handler except `GET /api/auth/me` and
+/// `POST /api/auth/change-password`, which must remain reachable while the
+/// flag is set.
+///
+/// Implements `Deref<Target = Claims>` so handler code accesses fields
+/// directly: `claims.sub`, `claims.role()`, etc. — no destructuring needed.
+pub struct ActiveClaims(pub Claims);
+
+impl std::ops::Deref for ActiveClaims {
+    type Target = Claims;
+    fn deref(&self) -> &Claims {
+        &self.0
+    }
+}
+
+impl<S> FromRequestParts<S> for ActiveClaims
+where
+    S: Send + Sync + std::ops::Deref<Target = crate::state::AppState>,
+{
+    type Rejection = Response;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let claims = Claims::from_request_parts(parts, state)
+            .await
+            .map_err(IntoResponse::into_response)?;
+
+        assert_password_not_forced(&claims, state).await?;
+
+        Ok(ActiveClaims(claims))
+    }
+}
+
+// ── AdminClaims ────────────────────────────────────────────────────────────
+
+/// Extractor that requires the user to be an **admin** and does not have an
+/// active `must_change_password` flag.
 /// Returns `403 Forbidden` when the token is valid but the role is `user`.
+///
+/// Implements `Deref<Target = Claims>` so handler code accesses fields
+/// directly: `claims.sub`, `claims.is_admin()`, etc. — no destructuring needed.
 pub struct AdminClaims(pub Claims);
+
+impl std::ops::Deref for AdminClaims {
+    type Target = Claims;
+    fn deref(&self) -> &Claims {
+        &self.0
+    }
+}
 
 impl<S> FromRequestParts<S> for AdminClaims
 where
@@ -169,6 +256,8 @@ where
         let claims = Claims::from_request_parts(parts, state)
             .await
             .map_err(IntoResponse::into_response)?;
+
+        assert_password_not_forced(&claims, state).await?;
 
         if !claims.is_admin() {
             return Err((

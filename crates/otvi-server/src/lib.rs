@@ -14,13 +14,119 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{delete, get, post, put};
 use tower_http::cors::CorsLayer;
+use utoipa::OpenApi;
+use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
+use utoipa_swagger_ui::SwaggerUi;
 
 use state::AppState;
+
+// ── OpenAPI root document ─────────────────────────────────────────────────
+
+#[derive(OpenApi)]
+#[openapi(
+    info(
+        title = "OTVI API",
+        version = "0.1.0",
+        description = "OTVI REST API — provider management, user authentication, channel browsing and stream proxying.",
+        license(name = "CC-BY-NC-SA-4.0"),
+    ),
+    paths(
+        // auth
+        api::user_auth::register,
+        api::user_auth::login,
+        api::user_auth::me,
+        api::user_auth::change_password,
+        api::user_auth::logout,
+        // providers
+        api::providers::list,
+        api::providers::get_info,
+        // provider auth
+        api::auth::login,
+        api::auth::check_session,
+        api::auth::logout,
+        // channels
+        api::channels::list,
+        api::channels::categories,
+        api::channels::stream,
+        // proxy
+        api::proxy::proxy_stream,
+        // admin
+        api::admin::list_users,
+        api::admin::create_user,
+        api::admin::delete_user,
+        api::admin::set_user_providers,
+        api::admin::reset_user_password,
+        api::admin::get_settings,
+        api::admin::update_settings,
+    ),
+    components(
+        schemas(
+            otvi_core::types::ProviderInfo,
+            otvi_core::types::AuthFlowInfo,
+            otvi_core::types::FieldInfo,
+            otvi_core::types::LoginRequest,
+            otvi_core::types::LoginResponse,
+            otvi_core::types::NextStepInfo,
+            otvi_core::types::Channel,
+            otvi_core::types::ChannelListResponse,
+            otvi_core::types::Category,
+            otvi_core::types::CategoryListResponse,
+            otvi_core::types::StreamInfo,
+            otvi_core::types::StreamType,
+            otvi_core::types::DrmInfo,
+            otvi_core::types::UserRole,
+            otvi_core::types::UserInfo,
+            otvi_core::types::RegisterRequest,
+            otvi_core::types::AppLoginRequest,
+            otvi_core::types::AppLoginResponse,
+            otvi_core::types::CreateUserRequest,
+            otvi_core::types::UpdateUserProvidersRequest,
+            otvi_core::types::ChangePasswordRequest,
+            otvi_core::types::AdminResetPasswordRequest,
+            otvi_core::types::ServerSettings,
+        ),
+    ),
+    modifiers(&BearerSecurityAddon),
+    tags(
+        (name = "auth",      description = "OTVI user authentication (register, login, me, change-password, logout)"),
+        (name = "providers", description = "Provider listing and per-provider authentication"),
+        (name = "channels",  description = "Channel browsing, category listing and stream URL resolution"),
+        (name = "proxy",     description = "HLS/DASH stream proxy"),
+        (name = "admin",     description = "Admin-only user and server-settings management"),
+    ),
+)]
+struct ApiDoc;
+
+/// Adds the `bearer_token` HTTP Bearer security scheme to the OpenAPI document.
+struct BearerSecurityAddon;
+
+impl utoipa::Modify for BearerSecurityAddon {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        let components = openapi.components.get_or_insert_with(Default::default);
+        components.add_security_scheme(
+            "bearer_token",
+            SecurityScheme::Http(
+                HttpBuilder::new()
+                    .scheme(HttpAuthScheme::Bearer)
+                    .bearer_format("JWT")
+                    .build(),
+            ),
+        );
+    }
+}
 
 /// Build the API router with the given application state.
 ///
 /// This is extracted from `main()` so that integration tests can construct
 /// the full router without starting a TCP listener.
+///
+/// ## Notable routes
+///
+/// | Path | Description |
+/// |------|-------------|
+/// | `GET /api/docs` | Swagger UI (redirects to `/api/docs/`) |
+/// | `GET /api/docs/` | Swagger UI index |
+/// | `GET /api/docs/openapi.json` | Raw OpenAPI JSON document |
 pub fn build_router(state: Arc<AppState>) -> axum::Router {
     let user_auth_routes = axum::Router::new()
         .route("/register", post(api::user_auth::register))
@@ -63,7 +169,7 @@ pub fn build_router(state: Arc<AppState>) -> axum::Router {
     // ── Build CORS layer from environment ────────────────────────────────
     let cors = build_cors_layer();
 
-    axum::Router::new()
+    let stateful = axum::Router::new()
         .nest("/api", api_routes)
         // ── Health / readiness checks ────────────────────────────────────
         .route("/healthz", get(health_check))
@@ -71,7 +177,11 @@ pub fn build_router(state: Arc<AppState>) -> axum::Router {
         // ── Provider YAML JSON Schema ────────────────────────────────────
         .route("/api/schema/provider", get(provider_schema))
         .layer(cors)
-        .with_state(state)
+        .with_state(state);
+
+    // SwaggerUi is a stateless Router<()>; it must be merged after
+    // with_state() so both sides share the same type parameter Router<()>.
+    stateful.merge(SwaggerUi::new("/api/docs").url("/api/docs/openapi.json", ApiDoc::openapi()))
 }
 
 // ── CORS ──────────────────────────────────────────────────────────────────

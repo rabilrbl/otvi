@@ -26,6 +26,7 @@ use otvi_core::config::{AuthFlow, AuthScope};
 use otvi_core::template::{TemplateContext, extract_json_path};
 use otvi_core::types::*;
 
+use crate::auth_middleware::ActiveClaims;
 use crate::auth_middleware::Claims;
 use crate::db;
 use crate::error::AppError;
@@ -70,10 +71,26 @@ fn session_user_id(scope: &AuthScope, claims: &Claims) -> String {
 ///
 /// Advance the provider auth flow by one step.
 /// For `global`-scoped providers, only admins may call this endpoint.
+#[utoipa::path(
+    post,
+    path = "/api/providers/{id}/auth/login",
+    tag = "providers",
+    security(("bearer_token" = [])),
+    params(
+        ("id" = String, Path, description = "Provider ID"),
+    ),
+    request_body = LoginRequest,
+    responses(
+        (status = 200, description = "Step result; `success: true` when the final step completes", body = LoginResponse),
+        (status = 401, description = "Missing or invalid token"),
+        (status = 403, description = "Password change required, or non-admin accessing a global-scoped provider"),
+        (status = 404, description = "Provider or auth flow not found"),
+    ),
+)]
 pub async fn login(
     State(state): State<Arc<AppState>>,
     Path(provider_id): Path<String>,
-    claims: Claims,
+    claims: ActiveClaims,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, AppError> {
     // Extract everything we need from the provider config while holding the
@@ -232,10 +249,25 @@ pub async fn login(
 // ── Check session ──────────────────────────────────────────────────────────
 
 /// `GET /api/providers/:id/auth/check`
+#[utoipa::path(
+    get,
+    path = "/api/providers/{id}/auth/check",
+    tag = "providers",
+    security(("bearer_token" = [])),
+    params(
+        ("id" = String, Path, description = "Provider ID"),
+    ),
+    responses(
+        (status = 200, description = "`{ \"valid\": true }` when an active session exists, `false` otherwise"),
+        (status = 401, description = "Missing or invalid token"),
+        (status = 403, description = "Password change required"),
+        (status = 404, description = "Provider not found"),
+    ),
+)]
 pub async fn check_session(
     State(state): State<Arc<AppState>>,
     Path(provider_id): Path<String>,
-    claims: Claims,
+    claims: ActiveClaims,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let scope = state
         .with_provider(&provider_id, |p| p.auth.scope.clone())
@@ -255,10 +287,25 @@ pub async fn check_session(
 /// `POST /api/providers/:id/auth/logout`
 ///
 /// For `global`-scoped providers, only admins may call this endpoint.
+#[utoipa::path(
+    post,
+    path = "/api/providers/{id}/auth/logout",
+    tag = "providers",
+    security(("bearer_token" = [])),
+    params(
+        ("id" = String, Path, description = "Provider ID"),
+    ),
+    responses(
+        (status = 200, description = "Provider session cleared"),
+        (status = 401, description = "Missing or invalid token"),
+        (status = 403, description = "Password change required, or non-admin accessing a global-scoped provider"),
+        (status = 404, description = "Provider not found"),
+    ),
+)]
 pub async fn logout(
     State(state): State<Arc<AppState>>,
     Path(provider_id): Path<String>,
-    claims: Claims,
+    claims: ActiveClaims,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let provider_data = state
         .with_provider(&provider_id, |p| {

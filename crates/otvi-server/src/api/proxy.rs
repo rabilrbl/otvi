@@ -29,6 +29,20 @@ pub struct ProxyQuery {
 /// Fetches `url` from the upstream CDN and returns its body to the browser.
 /// If the response is an m3u8 playlist, relative/absolute URLs inside it are
 /// rewritten to go through this same proxy endpoint.
+#[utoipa::path(
+    get,
+    path = "/api/proxy",
+    tag = "proxy",
+    params(
+        ("url" = String, Query, description = "Upstream stream URL to fetch (HLS manifest, segment, or key file)"),
+        ("ctx" = Option<String>, Query, description = "Opaque proxy-context token issued by the stream endpoint; carries provider headers server-side"),
+    ),
+    responses(
+        (status = 200, description = "Upstream content, with m3u8 URLs rewritten to route through this proxy"),
+        (status = 400, description = "Invalid or missing URL parameter"),
+        (status = 502, description = "Upstream fetch failed"),
+    ),
+)]
 pub async fn proxy_stream(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ProxyQuery>,

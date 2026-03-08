@@ -22,8 +22,12 @@
 //!
 //! When a user has `must_change_password = true` the server **rejects all API
 //! calls** (returning `403 Forbidden`) except for `POST /api/auth/change-password`
-//! and `GET /api/auth/me`.  This prevents admin-created accounts from accessing
-//! any functionality until they set a personal password.
+//! and `GET /api/auth/me`.  This is enforced centrally by the [`ActiveClaims`]
+//! extractor in `auth_middleware` — handlers that must remain reachable while
+//! the flag is set use the plain [`Claims`] extractor instead.
+//!
+//! [`ActiveClaims`]: crate::auth_middleware::ActiveClaims
+//! [`Claims`]: crate::auth_middleware::Claims
 
 use std::sync::Arc;
 
@@ -68,34 +72,6 @@ pub fn validate_password(password: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-// ── must_change_password guard ─────────────────────────────────────────────
-
-/// Return `403 Forbidden` when the authenticated user still has an active
-/// `must_change_password` flag.
-///
-/// Call this at the top of every handler **except** `change_password` and `me`
-/// to enforce that admin-created accounts cannot access anything until they
-/// have set a personal password.
-pub async fn require_password_not_forced(
-    db: &crate::db::Db,
-    user_id: &str,
-) -> Result<(), AppError> {
-    let mcp = crate::db::get_user_by_id(db, user_id)
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?
-        .map(|r| r.must_change_password)
-        .unwrap_or(false);
-
-    if mcp {
-        return Err(AppError::Forbidden(
-            "You must change your password before using the application. \
-             Please visit the change-password page."
-                .into(),
-        ));
-    }
-    Ok(())
-}
-
 use crate::auth_middleware::{Claims, create_token};
 use crate::db;
 use crate::error::AppError;
@@ -104,6 +80,16 @@ use crate::state::AppState;
 // ── Handlers ──────────────────────────────────────────────────────────────
 
 /// `POST /api/auth/register`
+#[utoipa::path(
+    post,
+    path = "/api/auth/register",
+    tag = "auth",
+    request_body = RegisterRequest,
+    responses(
+        (status = 200, description = "Registration successful", body = AppLoginResponse),
+        (status = 400, description = "Invalid input or username already taken"),
+    ),
+)]
 pub async fn register(
     State(state): State<Arc<AppState>>,
     Json(req): Json<RegisterRequest>,
@@ -169,6 +155,16 @@ pub async fn register(
 }
 
 /// `POST /api/auth/login`
+#[utoipa::path(
+    post,
+    path = "/api/auth/login",
+    tag = "auth",
+    request_body = AppLoginRequest,
+    responses(
+        (status = 200, description = "Login successful, returns JWT", body = AppLoginResponse),
+        (status = 401, description = "Invalid credentials"),
+    ),
+)]
 pub async fn login(
     State(state): State<Arc<AppState>>,
     Json(req): Json<AppLoginRequest>,
@@ -204,6 +200,16 @@ pub async fn login(
 }
 
 /// `GET /api/auth/me`
+#[utoipa::path(
+    get,
+    path = "/api/auth/me",
+    tag = "auth",
+    security(("bearer_token" = [])),
+    responses(
+        (status = 200, description = "Current authenticated user info", body = UserInfo),
+        (status = 401, description = "Missing or invalid token"),
+    ),
+)]
 pub async fn me(
     State(state): State<Arc<AppState>>,
     claims: Claims,
@@ -237,8 +243,21 @@ pub async fn me(
 /// Authenticated users change their own password.  On success the
 /// `must_change_password` flag is cleared and a fresh JWT is returned.
 ///
-/// This endpoint is intentionally **exempt** from the `require_password_not_forced`
-/// guard — it must remain reachable when the flag is set.
+/// This endpoint is intentionally **exempt** from the `must_change_password`
+/// guard (uses plain [`Claims`] instead of `ActiveClaims`) — it must remain
+/// reachable when the flag is set so the user can clear it.
+#[utoipa::path(
+    post,
+    path = "/api/auth/change-password",
+    tag = "auth",
+    security(("bearer_token" = [])),
+    request_body = ChangePasswordRequest,
+    responses(
+        (status = 200, description = "Password changed, returns fresh JWT", body = AppLoginResponse),
+        (status = 400, description = "Password does not meet policy requirements"),
+        (status = 401, description = "Missing/invalid token or wrong current password"),
+    ),
+)]
 pub async fn change_password(
     State(state): State<Arc<AppState>>,
     claims: Claims,
@@ -280,6 +299,15 @@ pub async fn change_password(
 
 /// `POST /api/auth/logout` — JWT is stateless; the client drops its token.
 /// This endpoint exists so the frontend can call a logout URL uniformly.
+#[utoipa::path(
+    post,
+    path = "/api/auth/logout",
+    tag = "auth",
+    security(("bearer_token" = [])),
+    responses(
+        (status = 200, description = "Always succeeds; client discards its token"),
+    ),
+)]
 pub async fn logout() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "success": true }))
 }

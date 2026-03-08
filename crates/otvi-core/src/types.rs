@@ -3,10 +3,11 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use utoipa::ToSchema;
 
 // ── Provider info (read-only, returned to frontend) ─────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ProviderInfo {
     pub id: String,
     pub name: String,
@@ -14,14 +15,14 @@ pub struct ProviderInfo {
     pub auth_flows: Vec<AuthFlowInfo>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct AuthFlowInfo {
     pub id: String,
     pub name: String,
     pub fields: Vec<FieldInfo>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct FieldInfo {
     pub key: String,
     pub label: String,
@@ -31,7 +32,7 @@ pub struct FieldInfo {
 
 // ── Auth request / response ─────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct LoginRequest {
     pub flow_id: String,
     pub step: usize,
@@ -40,7 +41,7 @@ pub struct LoginRequest {
     pub session_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct LoginResponse {
     pub success: bool,
     #[serde(default)]
@@ -54,7 +55,7 @@ pub struct LoginResponse {
 }
 
 /// Returned when a multi-step auth flow requires additional user input.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct NextStepInfo {
     pub step_index: usize,
     pub step_name: String,
@@ -63,7 +64,7 @@ pub struct NextStepInfo {
 
 // ── Channels ────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Channel {
     pub id: String,
     pub name: String,
@@ -77,7 +78,7 @@ pub struct Channel {
     pub description: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ChannelListResponse {
     pub channels: Vec<Channel>,
     /// Total number of channels matching the filter, before pagination.
@@ -86,20 +87,20 @@ pub struct ChannelListResponse {
     pub total: Option<usize>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Category {
     pub id: String,
     pub name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CategoryListResponse {
     pub categories: Vec<Category>,
 }
 
 // ── Playback ────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct StreamInfo {
     pub url: String,
     pub stream_type: StreamType,
@@ -107,14 +108,14 @@ pub struct StreamInfo {
     pub drm: Option<DrmInfo>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum StreamType {
     Hls,
     Dash,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DrmInfo {
     pub system: String,
     pub license_url: String,
@@ -124,7 +125,7 @@ pub struct DrmInfo {
 
 // ── OTVI user account (application-level auth, independent of providers) ────
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum UserRole {
     Admin,
@@ -132,7 +133,7 @@ pub enum UserRole {
 }
 
 /// Information about the currently authenticated OTVI user.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct UserInfo {
     pub id: String,
     pub username: String,
@@ -146,19 +147,19 @@ pub struct UserInfo {
 
 // ── OTVI app-level register / login / logout ─────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RegisterRequest {
     pub username: String,
     pub password: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct AppLoginRequest {
     pub username: String,
     pub password: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct AppLoginResponse {
     pub token: String,
     pub user: UserInfo,
@@ -166,7 +167,7 @@ pub struct AppLoginResponse {
 
 // ── Admin: user management ────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateUserRequest {
     pub username: String,
     pub password: String,
@@ -176,23 +177,23 @@ pub struct CreateUserRequest {
     pub providers: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct UpdateUserProvidersRequest {
     pub providers: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ChangePasswordRequest {
     pub current_password: String,
     pub new_password: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct AdminResetPasswordRequest {
     pub new_password: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ServerSettings {
     /// When `true`, the public `/api/auth/register` endpoint is disabled;
     /// only admins can create new accounts via `/api/admin/users`.

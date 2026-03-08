@@ -34,6 +34,8 @@ These endpoints require no authentication and are suitable for health monitoring
 | `GET` | `/healthz` | **Liveness probe** — returns `200 OK` instantly |
 | `GET` | `/readyz` | **Readiness probe** — checks database connectivity before responding |
 | `GET` | `/api/schema/provider` | **JSON Schema** for provider YAML files (for VS Code / CI validation) |
+| `GET` | `/api/docs/` | **Swagger UI** — interactive API explorer |
+| `GET` | `/api/docs/openapi.json` | **OpenAPI document** — raw JSON spec consumed by the Swagger UI |
 
 ### `/healthz`
 
@@ -52,6 +54,16 @@ Returns `200 OK` once the database is reachable. Returns `503 Service Unavailabl
 curl http://localhost:3000/readyz
 # HTTP 200  (or 503 if DB is unavailable)
 ```
+
+### `/api/docs/`
+
+Opens the Swagger UI — an interactive browser-based API explorer generated from the OpenAPI document. Use it to browse all endpoints, inspect request/response schemas, and try calls directly from the browser.
+
+```
+http://localhost:3000/api/docs/
+```
+
+The raw OpenAPI JSON document is available at `/api/docs/openapi.json` and can be imported into tools such as Postman or Insomnia.
 
 ### `/api/schema/provider`
 
