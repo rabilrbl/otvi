@@ -249,6 +249,28 @@ pub async fn get_user_providers(db: &Db, user_id: &str) -> anyhow::Result<Vec<St
     Ok(rows.into_iter().map(|r| r.get("provider_id")).collect())
 }
 
+/// Fetch all `(user_id, provider_id)` rows from `user_providers` in a single
+/// query and return them grouped by user ID.
+///
+/// Use this instead of calling [`get_user_providers`] in a loop over a list of
+/// users — it turns an O(N) sequence of round-trips into a single query.
+///
+/// An absent key in the returned map means the user has access to *all*
+/// providers (no rows in `user_providers`).
+pub async fn get_all_user_providers(db: &Db) -> anyhow::Result<HashMap<String, Vec<String>>> {
+    let rows = sqlx::query("SELECT user_id, provider_id FROM user_providers")
+        .fetch_all(db)
+        .await?;
+
+    let mut map: HashMap<String, Vec<String>> = HashMap::new();
+    for row in rows {
+        let uid: String = row.get("user_id");
+        let pid: String = row.get("provider_id");
+        map.entry(uid).or_default().push(pid);
+    }
+    Ok(map)
+}
+
 /// Replace the entire provider allow-list for a user.
 /// Pass an empty slice to grant access to all providers.
 pub async fn set_user_providers(

@@ -1,5 +1,12 @@
 //! Provider-level authentication.
 //!
+//! ## Cache invalidation
+//!
+//! The channel-list and category caches are keyed by `(provider_id, session_uid)`.
+//! Whenever a provider session is created (login completes) or destroyed (logout),
+//! the corresponding cache entries are evicted so that the next listing always
+//! reflects the updated credentials.
+//!
 //! Endpoints let OTVI users authenticate with a TV provider via the configured
 //! multi-step flow.  Each step advances the provider's auth process (e.g.
 //! send OTP → verify OTP).
@@ -22,22 +29,20 @@ use axum::extract::{Path, State};
 use chrono::Utc;
 use uuid::Uuid;
 
-use otvi_core::config::AuthScope;
+use otvi_core::config::{AuthFlow, AuthScope};
 use otvi_core::template::{TemplateContext, extract_json_path};
 use otvi_core::types::*;
 
+use crate::auth_middleware::ActiveClaims;
 use crate::auth_middleware::Claims;
 use crate::db;
 use crate::error::AppError;
 use crate::provider_client;
-use crate::state::AppState;
+use crate::state::{AppState, ChannelCacheKey};
 
 // ── Apply input transforms (base64, …) ────────────────────────────────────
 
-fn apply_transforms(
-    flow: &otvi_core::config::AuthFlow,
-    inputs: &HashMap<String, String>,
-) -> HashMap<String, String> {
+fn apply_transforms(flow: &AuthFlow, inputs: &HashMap<String, String>) -> HashMap<String, String> {
     let mut result = inputs.clone();
     for field in &flow.inputs {
         if let Some(transform) = &field.transform
@@ -73,40 +78,62 @@ fn session_user_id(scope: &AuthScope, claims: &Claims) -> String {
 ///
 /// Advance the provider auth flow by one step.
 /// For `global`-scoped providers, only admins may call this endpoint.
+#[utoipa::path(
+    post,
+    path = "/api/providers/{id}/auth/login",
+    tag = "providers",
+    security(("bearer_token" = [])),
+    params(
+        ("id" = String, Path, description = "Provider ID"),
+    ),
+    request_body = LoginRequest,
+    responses(
+        (status = 200, description = "Step result; `success: true` when the final step completes", body = LoginResponse),
+        (status = 401, description = "Missing or invalid token"),
+        (status = 403, description = "Password change required, or non-admin accessing a global-scoped provider"),
+        (status = 404, description = "Provider or auth flow not found"),
+    ),
+)]
 pub async fn login(
     State(state): State<Arc<AppState>>,
     Path(provider_id): Path<String>,
-    claims: Claims,
+    claims: ActiveClaims,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, AppError> {
-    let provider = state
-        .providers
-        .get(&provider_id)
+    // Extract everything we need from the provider config while holding the
+    // read lock for the shortest possible time, then drop the guard.
+    let provider_data = state
+        .with_provider(&provider_id, |p| {
+            let scope = p.auth.scope.clone();
+            let flow = p.auth.flows.iter().find(|f| f.id == req.flow_id).cloned();
+            let base_url = p.defaults.base_url.clone();
+            let default_headers = p.defaults.headers.clone();
+            (scope, flow, base_url, default_headers)
+        })
         .ok_or_else(|| AppError::NotFound("Provider not found".into()))?;
 
+    let (scope, maybe_flow, base_url, default_headers) = provider_data;
+
     // Scope check: global providers require admin.
-    if provider.auth.scope == AuthScope::Global && !claims.is_admin() {
+    if scope == AuthScope::Global && !claims.is_admin() {
         return Err(AppError::Forbidden(
             "Admin access required to manage global provider credentials".into(),
         ));
     }
 
-    let flow = provider
-        .auth
-        .flows
-        .iter()
-        .find(|f| f.id == req.flow_id)
-        .ok_or_else(|| AppError::NotFound("Auth flow not found".into()))?;
+    let flow = maybe_flow.ok_or_else(|| AppError::NotFound("Auth flow not found".into()))?;
 
     let step = flow
         .steps
         .get(req.step)
+        .cloned()
         .ok_or_else(|| AppError::BadRequest("Invalid step index".into()))?;
 
-    let transformed_inputs = apply_transforms(flow, &req.inputs);
+    let total_steps = flow.steps.len();
+    let transformed_inputs = apply_transforms(&flow, &req.inputs);
 
     // ── Build template context ────────────────────────────────────────────
-    let uid = session_user_id(&provider.auth.scope, &claims);
+    let uid = session_user_id(&scope, &claims);
     let stored = db::get_provider_session_values(&state.db, &uid, &provider_id)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -132,8 +159,8 @@ pub async fn login(
     // ── Execute provider request ──────────────────────────────────────────
     let response = provider_client::execute_request(
         &state.http_client,
-        &provider.defaults.base_url,
-        &provider.defaults.headers,
+        &base_url,
+        &default_headers,
         &step.request,
         &context,
     )
@@ -161,6 +188,11 @@ pub async fn login(
             db::upsert_provider_session(&state.db, &uid, &provider_id, &new_stored)
                 .await
                 .map_err(|e| AppError::Internal(e.to_string()))?;
+
+            // Invalidate the channel/category cache for this provider + uid so
+            // the next listing fetches fresh data with the new credentials.
+            let cache_key = ChannelCacheKey::from_auth_scope(&provider_id, &scope, &uid);
+            state.channel_cache.invalidate(&cache_key).await;
 
             let has_prompt = step
                 .on_success
@@ -197,7 +229,7 @@ pub async fn login(
                     user_name: None,
                     error: None,
                 }))
-            } else if req.step + 1 < flow.steps.len() {
+            } else if req.step + 1 < total_steps {
                 Ok(Json(LoginResponse {
                     success: false,
                     session_id: None,
@@ -229,17 +261,31 @@ pub async fn login(
 // ── Check session ──────────────────────────────────────────────────────────
 
 /// `GET /api/providers/:id/auth/check`
+#[utoipa::path(
+    get,
+    path = "/api/providers/{id}/auth/check",
+    tag = "providers",
+    security(("bearer_token" = [])),
+    params(
+        ("id" = String, Path, description = "Provider ID"),
+    ),
+    responses(
+        (status = 200, description = "`{ \"valid\": true }` when an active session exists, `false` otherwise"),
+        (status = 401, description = "Missing or invalid token"),
+        (status = 403, description = "Password change required"),
+        (status = 404, description = "Provider not found"),
+    ),
+)]
 pub async fn check_session(
     State(state): State<Arc<AppState>>,
     Path(provider_id): Path<String>,
-    claims: Claims,
+    claims: ActiveClaims,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let provider = state
-        .providers
-        .get(&provider_id)
+    let scope = state
+        .with_provider(&provider_id, |p| p.auth.scope.clone())
         .ok_or_else(|| AppError::NotFound("Provider not found".into()))?;
 
-    let uid = session_user_id(&provider.auth.scope, &claims);
+    let uid = session_user_id(&scope, &claims);
     let stored = db::get_provider_session_values(&state.db, &uid, &provider_id)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -253,31 +299,54 @@ pub async fn check_session(
 /// `POST /api/providers/:id/auth/logout`
 ///
 /// For `global`-scoped providers, only admins may call this endpoint.
+#[utoipa::path(
+    post,
+    path = "/api/providers/{id}/auth/logout",
+    tag = "providers",
+    security(("bearer_token" = [])),
+    params(
+        ("id" = String, Path, description = "Provider ID"),
+    ),
+    responses(
+        (status = 200, description = "Provider session cleared"),
+        (status = 401, description = "Missing or invalid token"),
+        (status = 403, description = "Password change required, or non-admin accessing a global-scoped provider"),
+        (status = 404, description = "Provider not found"),
+    ),
+)]
 pub async fn logout(
     State(state): State<Arc<AppState>>,
     Path(provider_id): Path<String>,
-    claims: Claims,
+    claims: ActiveClaims,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let provider = state
-        .providers
-        .get(&provider_id)
+    let provider_data = state
+        .with_provider(&provider_id, |p| {
+            (
+                p.auth.scope.clone(),
+                p.auth.logout.clone(),
+                p.defaults.base_url.clone(),
+                p.defaults.headers.clone(),
+            )
+        })
         .ok_or_else(|| AppError::NotFound("Provider not found".into()))?;
 
-    if provider.auth.scope == AuthScope::Global && !claims.is_admin() {
+    let (scope, logout_cfg, base_url, default_headers) = provider_data;
+
+    if scope == AuthScope::Global && !claims.is_admin() {
         return Err(AppError::Forbidden(
             "Admin access required to manage global provider credentials".into(),
         ));
     }
 
-    let uid = session_user_id(&provider.auth.scope, &claims);
+    let uid = session_user_id(&scope, &claims);
 
-    if let Some(logout_cfg) = &provider.auth.logout {
+    if let Some(logout_req) = logout_cfg {
         let context = build_provider_context(&state, &uid, &provider_id).await?;
         let _ = provider_client::execute_request_body(
             &state.http_client,
-            &provider.defaults.base_url,
-            &provider.defaults.headers,
-            &logout_cfg.request,
+            &base_url,
+            &default_headers,
+            &logout_req.request,
             &context,
         )
         .await;
@@ -286,6 +355,12 @@ pub async fn logout(
     db::delete_provider_session(&state.db, &uid, &provider_id)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    // Evict any cached channel/category data for this provider + uid.
+    // After logout the upstream credentials are gone, so cached data from the
+    // authenticated session must not be served to future (unauthenticated) calls.
+    let cache_key = ChannelCacheKey::from_auth_scope(&provider_id, &scope, &uid);
+    state.channel_cache.invalidate(&cache_key).await;
 
     Ok(Json(serde_json::json!({ "success": true })))
 }
@@ -308,9 +383,6 @@ pub async fn build_provider_context(
         context.set(format!("stored.{k}"), v.clone());
     }
     context.set("uuid", uuid::Uuid::new_v4().to_string());
-    // Dynamic time helpers (same formats used by JioTV-Go's GenerateCurrentTime / GenerateDate).
-    // {{utcnow}} → YYYYMMDDTHHMMSS in UTC (JioTV `begin` param)
-    // {{utcdate}} → YYYYMMDD in UTC (JioTV `srno` param)
     let now = chrono::Utc::now();
     context.set("utcnow", now.format("%Y%m%dT%H%M%S").to_string());
     context.set("utcdate", now.format("%Y%m%d").to_string());

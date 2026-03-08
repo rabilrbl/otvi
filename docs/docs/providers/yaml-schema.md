@@ -7,6 +7,26 @@ title: YAML Schema
 
 This page documents the complete YAML schema used to define a provider configuration.
 
+:::tip Live Schema Endpoint
+OTVI serves a machine-readable JSON Schema generated live from the `ProviderConfig` struct:
+
+```
+GET /api/schema/provider
+```
+
+Point the [VS Code YAML extension](https://marketplace.visualstudio.com/items?itemName=redhat.vscode-yaml) at this endpoint for inline validation and auto-complete while you edit provider files:
+
+```jsonc
+// .vscode/settings.json
+{
+  "yaml.schemas": {
+    "http://localhost:3000/api/schema/provider": "providers/*.yaml"
+  }
+}
+```
+
+:::
+
 ## Top-Level Structure
 
 ```yaml

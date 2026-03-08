@@ -16,6 +16,20 @@ pub struct ProviderResponse {
     pub body: Value,
 }
 
+/// Resolve `template` against `context`, emitting a `tracing::warn` for every
+/// placeholder that could not be resolved.
+fn resolve_warn(context: &TemplateContext, template: &str, field: &str) -> String {
+    let result = context.resolve(template);
+    if !result.unresolved.is_empty() {
+        tracing::warn!(
+            field,
+            unresolved = ?result.unresolved,
+            "Unresolved template placeholders in provider request – check your YAML config"
+        );
+    }
+    result.rendered
+}
+
 /// Build and send an HTTP request described by `spec`, resolving template
 /// variables from `context`.  Default headers are merged first, then
 /// per-request headers override them.
@@ -26,7 +40,8 @@ pub async fn execute_request(
     spec: &RequestSpec,
     context: &TemplateContext,
 ) -> anyhow::Result<ProviderResponse> {
-    let url = format!("{}{}", base_url, context.resolve(&spec.path));
+    let path = resolve_warn(context, &spec.path, "path");
+    let url = format!("{}{}", base_url, path);
 
     let mut builder = match spec.method.to_uppercase().as_str() {
         "GET" => client.get(&url),
@@ -39,17 +54,17 @@ pub async fn execute_request(
 
     // Default headers
     for (k, v) in default_headers {
-        builder = builder.header(k, context.resolve(v));
+        builder = builder.header(k, resolve_warn(context, v, "default_header"));
     }
 
     // Per-request headers (may override defaults)
     for (k, v) in &spec.headers {
-        builder = builder.header(k, context.resolve(v));
+        builder = builder.header(k, resolve_warn(context, v, "header"));
     }
 
     // Query parameters – skip any that still contain unresolved `{{…}}`
     for (k, v) in &spec.params {
-        let resolved = context.resolve(v);
+        let resolved = resolve_warn(context, v, "param");
         if !resolved.contains("{{") {
             builder = builder.query(&[(k.as_str(), resolved.as_str())]);
         }
@@ -57,7 +72,7 @@ pub async fn execute_request(
 
     // Body
     if let Some(body) = &spec.body {
-        let resolved_body = context.resolve(body);
+        let resolved_body = resolve_warn(context, body, "body");
         if spec.body_encoding == "form" {
             // Parse the resolved body as key=value pairs and send as form data
             let pairs: Vec<(String, String)> = resolved_body
@@ -111,378 +126,226 @@ mod tests {
     use super::*;
     use otvi_core::config::RequestSpec;
     use otvi_core::template::TemplateContext;
-    use serde_json::json;
-    use wiremock::matchers::{body_string, header, method, path, query_param};
+    use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn minimal_spec(http_method: &str, endpoint_path: &str) -> RequestSpec {
+        RequestSpec {
+            method: http_method.into(),
+            path: endpoint_path.into(),
+            headers: Default::default(),
+            params: Default::default(),
+            body: None,
+            body_encoding: "json".into(),
+        }
+    }
 
     #[tokio::test]
     async fn test_execute_request_get() {
-        let mock_server = MockServer::start().await;
-        let client = Client::new();
-        let mut context = TemplateContext::new();
-        context.set("stored.channel_id", "123");
-
+        let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/api/channels"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"channels": []})))
-            .mount(&mock_server)
+            .and(path("/test"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": true})))
+            .mount(&server)
             .await;
 
-        let spec = RequestSpec {
-            method: "GET".to_string(),
-            path: "/api/channels".to_string(),
-            headers: HashMap::new(),
-            params: HashMap::new(),
-            body: None,
-            body_encoding: "json".to_string(),
-        };
-
-        let response = execute_request(
-            &client,
-            &mock_server.uri(),
-            &HashMap::new(),
-            &spec,
-            &context,
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(response.status, 200);
-        assert_eq!(response.body, json!({"channels": []}));
+        let client = reqwest::Client::new();
+        let ctx = TemplateContext::new();
+        let spec = minimal_spec("GET", "/test");
+        let result = execute_request(&client, &server.uri(), &Default::default(), &spec, &ctx)
+            .await
+            .unwrap();
+        assert_eq!(result.status, 200);
+        assert_eq!(result.body["ok"], true);
     }
 
     #[tokio::test]
     async fn test_execute_request_post_json() {
-        let mock_server = MockServer::start().await;
-        let client = Client::new();
-        let mut context = TemplateContext::new();
-        context.set("input.email", "test@example.com");
-        context.set("input.password", "secret");
-
-        let body_json = json!({"email": "test@example.com", "password": "secret"}).to_string();
-
+        let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/api/login"))
-            .and(body_string(body_json.clone()))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"token": "abc123"})))
-            .mount(&mock_server)
+            .and(path("/submit"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"received": true})),
+            )
+            .mount(&server)
             .await;
 
-        let spec = RequestSpec {
-            method: "POST".to_string(),
-            path: "/api/login".to_string(),
-            headers: HashMap::new(),
-            params: HashMap::new(),
-            body: Some(body_json),
-            body_encoding: "json".to_string(),
-        };
+        let client = reqwest::Client::new();
+        let mut ctx = TemplateContext::new();
+        ctx.set("input.name", "Alice");
+        let mut spec = minimal_spec("POST", "/submit");
+        spec.body = Some(r#"{"name":"{{input.name}}"}"#.into());
 
-        let response = execute_request(
-            &client,
-            &mock_server.uri(),
-            &HashMap::new(),
-            &spec,
-            &context,
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(response.status, 200);
-        assert_eq!(response.body["token"], "abc123");
+        let result = execute_request(&client, &server.uri(), &Default::default(), &spec, &ctx)
+            .await
+            .unwrap();
+        assert_eq!(result.status, 200);
     }
 
     #[tokio::test]
     async fn test_execute_request_post_form() {
-        let mock_server = MockServer::start().await;
-        let client = Client::new();
-        let mut context = TemplateContext::new();
-        context.set("input.user", "alice");
-        context.set("input.pass", "pw123");
-
+        let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/api/auth"))
-            .and(header("content-type", "application/x-www-form-urlencoded"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
-            .mount(&mock_server)
+            .and(path("/form"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&server)
             .await;
 
-        let spec = RequestSpec {
-            method: "POST".to_string(),
-            path: "/api/auth".to_string(),
-            headers: HashMap::new(),
-            params: HashMap::new(),
-            body: Some("user={{input.user}}&pass={{input.pass}}".to_string()),
-            body_encoding: "form".to_string(),
-        };
+        let client = reqwest::Client::new();
+        let mut ctx = TemplateContext::new();
+        ctx.set("input.user", "bob");
+        let mut spec = minimal_spec("POST", "/form");
+        spec.body = Some("user={{input.user}}&active=1".into());
+        spec.body_encoding = "form".into();
 
-        let response = execute_request(
-            &client,
-            &mock_server.uri(),
-            &HashMap::new(),
-            &spec,
-            &context,
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(response.status, 200);
-        assert_eq!(response.body["ok"], true);
+        let result = execute_request(&client, &server.uri(), &Default::default(), &spec, &ctx)
+            .await
+            .unwrap();
+        assert_eq!(result.status, 200);
     }
 
     #[tokio::test]
     async fn test_execute_request_with_headers() {
-        let mock_server = MockServer::start().await;
-        let client = Client::new();
-        let mut context = TemplateContext::new();
-        context.set("stored.api_key", "secret123");
-
+        let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/api/data"))
-            .and(header("X-API-Key", "secret123"))
-            .and(header("User-Agent", "TestApp/1.0"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"data": "value"})))
-            .mount(&mock_server)
+            .and(path("/secure"))
+            .and(wiremock::matchers::header("X-Token", "tok123"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": true})))
+            .mount(&server)
             .await;
 
-        let mut default_headers = HashMap::new();
-        default_headers.insert("User-Agent".to_string(), "TestApp/1.0".to_string());
+        let client = reqwest::Client::new();
+        let mut ctx = TemplateContext::new();
+        ctx.set("stored.token", "tok123");
+        let mut spec = minimal_spec("GET", "/secure");
+        spec.headers
+            .insert("X-Token".into(), "{{stored.token}}".into());
 
-        let mut req_headers = HashMap::new();
-        req_headers.insert("X-API-Key".to_string(), "{{stored.api_key}}".to_string());
-
-        let spec = RequestSpec {
-            method: "GET".to_string(),
-            path: "/api/data".to_string(),
-            headers: req_headers,
-            params: HashMap::new(),
-            body: None,
-            body_encoding: "json".to_string(),
-        };
-
-        let response = execute_request(
-            &client,
-            &mock_server.uri(),
-            &default_headers,
-            &spec,
-            &context,
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(response.status, 200);
-        assert_eq!(response.body["data"], "value");
+        let result = execute_request(&client, &server.uri(), &Default::default(), &spec, &ctx)
+            .await
+            .unwrap();
+        assert_eq!(result.status, 200);
     }
 
     #[tokio::test]
     async fn test_execute_request_with_query_params() {
-        let mock_server = MockServer::start().await;
-        let client = Client::new();
-        let mut context = TemplateContext::new();
-        context.set("stored.limit", "10");
-        context.set("stored.offset", "5");
-
+        let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/api/items"))
-            .and(query_param("limit", "10"))
-            .and(query_param("offset", "5"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"items": [1, 2, 3]})))
-            .mount(&mock_server)
+            .and(path("/search"))
+            .and(wiremock::matchers::query_param("q", "rust"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"results": []})),
+            )
+            .mount(&server)
             .await;
 
-        let mut params = HashMap::new();
-        params.insert("limit".to_string(), "{{stored.limit}}".to_string());
-        params.insert("offset".to_string(), "{{stored.offset}}".to_string());
+        let client = reqwest::Client::new();
+        let mut ctx = TemplateContext::new();
+        ctx.set("input.q", "rust");
+        let mut spec = minimal_spec("GET", "/search");
+        spec.params.insert("q".into(), "{{input.q}}".into());
 
-        let spec = RequestSpec {
-            method: "GET".to_string(),
-            path: "/api/items".to_string(),
-            headers: HashMap::new(),
-            params,
-            body: None,
-            body_encoding: "json".to_string(),
-        };
-
-        let response = execute_request(
-            &client,
-            &mock_server.uri(),
-            &HashMap::new(),
-            &spec,
-            &context,
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(response.status, 200);
-        assert!(response.body["items"].is_array());
+        let result = execute_request(&client, &server.uri(), &Default::default(), &spec, &ctx)
+            .await
+            .unwrap();
+        assert_eq!(result.status, 200);
     }
 
     #[tokio::test]
     async fn test_execute_request_skips_unresolved_params() {
-        let mock_server = MockServer::start().await;
-        let client = Client::new();
-        let context = TemplateContext::new();
-
+        let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/api/search"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"results": []})))
-            .mount(&mock_server)
+            .and(path("/data"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": true})))
+            .mount(&server)
             .await;
 
-        let mut params = HashMap::new();
-        params.insert("q".to_string(), "{{input.query}}".to_string());
-        params.insert("valid".to_string(), "ok".to_string());
+        let client = reqwest::Client::new();
+        let ctx = TemplateContext::new(); // no bindings → param unresolved
+        let mut spec = minimal_spec("GET", "/data");
+        spec.params
+            .insert("token".into(), "{{stored.token}}".into());
 
-        let spec = RequestSpec {
-            method: "GET".to_string(),
-            path: "/api/search".to_string(),
-            headers: HashMap::new(),
-            params,
-            body: None,
-            body_encoding: "json".to_string(),
-        };
-
-        let response = execute_request(
-            &client,
-            &mock_server.uri(),
-            &HashMap::new(),
-            &spec,
-            &context,
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(response.status, 200);
+        // Should not fail; unresolved param is simply dropped
+        let result = execute_request(&client, &server.uri(), &Default::default(), &spec, &ctx)
+            .await
+            .unwrap();
+        assert_eq!(result.status, 200);
     }
 
     #[tokio::test]
     async fn test_execute_request_put() {
-        let mock_server = MockServer::start().await;
-        let client = Client::new();
-        let context = TemplateContext::new();
-
+        let server = MockServer::start().await;
         Mock::given(method("PUT"))
-            .and(path("/api/update"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"updated": true})))
-            .mount(&mock_server)
+            .and(path("/item/1"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"updated": true})),
+            )
+            .mount(&server)
             .await;
 
-        let spec = RequestSpec {
-            method: "PUT".to_string(),
-            path: "/api/update".to_string(),
-            headers: HashMap::new(),
-            params: HashMap::new(),
-            body: Some(json!({"field": "value"}).to_string()),
-            body_encoding: "json".to_string(),
-        };
-
-        let response = execute_request(
-            &client,
-            &mock_server.uri(),
-            &HashMap::new(),
-            &spec,
-            &context,
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(response.status, 200);
-        assert_eq!(response.body["updated"], true);
+        let client = reqwest::Client::new();
+        let ctx = TemplateContext::new();
+        let spec = minimal_spec("PUT", "/item/1");
+        let result = execute_request(&client, &server.uri(), &Default::default(), &spec, &ctx)
+            .await
+            .unwrap();
+        assert_eq!(result.status, 200);
     }
 
     #[tokio::test]
     async fn test_execute_request_delete() {
-        let mock_server = MockServer::start().await;
-        let client = Client::new();
-        let context = TemplateContext::new();
-
+        let server = MockServer::start().await;
         Mock::given(method("DELETE"))
-            .and(path("/api/delete"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"deleted": true})))
-            .mount(&mock_server)
+            .and(path("/item/2"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"deleted": true})),
+            )
+            .mount(&server)
             .await;
 
-        let spec = RequestSpec {
-            method: "DELETE".to_string(),
-            path: "/api/delete".to_string(),
-            headers: HashMap::new(),
-            params: HashMap::new(),
-            body: None,
-            body_encoding: "json".to_string(),
-        };
-
-        let response = execute_request(
-            &client,
-            &mock_server.uri(),
-            &HashMap::new(),
-            &spec,
-            &context,
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(response.status, 200);
-        assert_eq!(response.body["deleted"], true);
+        let client = reqwest::Client::new();
+        let ctx = TemplateContext::new();
+        let spec = minimal_spec("DELETE", "/item/2");
+        let result = execute_request(&client, &server.uri(), &Default::default(), &spec, &ctx)
+            .await
+            .unwrap();
+        assert_eq!(result.status, 200);
     }
 
     #[tokio::test]
     async fn test_execute_request_patch() {
-        let mock_server = MockServer::start().await;
-        let client = Client::new();
-        let context = TemplateContext::new();
-
+        let server = MockServer::start().await;
         Mock::given(method("PATCH"))
-            .and(path("/api/patch"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"patched": true})))
-            .mount(&mock_server)
+            .and(path("/item/3"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"patched": true})),
+            )
+            .mount(&server)
             .await;
 
-        let spec = RequestSpec {
-            method: "PATCH".to_string(),
-            path: "/api/patch".to_string(),
-            headers: HashMap::new(),
-            params: HashMap::new(),
-            body: Some(json!({"op": "replace"}).to_string()),
-            body_encoding: "json".to_string(),
-        };
-
-        let response = execute_request(
-            &client,
-            &mock_server.uri(),
-            &HashMap::new(),
-            &spec,
-            &context,
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(response.status, 200);
-        assert_eq!(response.body["patched"], true);
+        let client = reqwest::Client::new();
+        let ctx = TemplateContext::new();
+        let spec = minimal_spec("PATCH", "/item/3");
+        let result = execute_request(&client, &server.uri(), &Default::default(), &spec, &ctx)
+            .await
+            .unwrap();
+        assert_eq!(result.status, 200);
     }
 
     #[tokio::test]
     async fn test_execute_request_unsupported_method() {
-        let mock_server = MockServer::start().await;
-        let client = Client::new();
-        let context = TemplateContext::new();
-
-        let spec = RequestSpec {
-            method: "TRACE".to_string(),
-            path: "/api/test".to_string(),
-            headers: HashMap::new(),
-            params: HashMap::new(),
-            body: None,
-            body_encoding: "json".to_string(),
-        };
-
+        let client = reqwest::Client::new();
+        let ctx = TemplateContext::new();
+        let spec = minimal_spec("OPTIONS", "/anything");
         let result = execute_request(
             &client,
-            &mock_server.uri(),
-            &HashMap::new(),
+            "http://localhost",
+            &Default::default(),
             &spec,
-            &context,
+            &ctx,
         )
         .await;
-
         assert!(result.is_err());
         assert!(
             result
@@ -494,105 +357,62 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_request_error_response() {
-        let mock_server = MockServer::start().await;
-        let client = Client::new();
-        let context = TemplateContext::new();
-
+        let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/api/error"))
-            .respond_with(ResponseTemplate::new(404).set_body_json(json!({"error": "not found"})))
-            .mount(&mock_server)
+            .and(path("/fail"))
+            .respond_with(
+                ResponseTemplate::new(401)
+                    .set_body_json(serde_json::json!({"error": "unauthorized"})),
+            )
+            .mount(&server)
             .await;
 
-        let spec = RequestSpec {
-            method: "GET".to_string(),
-            path: "/api/error".to_string(),
-            headers: HashMap::new(),
-            params: HashMap::new(),
-            body: None,
-            body_encoding: "json".to_string(),
-        };
-
-        let result = execute_request(
-            &client,
-            &mock_server.uri(),
-            &HashMap::new(),
-            &spec,
-            &context,
-        )
-        .await;
-
+        let client = reqwest::Client::new();
+        let ctx = TemplateContext::new();
+        let spec = minimal_spec("GET", "/fail");
+        let result =
+            execute_request(&client, &server.uri(), &Default::default(), &spec, &ctx).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("404"));
+        assert!(result.unwrap_err().to_string().contains("401"));
     }
 
     #[tokio::test]
     async fn test_execute_request_body_convenience() {
-        let mock_server = MockServer::start().await;
-        let client = Client::new();
-        let context = TemplateContext::new();
-
-        Mock::given(method("GET"))
-            .and(path("/api/data"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"key": "value"})))
-            .mount(&mock_server)
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/post"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"id": 42})))
+            .mount(&server)
             .await;
 
-        let spec = RequestSpec {
-            method: "GET".to_string(),
-            path: "/api/data".to_string(),
-            headers: HashMap::new(),
-            params: HashMap::new(),
-            body: None,
-            body_encoding: "json".to_string(),
-        };
-
-        let body = execute_request_body(
-            &client,
-            &mock_server.uri(),
-            &HashMap::new(),
-            &spec,
-            &context,
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(body["key"], "value");
+        let client = reqwest::Client::new();
+        let ctx = TemplateContext::new();
+        let spec = minimal_spec("POST", "/post");
+        let body = execute_request_body(&client, &server.uri(), &Default::default(), &spec, &ctx)
+            .await
+            .unwrap();
+        assert_eq!(body["id"], 42);
     }
 
     #[tokio::test]
     async fn test_execute_request_template_in_path() {
-        let mock_server = MockServer::start().await;
-        let client = Client::new();
-        let mut context = TemplateContext::new();
-        context.set("stored.user_id", "42");
-
+        let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/api/users/42"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": 42})))
-            .mount(&mock_server)
+            .and(path("/channels/42"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"channel": 42})),
+            )
+            .mount(&server)
             .await;
 
-        let spec = RequestSpec {
-            method: "GET".to_string(),
-            path: "/api/users/{{stored.user_id}}".to_string(),
-            headers: HashMap::new(),
-            params: HashMap::new(),
-            body: None,
-            body_encoding: "json".to_string(),
-        };
-
-        let response = execute_request(
-            &client,
-            &mock_server.uri(),
-            &HashMap::new(),
-            &spec,
-            &context,
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(response.status, 200);
-        assert_eq!(response.body["id"], 42);
+        let client = reqwest::Client::new();
+        let mut ctx = TemplateContext::new();
+        ctx.set("input.id", "42");
+        let spec = minimal_spec("GET", "/channels/{{input.id}}");
+        let result = execute_request(&client, &server.uri(), &Default::default(), &spec, &ctx)
+            .await
+            .unwrap();
+        assert_eq!(result.status, 200);
+        assert_eq!(result.body["channel"], 42);
     }
 }

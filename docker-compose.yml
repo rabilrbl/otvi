@@ -4,10 +4,36 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      # Mount your provider YAML files into the container
-      - ./providers:/app/providers:ro
+      # Mount your provider YAML files into the container.
+      # Changes to YAML files are picked up automatically via hot-reload.
+      - ./providers:/app/providers
+      - otvi_data:/app/data
     environment:
       - PORT=3000
       - PROVIDERS_DIR=/app/providers
       - STATIC_DIR=/app/dist
       - RUST_LOG=otvi_server=info
+      # Set to "json" for structured log output (Loki, Datadog, CloudWatch, etc.)
+      - LOG_FORMAT=text
+      # In production set this to your frontend origin, e.g. "https://tv.example.com".
+      # Leave as "*" only for local development.
+      - CORS_ORIGINS=*
+      # IMPORTANT: Set a strong, random secret in production.
+      # Without this, a random secret is generated at startup and all tokens
+      # are invalidated on every restart.
+      # Generate one with: openssl rand -hex 32
+      - JWT_SECRET=${JWT_SECRET:-}
+      # Optional: override the default SQLite path.
+      # For PostgreSQL: postgres://user:pass@db:5432/otvi
+      # For MySQL:      mysql://user:pass@db:3306/otvi
+      - DATABASE_URL=sqlite:///app/data/data.db
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+volumes:
+  otvi_data:

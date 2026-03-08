@@ -5,13 +5,14 @@
 //! can use a proxy like mitmproxy or Charles, record the traffic, and convert
 //! the captured requests into this YAML format.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 // ── Root ────────────────────────────────────────────────────────────────────
 
 /// Top-level provider configuration loaded from a single YAML file.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ProviderConfig {
     pub provider: ProviderMeta,
     #[serde(default)]
@@ -23,7 +24,7 @@ pub struct ProviderConfig {
 
 // ── Provider metadata ───────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ProviderMeta {
     pub name: String,
     pub id: String,
@@ -33,7 +34,7 @@ pub struct ProviderMeta {
 
 // ── Request defaults ────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct RequestDefaults {
     #[serde(default)]
     pub base_url: String,
@@ -49,7 +50,7 @@ pub struct RequestDefaults {
 ///   OTVI instance shares those provider credentials.
 /// - `per_user` – Every OTVI user supplies their own provider credentials.
 ///   Each user has an independent provider session.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthScope {
     /// Admin supplies credentials once; shared across all users.
@@ -59,7 +60,7 @@ pub enum AuthScope {
     PerUser,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AuthConfig {
     /// Who manages credentials for this provider (default: `per_user`).
     #[serde(default)]
@@ -72,7 +73,7 @@ pub struct AuthConfig {
 }
 
 /// A single authentication flow (e.g. email+password, phone+OTP).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AuthFlow {
     pub id: String,
     pub name: String,
@@ -81,7 +82,7 @@ pub struct AuthFlow {
 }
 
 /// Definition of a user-facing form field.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct FieldDef {
     pub key: String,
     pub label: String,
@@ -104,7 +105,7 @@ fn default_true() -> bool {
 }
 
 /// A single step within an authentication flow.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AuthStep {
     pub name: String,
     pub request: RequestSpec,
@@ -117,7 +118,7 @@ pub struct AuthStep {
 }
 
 /// Actions to perform on a successful API response.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct OnSuccess {
     /// Key → JSONPath pairs.  Values extracted from the response body are
     /// stored in the session and available as `{{stored.<key>}}` in later
@@ -134,7 +135,7 @@ pub struct OnSuccess {
 
 /// Describes a single HTTP request.  All string fields support template
 /// variables such as `{{input.email}}`, `{{stored.access_token}}`, `{{uuid}}`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct RequestSpec {
     pub method: String,
     pub path: String,
@@ -155,13 +156,13 @@ fn default_body_encoding() -> String {
 }
 
 /// Wrapper for a standalone API call (e.g. logout).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ApiCall {
     pub request: RequestSpec,
 }
 
 /// Configuration for automatic token refresh.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct RefreshConfig {
     pub request: RequestSpec,
     pub on_success: OnSuccess,
@@ -170,13 +171,13 @@ pub struct RefreshConfig {
 // ── Channels ────────────────────────────────────────────────────────────────
 
 /// A statically-defined category (used when the provider has no categories API).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct StaticCategory {
     pub id: String,
     pub name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ChannelsConfig {
     pub list: ApiEndpoint,
     #[serde(default)]
@@ -188,7 +189,7 @@ pub struct ChannelsConfig {
 }
 
 /// Generic API endpoint with request and response-mapping information.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ApiEndpoint {
     pub request: RequestSpec,
     pub response: ResponseMapping,
@@ -196,7 +197,7 @@ pub struct ApiEndpoint {
 
 /// Describes how to extract a list of items from a JSON response and map
 /// provider-specific field names to the canonical schema.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ResponseMapping {
     /// JSONPath to the array of items, e.g. `$.data.channels`.
     #[serde(default)]
@@ -215,12 +216,12 @@ pub struct ResponseMapping {
 
 // ── Playback ────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PlaybackConfig {
     pub stream: PlaybackEndpoint,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PlaybackEndpoint {
     pub request: RequestSpec,
     pub response: PlaybackResponse,
@@ -299,7 +300,7 @@ pub struct PlaybackEndpoint {
 
 /// Describes how to extract stream URL, type and optional DRM information from
 /// the playback API response.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PlaybackResponse {
     /// JSONPath to the manifest / playlist URL.
     pub url: String,
@@ -312,7 +313,7 @@ pub struct PlaybackResponse {
 }
 
 /// Describes how to extract DRM parameters from the playback response.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DrmResponseConfig {
     /// JSONPath to the DRM system name (e.g. `"widevine"`).
     pub system: String,

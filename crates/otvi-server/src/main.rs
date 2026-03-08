@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use tower_http::services::{ServeDir, ServeFile};
@@ -5,18 +6,35 @@ use tower_http::services::{ServeDir, ServeFile};
 use otvi_server::auth_middleware;
 use otvi_server::db;
 use otvi_server::state;
+use otvi_server::state::RateLimitConfig;
+use otvi_server::watcher;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Load .env file if present (silently ignored when absent).
     dotenvy::dotenv().ok();
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "otvi_server=info".into()),
-        )
-        .init();
+    // ── Structured logging ──────────────────────────────────────────────────
+    // Set LOG_FORMAT=json for machine-readable output (e.g. Loki, Datadog).
+    // Defaults to human-readable text for local development.
+    let log_format = std::env::var("LOG_FORMAT").unwrap_or_else(|_| "text".to_string());
+
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| "otvi_server=info".into());
+
+    match log_format.to_lowercase().as_str() {
+        "json" => {
+            tracing_subscriber::fmt()
+                .json()
+                .with_env_filter(env_filter)
+                .with_current_span(false)
+                .with_span_list(false)
+                .init();
+        }
+        _ => {
+            tracing_subscriber::fmt().with_env_filter(env_filter).init();
+        }
+    }
 
     let providers_dir = std::env::var("PROVIDERS_DIR").unwrap_or_else(|_| "providers".to_string());
     let static_dir = std::env::var("STATIC_DIR").unwrap_or_else(|_| "dist".to_string());
@@ -42,15 +60,22 @@ async fn main() -> anyhow::Result<()> {
 
     // ── Providers ───────────────────────────────────────────────────────────
     let app_state = state::AppState::load_providers(&providers_dir, db, jwt_keys)?;
-    tracing::info!(
-        "Loaded {} provider(s): {:?}",
-        app_state.providers.len(),
-        app_state.providers.keys().collect::<Vec<_>>()
-    );
+    let provider_count = app_state.providers_rw.read().map(|g| g.len()).unwrap_or(0);
+    tracing::info!("Loaded {provider_count} provider(s)");
+
+    // ── Rate limiting ───────────────────────────────────────────────────────
+    let rate_limit = RateLimitConfig::from_env();
 
     // ── Routes ──────────────────────────────────────────────────────────────
     let state = Arc::new(app_state);
-    let app = otvi_server::build_router(state).fallback_service(
+
+    // ── Hot-reload watcher ──────────────────────────────────────────────────
+    // Watches the providers directory for YAML changes and reloads the
+    // provider map in-place without restarting the server.
+    watcher::spawn(state.clone(), providers_dir.clone());
+    tracing::info!(dir = %providers_dir, "Provider hot-reload enabled");
+
+    let app = otvi_server::build_router(state, rate_limit).fallback_service(
         ServeDir::new(&static_dir)
             .append_index_html_on_directories(true)
             .fallback(ServeFile::new(format!("{static_dir}/index.html"))),
@@ -59,7 +84,11 @@ async fn main() -> anyhow::Result<()> {
     let addr = format!("0.0.0.0:{port}");
     tracing::info!("Listening on {addr}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }
