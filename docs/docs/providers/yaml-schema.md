@@ -25,7 +25,6 @@ Point the [VS Code YAML extension](https://marketplace.visualstudio.com/items?it
 }
 ```
 
-This is pre-configured in `.vscode/settings.json` in the repository.
 :::
 
 ## Top-Level Structure

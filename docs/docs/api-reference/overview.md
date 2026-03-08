@@ -66,8 +66,6 @@ Returns a live [JSON Schema](https://json-schema.org/) generated from the `Provi
 }
 ```
 
-This is pre-configured in `.vscode/settings.json` in the repository.
-
 ## Endpoint Summary
 
 ### Providers

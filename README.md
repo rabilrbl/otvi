@@ -108,8 +108,6 @@ editing provider files:
 }
 ```
 
-This is pre-configured in `.vscode/settings.json` in the repository.
-
 ### Template Variables
 
 | Variable        | Description                                                               |

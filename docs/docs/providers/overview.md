@@ -41,7 +41,7 @@ Point the [YAML extension](https://marketplace.visualstudio.com/items?itemName=r
 }
 ```
 
-This is pre-configured in `.vscode/settings.json` in the repository. The schema is served by `GET /api/schema/provider` and is generated live from the `ProviderConfig` struct via [`schemars`](https://graham.cool/schemars/).
+ The schema is served by `GET /api/schema/provider` and is generated live from the `ProviderConfig` struct via [`schemars`](https://graham.cool/schemars/).
 
 ## Provider YAML Structure
 
