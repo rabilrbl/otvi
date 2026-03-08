@@ -3,6 +3,7 @@ use leptos::task::spawn_local;
 use leptos_router::hooks::*;
 use wasm_bindgen::prelude::*;
 
+use futures::join;
 use otvi_core::types::StreamType;
 
 use crate::api;
@@ -65,7 +66,7 @@ pub fn PlayerPage() -> impl IntoView {
 
             let stream_future = api::fetch_stream(&pid, &cid);
 
-            let ((), stream_result) = futures_join(meta_future, stream_future).await;
+            let ((), stream_result) = join!(meta_future, stream_future);
 
             set_loading.set(false);
 
@@ -168,29 +169,13 @@ pub fn PlayerPage() -> impl IntoView {
     }
 }
 
-/// Run two futures concurrently and return both results.
-///
-/// This avoids pulling in the full `futures` crate just for `join!`.
-async fn futures_join<A, B>(a: A, b: B) -> (A::Output, B::Output)
-where
-    A: std::future::Future,
-    B: std::future::Future,
-{
-    // Leptos's `spawn_local` environment is single-threaded WASM, so
-    // sequential execution is equivalent to true concurrency here.
-    // For a real multi-task join we would need `wasm_bindgen_futures::JsFuture`
-    // or the `futures` crate; keeping it simple avoids the extra dep.
-    let a_out = a.await;
-    let b_out = b.await;
-    (a_out, b_out)
-}
-
 /// Tiny async delay helper (avoids pulling in the full gloo-timers crate).
 async fn gloo_timers_delay(ms: u32) {
+    let Some(window) = web_sys::window() else {
+        return;
+    };
     let promise = js_sys::Promise::new(&mut |resolve, _| {
-        let _ = web_sys::window()
-            .unwrap()
-            .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms as i32);
+        let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms as i32);
     });
     let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
 }

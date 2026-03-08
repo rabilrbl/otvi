@@ -4,6 +4,7 @@
 //! and rewrites relative URLs inside `.m3u8` playlists so that subsequent
 //! requests also go through this proxy.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use axum::extract::{Query, State};
@@ -14,6 +15,17 @@ use tracing::debug;
 use url::Url;
 
 use crate::state::AppState;
+
+fn append_cookie(
+    cookie_pairs: &mut Vec<String>,
+    seen: &mut HashSet<String>,
+    name: &str,
+    value: &str,
+) {
+    if seen.insert(name.to_owned()) {
+        cookie_pairs.push(format!("{name}={value}"));
+    }
+}
 
 #[derive(Deserialize)]
 pub struct ProxyQuery {
@@ -98,7 +110,8 @@ pub async fn proxy_stream(
             .map(|(k, v)| (k.into_owned(), v.into_owned()))
             .collect();
 
-        let mut cookie_pairs: Vec<String> = Vec::new();
+        let mut cookie_pairs = Vec::new();
+        let mut seen_cookie_names = HashSet::new();
 
         // When `key_exclude_resolved_cookies` is set, skip URL-param-extracted
         // cookies (sources 1 & 2) for key requests.  This prevents CDN auth
@@ -111,28 +124,18 @@ pub async fn proxy_stream(
             // Source 1 – params in the current URL (freshest value wins)
             for (param, cookie_name) in &ctx.url_param_cookies {
                 if let Some(val) = query_map.get(param.as_str()) {
-                    cookie_pairs.push(format!("{cookie_name}={val}"));
+                    append_cookie(&mut cookie_pairs, &mut seen_cookie_names, cookie_name, val);
                 }
             }
             // Source 2 – persisted values from a prior manifest fetch (fill gaps)
             for (cookie_name, val) in &ctx.resolved_cookies {
-                let already = cookie_pairs
-                    .iter()
-                    .any(|p| p.starts_with(&format!("{cookie_name}=")));
-                if !already {
-                    cookie_pairs.push(format!("{cookie_name}={val}"));
-                }
+                append_cookie(&mut cookie_pairs, &mut seen_cookie_names, cookie_name, val);
             }
         }
         // Source 3 – static cookies from provider YAML `proxy_cookies` field
         // (lowest priority; overridden by URL-extracted or manifest-extracted values)
         for (cookie_name, val) in &ctx.static_cookies {
-            let already = cookie_pairs
-                .iter()
-                .any(|p| p.starts_with(&format!("{cookie_name}=")));
-            if !already {
-                cookie_pairs.push(format!("{cookie_name}={val}"));
-            }
+            append_cookie(&mut cookie_pairs, &mut seen_cookie_names, cookie_name, val);
         }
         let cookie_header = cookie_pairs.join("; ");
         debug!(

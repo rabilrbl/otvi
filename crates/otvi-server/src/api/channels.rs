@@ -503,25 +503,25 @@ fn map_channels(
     response: &Value,
     mapping: &otvi_core::config::ResponseMapping,
 ) -> Result<Vec<Channel>, AppError> {
-    let items: Vec<Value> = get_items_array(response, mapping.items_path.as_deref())?;
+    let items = get_items_array(response, mapping.items_path.as_deref())?;
 
     let logo_base = mapping.logo_base_url.as_deref().unwrap_or("");
 
     let channels = items
-        .into_iter()
+        .iter()
         .filter_map(|item| {
-            let id = extract_mapped_field(&item, &mapping.mapping, "id")?;
-            let name = extract_mapped_field(&item, &mapping.mapping, "name")?;
-            let logo = extract_mapped_field(&item, &mapping.mapping, "logo").map(|raw| {
+            let id = extract_mapped_field(item, &mapping.mapping, "id")?;
+            let name = extract_mapped_field(item, &mapping.mapping, "name")?;
+            let logo = extract_mapped_field(item, &mapping.mapping, "logo").map(|raw| {
                 if raw.starts_with("http://") || raw.starts_with("https://") {
                     raw
                 } else {
                     format!("{logo_base}{raw}")
                 }
             });
-            let category = extract_mapped_field(&item, &mapping.mapping, "category");
-            let number = extract_mapped_field(&item, &mapping.mapping, "number");
-            let description = extract_mapped_field(&item, &mapping.mapping, "description");
+            let category = extract_mapped_field(item, &mapping.mapping, "category");
+            let number = extract_mapped_field(item, &mapping.mapping, "number");
+            let description = extract_mapped_field(item, &mapping.mapping, "description");
             Some(Channel {
                 id,
                 name,
@@ -540,13 +540,13 @@ fn map_categories(
     response: &Value,
     mapping: &otvi_core::config::ResponseMapping,
 ) -> Result<Vec<Category>, AppError> {
-    let items: Vec<Value> = get_items_array(response, mapping.items_path.as_deref())?;
+    let items = get_items_array(response, mapping.items_path.as_deref())?;
 
     let categories = items
-        .into_iter()
+        .iter()
         .filter_map(|item| {
-            let id = extract_mapped_field(&item, &mapping.mapping, "id")?;
-            let name = extract_mapped_field(&item, &mapping.mapping, "name")?;
+            let id = extract_mapped_field(item, &mapping.mapping, "id")?;
+            let name = extract_mapped_field(item, &mapping.mapping, "name")?;
             Some(Category { id, name })
         })
         .collect();
@@ -555,24 +555,27 @@ fn map_categories(
 }
 
 /// Navigate to the array indicated by `items_path` in the response JSON and
-/// return it as an owned `Vec<Value>`.
+/// return it by reference.
 ///
 /// When `items_path` is `None` the response itself is expected to be a JSON
 /// array.  When a path is given it is resolved via [`navigate_json`] and
 /// the matched node is expected to be an array.
-fn get_items_array(response: &Value, items_path: Option<&str>) -> Result<Vec<Value>, AppError> {
+fn get_items_array<'a>(
+    response: &'a Value,
+    items_path: Option<&str>,
+) -> Result<&'a [Value], AppError> {
     match items_path {
         Some(path) => {
             let node = navigate_json(response, path).ok_or_else(|| {
                 AppError::Internal(format!("items_path '{path}' not found in response"))
             })?;
             node.as_array()
-                .cloned()
+                .map(Vec::as_slice)
                 .ok_or_else(|| AppError::Internal(format!("items_path '{path}' is not an array")))
         }
         None => response
             .as_array()
-            .cloned()
+            .map(Vec::as_slice)
             .ok_or_else(|| AppError::Internal("Response root is not an array".into())),
     }
 }
