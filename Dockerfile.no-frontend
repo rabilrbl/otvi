@@ -31,9 +31,9 @@ ENV PROVIDERS_DIR=/app/providers
 ENV RUST_LOG=otvi_server=info
 # Set to "json" for structured log output (e.g. Loki, Datadog, CloudWatch).
 ENV LOG_FORMAT=text
-# Set to your frontend origin in production, e.g. "https://tv.example.com".
-# Leave unset or "*" to allow all origins (development only).
-ENV CORS_ORIGINS=*
+# Set CORS_ORIGINS to your frontend origin in production,
+# e.g. "https://tv.example.com". Do not bake "*" into the image.
+# Leave CORS_ORIGINS unset in the image and configure it explicitly at deploy time.
 
 EXPOSE 3000
 
