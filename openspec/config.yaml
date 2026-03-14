@@ -4,17 +4,29 @@ schema: spec-driven
 # This is shown to AI when creating artifacts.
 # Add your tech stack, conventions, style guides, domain knowledge, etc.
 # Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+context: |
+  Tech stack: Rust, Cargo, Axum backend, Leptos frontend with trunk and TailwindCSS
+  SQLX with any preferred database (PostgreSQL, MySQL, SQLite)
+  We use conventional commits
+  Domain: Television Streaming Platform with multiple third party providers and user accounts.
+
+  Prefer Cargo binstall for global tools, but allow cargo install for project-specific tools.
 
 # Per-artifact rules (optional)
 # Add custom rules for specific artifacts.
 # Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+rules:
+  specs:
+    - Be explicit about mechanisms, not just outcomes (say HOW, not just WHAT)
+    - If we generate artifacts, specify deletion/modification by explicit list lookup, not pattern matching
+  proposal:
+    - Refer to existing standards and best practices rather than inventing new ones
+  tasks:
+    - Always run rustfmt and clippy on generated code
+    - Always run unit tests on generated code
+    - See if we need to add/adjust integration tests for generated code
+  design:
+    - Document any platform-specific behavior or limitations
+    - Use existing constants and lists - don't invent detection mechanisms
+    - Prefer explicit lookups over pattern matching or regex
+    - If we generate it, we track it by name in a constant
