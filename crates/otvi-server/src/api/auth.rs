@@ -192,7 +192,10 @@ pub async fn login(
                 .entry("device_id".to_string())
                 .or_insert_with(|| device_id.clone());
             for (cookie_name, cookie_value) in provider_resp.cookies {
-                extracted.insert(format!("__cookie_{cookie_name}"), cookie_value);
+                // Persist cookies under "__cookie_.{name}" so they appear as
+                // "stored.__cookie_.{name}" in the template context, matching
+                // the prefix expected by provider_client.
+                extracted.insert(format!("__cookie_.{cookie_name}"), cookie_value);
             }
 
             let mut new_stored = stored.clone();

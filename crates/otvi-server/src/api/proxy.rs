@@ -74,7 +74,9 @@ pub async fn proxy_stream(
             validate_proxy_target(&ctx, &parsed)?;
             ctx
         }
-        None => Default::default(),
+        None => {
+            return Err((StatusCode::BAD_REQUEST, "Missing proxy context".to_string()));
+        }
     };
 
     // Fetch upstream

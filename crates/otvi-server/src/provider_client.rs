@@ -10,7 +10,7 @@ use reqwest::header::SET_COOKIE;
 use serde_json::Value;
 use tracing::warn;
 
-const STORED_COOKIE_PREFIX: &str = "stored.__cookie_.";
+const STORED_COOKIE_PREFIX: &str = "stored.__cookie_";
 
 /// Result of executing a provider request, including the HTTP status code.
 #[derive(Debug)]
