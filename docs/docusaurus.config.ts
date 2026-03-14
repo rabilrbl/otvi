@@ -18,6 +18,11 @@ const config: Config = {
   projectName: 'otvi',
 
   onBrokenLinks: 'throw',
+  markdown: {
+    hooks: {
+      onBrokenMarkdownLinks: 'throw',
+    },
+  },
 
   i18n: {
     defaultLocale: 'en',
@@ -31,8 +36,31 @@ const config: Config = {
         docs: {
           sidebarPath: './sidebars.ts',
           editUrl: 'https://github.com/rabilrbl/otvi/tree/main/docs/',
+          editCurrentVersion: true,
+          showLastUpdateTime: true,
+          lastVersion: 'current',
+          versions: {
+            current: {
+              label: 'Next',
+            },
+          },
         },
-        blog: false,
+        blog: {
+          routeBasePath: 'blogs',
+          showReadingTime: true,
+          editUrl: 'https://github.com/rabilrbl/otvi/tree/main/docs/',
+          blogTitle: 'OTVI Blog',
+          blogDescription: 'Release notes, documentation updates, and project announcements for OTVI.',
+          blogSidebarTitle: 'Recent posts',
+          blogSidebarCount: 10,
+          feedOptions: {
+            type: ['rss', 'atom'],
+            xslt: true,
+          },
+          onInlineTags: 'warn',
+          onInlineAuthors: 'warn',
+          onUntruncatedBlogPosts: 'warn',
+        },
         theme: {
           customCss: './src/css/custom.css',
         },
@@ -52,6 +80,16 @@ const config: Config = {
           sidebarId: 'docsSidebar',
           position: 'left',
           label: 'Docs',
+        },
+        {
+          type: 'docsVersionDropdown',
+          position: 'left',
+          dropdownActiveClassDisabled: true,
+        },
+        {
+          to: '/blogs',
+          label: 'Blogs',
+          position: 'left',
         },
         {
           href: 'https://github.com/rabilrbl/otvi',
@@ -74,6 +112,10 @@ const config: Config = {
         {
           title: 'More',
           items: [
+            {
+              label: 'Blog',
+              to: '/blogs',
+            },
             {
               label: 'GitHub',
               href: 'https://github.com/rabilrbl/otvi',
