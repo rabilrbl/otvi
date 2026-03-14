@@ -464,32 +464,27 @@ pub async fn stream(
             .map(|(k, v)| (k.clone(), context.resolve_lossy(v)))
             .collect();
 
-        let needs_ctx = !resolved_headers.is_empty()
-            || !url_param_cookies.is_empty()
-            || !static_cookies.is_empty()
-            || stream_endpoint.append_manifest_query_to_key_uris;
-
-        let base = format!("/api/proxy?url={}", urlencoding::encode(&stream_url));
-        if needs_ctx {
-            let ctx = crate::state::ProxyContext {
-                upstream_url: stream_url.clone(),
-                headers: resolved_headers,
-                allowed_hosts: allowed_hosts_from_url(&stream_url),
-                url_param_cookies,
-                resolved_cookies: Default::default(),
-                static_cookies,
-                manifest_query: None,
-                append_manifest_query_to_key_uris: stream_endpoint
-                    .append_manifest_query_to_key_uris,
-                key_exclude_resolved_cookies: stream_endpoint.key_exclude_resolved_cookies,
-                key_uri_patterns: stream_endpoint.key_uri_patterns.clone(),
-            };
-            let token = uuid::Uuid::new_v4().to_string();
-            state.proxy_ctx.insert(token.clone(), ctx).await;
-            format!("{base}&ctx={token}")
-        } else {
-            base
-        }
+        // Always create a ProxyContext so the ctx token acts as a server-issued
+        // capability; the proxy requires ctx on every request to prevent open-proxy
+        // / SSRF abuse.
+        let ctx = crate::state::ProxyContext {
+            upstream_url: stream_url.clone(),
+            headers: resolved_headers,
+            allowed_hosts: allowed_hosts_from_url(&stream_url),
+            url_param_cookies,
+            resolved_cookies: Default::default(),
+            static_cookies,
+            manifest_query: None,
+            append_manifest_query_to_key_uris: stream_endpoint.append_manifest_query_to_key_uris,
+            key_exclude_resolved_cookies: stream_endpoint.key_exclude_resolved_cookies,
+            key_uri_patterns: stream_endpoint.key_uri_patterns.clone(),
+        };
+        let token = uuid::Uuid::new_v4().to_string();
+        state.proxy_ctx.insert(token.clone(), ctx).await;
+        format!(
+            "/api/proxy?url={}&ctx={token}",
+            urlencoding::encode(&stream_url)
+        )
     };
 
     Ok(Json(StreamInfo {
