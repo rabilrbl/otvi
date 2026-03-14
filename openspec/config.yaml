@@ -12,6 +12,12 @@ context: |
 
   Prefer Cargo binstall for global tools, but allow cargo install for project-specific tools.
 
+  Documentation of entire project is present at docs/. We use docusaurus with bun package manager.
+
+  Core logic and few shared types are in crates/otvi-core/.
+  Frontend code is at web/. Uses Leptos with trunk and TailwindCSS. 
+  Backend code is at crates/otvi-server/. Uses Axum and SQLX.
+
 # Per-artifact rules (optional)
 # Add custom rules for specific artifacts.
 # Example:
@@ -22,11 +28,15 @@ rules:
   proposal:
     - Refer to existing standards and best practices rather than inventing new ones
   tasks:
+    - Prioritize tasks that have clear, measurable outcomes
+    - Break down large tasks into smaller, manageable subtasks
+    - Focus on tasks that improve code quality, maintainability, and developer experience
+    - Update documentation and tests as part of any code changes
     - Always run rustfmt and clippy on generated code
     - Always run unit tests on generated code
-    - See if we need to add/adjust integration tests for generated code
   design:
     - Document any platform-specific behavior or limitations
     - Use existing constants and lists - don't invent detection mechanisms
     - Prefer explicit lookups over pattern matching or regex
-    - If we generate it, we track it by name in a constant
+    - Use existing tools and libraries where possible, rather than building from scratch
+    - Consider security implications of design choices, especially when dealing with user data and third-party integrations
