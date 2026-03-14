@@ -1,0 +1,9 @@
+release:
+  label: Release
+  permalink: /blogs/tags/release
+  description: Release announcements and rollout notes for OTVI.
+
+documentation:
+  label: Documentation
+  permalink: /blogs/tags/documentation
+  description: Updates to the OTVI docs site, guides, and publishing workflow.
