@@ -12,6 +12,7 @@ const config: Config = {
   },
 
   url: 'https://otvi.rbls.eu.org',
+  baseUrl: '/',
 
   organizationName: 'rabilrbl',
   projectName: 'otvi',
