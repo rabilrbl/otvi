@@ -33,6 +33,7 @@ use otvi_core::config::{AuthFlow, AuthScope};
 use otvi_core::template::{TemplateContext, extract_json_path};
 use otvi_core::types::*;
 
+use crate::api::provider_access::authorize_provider_route;
 use crate::auth_middleware::ActiveClaims;
 use crate::auth_middleware::Claims;
 use crate::db;
@@ -100,26 +101,20 @@ pub async fn login(
     claims: ActiveClaims,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, AppError> {
+    let scope = authorize_provider_route(&state, &claims, &provider_id, true).await?;
+
     // Extract everything we need from the provider config while holding the
     // read lock for the shortest possible time, then drop the guard.
     let provider_data = state
         .with_provider(&provider_id, |p| {
-            let scope = p.auth.scope.clone();
             let flow = p.auth.flows.iter().find(|f| f.id == req.flow_id).cloned();
             let base_url = p.defaults.base_url.clone();
             let default_headers = p.defaults.headers.clone();
-            (scope, flow, base_url, default_headers)
+            (flow, base_url, default_headers)
         })
         .ok_or_else(|| AppError::NotFound("Provider not found".into()))?;
 
-    let (scope, maybe_flow, base_url, default_headers) = provider_data;
-
-    // Scope check: global providers require admin.
-    if scope == AuthScope::Global && !claims.is_admin() {
-        return Err(AppError::Forbidden(
-            "Admin access required to manage global provider credentials".into(),
-        ));
-    }
+    let (maybe_flow, base_url, default_headers) = provider_data;
 
     let flow = maybe_flow.ok_or_else(|| AppError::NotFound("Auth flow not found".into()))?;
 
@@ -168,6 +163,21 @@ pub async fn login(
 
     match response {
         Ok(provider_resp) => {
+            if let Some(expected_status) = step.success_status
+                && provider_resp.status != expected_status
+            {
+                return Ok(Json(LoginResponse {
+                    success: false,
+                    session_id: None,
+                    next_step: None,
+                    user_name: None,
+                    error: Some(format!(
+                        "Provider returned unexpected status {} (expected {})",
+                        provider_resp.status, expected_status
+                    )),
+                }));
+            }
+
             let json_body = provider_resp.body;
 
             let mut extracted: HashMap<String, String> = HashMap::new();
@@ -181,6 +191,9 @@ pub async fn login(
             extracted
                 .entry("device_id".to_string())
                 .or_insert_with(|| device_id.clone());
+            for (cookie_name, cookie_value) in provider_resp.cookies {
+                extracted.insert(format!("__cookie_{cookie_name}"), cookie_value);
+            }
 
             let mut new_stored = stored.clone();
             new_stored.extend(extracted);
@@ -281,9 +294,7 @@ pub async fn check_session(
     Path(provider_id): Path<String>,
     claims: ActiveClaims,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let scope = state
-        .with_provider(&provider_id, |p| p.auth.scope.clone())
-        .ok_or_else(|| AppError::NotFound("Provider not found".into()))?;
+    let scope = authorize_provider_route(&state, &claims, &provider_id, false).await?;
 
     let uid = session_user_id(&scope, &claims);
     let stored = db::get_provider_session_values(&state.db, &uid, &provider_id)
@@ -319,10 +330,11 @@ pub async fn logout(
     Path(provider_id): Path<String>,
     claims: ActiveClaims,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    let scope = authorize_provider_route(&state, &claims, &provider_id, true).await?;
+
     let provider_data = state
         .with_provider(&provider_id, |p| {
             (
-                p.auth.scope.clone(),
                 p.auth.logout.clone(),
                 p.defaults.base_url.clone(),
                 p.defaults.headers.clone(),
@@ -330,13 +342,7 @@ pub async fn logout(
         })
         .ok_or_else(|| AppError::NotFound("Provider not found".into()))?;
 
-    let (scope, logout_cfg, base_url, default_headers) = provider_data;
-
-    if scope == AuthScope::Global && !claims.is_admin() {
-        return Err(AppError::Forbidden(
-            "Admin access required to manage global provider credentials".into(),
-        ));
-    }
+    let (logout_cfg, base_url, default_headers) = provider_data;
 
     let uid = session_user_id(&scope, &claims);
 

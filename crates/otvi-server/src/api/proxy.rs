@@ -11,7 +11,6 @@ use axum::extract::{Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
-use tracing::debug;
 use url::Url;
 
 use crate::state::AppState;
@@ -47,7 +46,7 @@ pub struct ProxyQuery {
     tag = "proxy",
     params(
         ("url" = String, Query, description = "Upstream stream URL to fetch (HLS manifest, segment, or key file)"),
-        ("ctx" = Option<String>, Query, description = "Opaque proxy-context token issued by the stream endpoint; carries provider headers server-side"),
+        ("ctx" = Option<String>, Query, description = "Opaque proxy-context token issued by the stream endpoint; carries provider headers server-side when required"),
     ),
     responses(
         (status = 200, description = "Upstream content, with m3u8 URLs rewritten to route through this proxy"),
@@ -65,9 +64,16 @@ pub async fn proxy_stream(
     let parsed = Url::parse(upstream_url)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid URL: {e}")))?;
 
-    // Look up the proxy context for this token.
     let mut ctx = match query.ctx.as_deref() {
-        Some(token) => state.proxy_ctx.get(token).await.unwrap_or_default(),
+        Some(token) => {
+            let ctx = state
+                .proxy_ctx
+                .get(token)
+                .await
+                .ok_or((StatusCode::BAD_REQUEST, "Invalid proxy context".to_string()))?;
+            validate_proxy_target(&ctx, &parsed)?;
+            ctx
+        }
         None => Default::default(),
     };
 
@@ -77,11 +83,7 @@ pub async fn proxy_stream(
     for (k, v) in &ctx.headers {
         req = req.header(k.as_str(), v.as_str());
     }
-    // Log proxy request headers for key file requests to aid debugging.
     let is_key_url = upstream_url.contains(".pkey") || upstream_url.contains(".key");
-    if is_key_url {
-        debug!(url = %upstream_url, headers = ?ctx.headers, "proxy key request headers");
-    }
     // Fall back to a generic UA only when none was supplied
     if !ctx
         .headers
@@ -138,14 +140,6 @@ pub async fn proxy_stream(
             append_cookie(&mut cookie_pairs, &mut seen_cookie_names, cookie_name, val);
         }
         let cookie_header = cookie_pairs.join("; ");
-        debug!(
-            url = %upstream_url,
-            cookie = %cookie_header,
-            resolved_cookies = ?ctx.resolved_cookies,
-            static_cookies_count = ctx.static_cookies.len(),
-            manifest_query_present = ctx.manifest_query.is_some(),
-            "proxy cookie state"
-        );
         if !cookie_header.is_empty() {
             req = req.header("Cookie", cookie_header);
         }
@@ -178,50 +172,30 @@ pub async fn proxy_stream(
         || upstream_url.contains(".m3u8");
 
     if is_m3u8 {
-        // Before rewriting, persist any url_param_cookies values found in
-        // this manifest URL into the context so that sub-requests that have
-        // no query params (e.g. bare .pkey key files) still get the cookies.
-        if let Some(token) = query.ctx.as_deref()
-            && let Some(mut entry) = state.proxy_ctx.get(token).await
+        let query_map: std::collections::HashMap<String, String> = parsed
+            .query_pairs()
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
+        let freshened: std::collections::HashMap<String, String> = ctx
+            .url_param_cookies
+            .iter()
+            .filter_map(|(param, cookie_name)| {
+                query_map
+                    .get(param.as_str())
+                    .map(|val| (cookie_name.clone(), val.clone()))
+            })
+            .collect();
+
+        let mut changed = false;
+        if !freshened.is_empty() {
+            ctx.resolved_cookies.extend(freshened);
+            changed = true;
+        }
+        if let Some(q) = parsed.query()
+            && ctx.manifest_query.is_none()
         {
-            // Use query_pairs() so percent-encoded values are decoded before
-            // being stored (same decoding used when building the Cookie header).
-            let query_map: std::collections::HashMap<String, String> = parsed
-                .query_pairs()
-                .map(|(k, v)| (k.into_owned(), v.into_owned()))
-                .collect();
-            let freshened: std::collections::HashMap<String, String> = ctx
-                .url_param_cookies
-                .iter()
-                .filter_map(|(param, cookie_name)| {
-                    query_map
-                        .get(param.as_str())
-                        .map(|val| (cookie_name.clone(), val.clone()))
-                })
-                .collect();
-
-            let mut changed = false;
-            if !freshened.is_empty() {
-                debug!(url = %upstream_url, ?freshened, "persisting resolved_cookies from manifest");
-                entry.resolved_cookies.extend(freshened.clone());
-                ctx.resolved_cookies.extend(freshened);
-                changed = true;
-            }
-            // Persist the raw query string independently of cookie extraction so
-            // key URI rewriting still works for providers that only need the
-            // manifest query appended and do not map any cookies.
-            if let Some(q) = parsed.query()
-                && entry.manifest_query.is_none()
-            {
-                entry.manifest_query = Some(q.to_owned());
-                ctx.manifest_query = Some(q.to_owned());
-                changed = true;
-                debug!(url = %upstream_url, manifest_query = %q, "persisting manifest_query");
-            }
-
-            if changed {
-                state.proxy_ctx.insert(token.to_owned(), entry).await;
-            }
+            ctx.manifest_query = Some(q.to_owned());
+            changed = true;
         }
 
         let body_text = String::from_utf8_lossy(&body_bytes);
@@ -237,6 +211,13 @@ pub async fn proxy_stream(
             key_extra_query,
             &ctx.key_uri_patterns,
         );
+        merge_allowed_host(&mut ctx.allowed_hosts, parsed.host_str());
+        merge_allowed_hosts(&mut ctx.allowed_hosts, &rewritten.discovered_hosts);
+        if let Some(token) = query.ctx.as_deref()
+            && (changed || !rewritten.discovered_hosts.is_empty())
+        {
+            state.proxy_ctx.insert(token.to_string(), ctx).await;
+        }
 
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -248,7 +229,7 @@ pub async fn proxy_stream(
         return Ok((
             StatusCode::from_u16(upstream_status.as_u16()).unwrap_or(StatusCode::OK),
             headers,
-            rewritten,
+            rewritten.content,
         )
             .into_response());
     }
@@ -285,16 +266,29 @@ pub async fn proxy_stream(
 /// `key_uri_patterns` controls which URIs within `EXT-X-KEY` lines receive
 /// the `manifest_query` append.  An empty slice means «apply to all»;
 /// otherwise a URI must contain at least one pattern (case-insensitive).
+struct RewriteResult {
+    content: String,
+    discovered_hosts: Vec<String>,
+}
+
+#[cfg(test)]
+impl RewriteResult {
+    fn contains(&self, needle: &str) -> bool {
+        self.content.contains(needle)
+    }
+}
+
 fn rewrite_m3u8(
     content: &str,
     playlist_url: &str,
     ctx_token: Option<&str>,
     manifest_query: Option<&str>,
     key_uri_patterns: &[String],
-) -> String {
+) -> RewriteResult {
     let base = Url::parse(playlist_url).unwrap_or_else(|_| Url::parse("http://unknown").unwrap());
 
     let mut output = String::with_capacity(content.len());
+    let mut discovered_hosts = HashSet::new();
 
     for line in content.lines() {
         let trimmed = line.trim();
@@ -310,19 +304,29 @@ fn rewrite_m3u8(
             // declarations) — controlled by the caller via `manifest_query`.
             let is_key_tag = trimmed.to_uppercase().starts_with("#EXT-X-KEY");
             let extra = if is_key_tag { manifest_query } else { None };
-            let rewritten_line =
-                rewrite_uri_attributes(trimmed, &base, ctx_token, extra, key_uri_patterns);
+            let rewritten_line = rewrite_uri_attributes(
+                trimmed,
+                &base,
+                ctx_token,
+                extra,
+                key_uri_patterns,
+                &mut discovered_hosts,
+            );
             output.push_str(&rewritten_line);
             output.push('\n');
         } else {
             // This is a URL line (segment or sub-playlist)
-            let resolved = resolve_and_proxy(trimmed, &base, ctx_token, None);
+            let resolved =
+                resolve_and_proxy(trimmed, &base, ctx_token, None, &mut discovered_hosts);
             output.push_str(&resolved);
             output.push('\n');
         }
     }
 
-    output
+    RewriteResult {
+        content: output,
+        discovered_hosts: discovered_hosts.into_iter().collect(),
+    }
 }
 
 /// Resolve a URL (potentially relative) against the playlist base and wrap it
@@ -336,6 +340,7 @@ fn resolve_and_proxy(
     base: &Url,
     ctx_token: Option<&str>,
     extra_query: Option<&str>,
+    discovered_hosts: &mut HashSet<String>,
 ) -> String {
     let absolute = if url_str.starts_with("http://") || url_str.starts_with("https://") {
         url_str.to_string()
@@ -355,6 +360,12 @@ fn resolve_and_proxy(
         }
         _ => absolute,
     };
+
+    if let Ok(parsed) = Url::parse(&with_query)
+        && let Some(host) = parsed.host_str()
+    {
+        discovered_hosts.insert(host.to_string());
+    }
 
     match ctx_token {
         Some(token) => format!(
@@ -380,6 +391,7 @@ fn rewrite_uri_attributes(
     ctx_token: Option<&str>,
     manifest_query: Option<&str>,
     key_uri_patterns: &[String],
+    discovered_hosts: &mut HashSet<String>,
 ) -> String {
     // Find URI="…" pattern (case-insensitive)
     let mut result = line.to_string();
@@ -399,7 +411,7 @@ fn rewrite_uri_attributes(
                     .iter()
                     .any(|p| lower.contains(p.to_lowercase().as_str()));
             let extra = if is_key { manifest_query } else { None };
-            let proxied = resolve_and_proxy(uri_val, base, ctx_token, extra);
+            let proxied = resolve_and_proxy(uri_val, base, ctx_token, extra, discovered_hosts);
             result = format!(
                 "{}URI=\"{}\"{}",
                 &line[..uri_start],
@@ -410,6 +422,47 @@ fn rewrite_uri_attributes(
     }
 
     result
+}
+
+fn validate_proxy_target(
+    ctx: &crate::state::ProxyContext,
+    parsed: &Url,
+) -> Result<(), (StatusCode, String)> {
+    if parsed.as_str() == ctx.upstream_url {
+        return Ok(());
+    }
+
+    let Some(host) = parsed.host_str() else {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Proxy URL must include a host".to_string(),
+        ));
+    };
+
+    if !ctx.allowed_hosts.is_empty() && !ctx.allowed_hosts.iter().any(|allowed| allowed == host) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Proxy target is not allowed for this playback context".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+fn merge_allowed_host(hosts: &mut Vec<String>, host: Option<&str>) {
+    if let Some(host) = host
+        && !hosts.iter().any(|existing| existing == host)
+    {
+        hosts.push(host.to_string());
+    }
+}
+
+fn merge_allowed_hosts(hosts: &mut Vec<String>, discovered: &[String]) {
+    for host in discovered {
+        if !hosts.iter().any(|existing| existing == host) {
+            hosts.push(host.clone());
+        }
+    }
 }
 
 #[cfg(test)]
@@ -501,7 +554,13 @@ mod tests {
     #[test]
     fn resolve_and_proxy_absolute_url() {
         let base = Url::parse("https://cdn.example.com/live/master.m3u8").unwrap();
-        let result = resolve_and_proxy("https://other.com/seg.ts", &base, None, None);
+        let result = resolve_and_proxy(
+            "https://other.com/seg.ts",
+            &base,
+            None,
+            None,
+            &mut HashSet::new(),
+        );
         assert!(result.starts_with("/api/proxy?url="));
         assert!(result.contains("other.com"));
     }
@@ -509,7 +568,7 @@ mod tests {
     #[test]
     fn resolve_and_proxy_relative_url() {
         let base = Url::parse("https://cdn.example.com/live/master.m3u8").unwrap();
-        let result = resolve_and_proxy("segment001.ts", &base, None, None);
+        let result = resolve_and_proxy("segment001.ts", &base, None, None, &mut HashSet::new());
         assert!(result.starts_with("/api/proxy?url="));
         // Should be resolved to https://cdn.example.com/live/segment001.ts
         assert!(result.contains("cdn.example.com"));
@@ -519,14 +578,20 @@ mod tests {
     #[test]
     fn resolve_and_proxy_with_ctx_token() {
         let base = Url::parse("https://cdn.example.com/m.m3u8").unwrap();
-        let result = resolve_and_proxy("seg.ts", &base, Some("mytoken"), None);
+        let result = resolve_and_proxy("seg.ts", &base, Some("mytoken"), None, &mut HashSet::new());
         assert!(result.contains("ctx=mytoken"));
     }
 
     #[test]
     fn resolve_and_proxy_with_extra_query() {
         let base = Url::parse("https://cdn.example.com/m.m3u8").unwrap();
-        let result = resolve_and_proxy("https://key.com/key.pkey", &base, None, Some("tok=abc"));
+        let result = resolve_and_proxy(
+            "https://key.com/key.pkey",
+            &base,
+            None,
+            Some("tok=abc"),
+            &mut HashSet::new(),
+        );
         assert!(result.contains("tok%3Dabc") || result.contains("tok"));
     }
 
@@ -534,7 +599,8 @@ mod tests {
     fn rewrite_uri_attributes_rewrites_uri_value() {
         let base = Url::parse("https://cdn.example.com/live/master.m3u8").unwrap();
         let line = "#EXT-X-KEY:METHOD=AES-128,URI=\"keys/enc.key\",IV=0x1234";
-        let result = rewrite_uri_attributes(line, &base, Some("ctx1"), None, &[]);
+        let result =
+            rewrite_uri_attributes(line, &base, Some("ctx1"), None, &[], &mut HashSet::new());
         assert!(result.contains("URI=\"/api/proxy?url="));
         assert!(result.contains("ctx=ctx1"));
         assert!(result.contains("IV=0x1234"));
@@ -544,7 +610,7 @@ mod tests {
     fn rewrite_uri_attributes_no_uri_unchanged() {
         let base = Url::parse("https://cdn.example.com/m.m3u8").unwrap();
         let line = "#EXT-X-VERSION:3";
-        let result = rewrite_uri_attributes(line, &base, None, None, &[]);
+        let result = rewrite_uri_attributes(line, &base, None, None, &[], &mut HashSet::new());
         assert_eq!(result, "#EXT-X-VERSION:3");
     }
 
@@ -552,7 +618,14 @@ mod tests {
     fn rewrite_uri_attributes_key_with_manifest_query() {
         let base = Url::parse("https://cdn.example.com/live/master.m3u8").unwrap();
         let line = "#EXT-X-KEY:METHOD=AES-128,URI=\"enc.pkey\"";
-        let result = rewrite_uri_attributes(line, &base, Some("c1"), Some("hdnea=val"), &[]);
+        let result = rewrite_uri_attributes(
+            line,
+            &base,
+            Some("c1"),
+            Some("hdnea=val"),
+            &[],
+            &mut HashSet::new(),
+        );
         // Empty patterns → apply to all key-tag URIs; manifest query must be appended
         assert!(result.contains("hdnea"));
     }
@@ -567,7 +640,7 @@ mod tests {
     #[test]
     fn resolve_and_proxy_parent_relative_path() {
         let base = Url::parse("https://cdn.example.com/live/hd/master.m3u8").unwrap();
-        let result = resolve_and_proxy("../sd/stream.m3u8", &base, None, None);
+        let result = resolve_and_proxy("../sd/stream.m3u8", &base, None, None, &mut HashSet::new());
         assert!(result.contains("cdn.example.com"));
         // Should resolve to /live/sd/stream.m3u8
         assert!(result.contains("sd"));
@@ -581,7 +654,14 @@ mod tests {
         let base = Url::parse("https://cdn.example.com/live/master.m3u8").unwrap();
         let line = "#EXT-X-KEY:METHOD=AES-128,URI=\"https://keys.example.com/enc.pkey\"";
         let patterns = vec![".pkey".to_string()];
-        let result = rewrite_uri_attributes(line, &base, Some("c1"), Some("tok=abc"), &patterns);
+        let result = rewrite_uri_attributes(
+            line,
+            &base,
+            Some("c1"),
+            Some("tok=abc"),
+            &patterns,
+            &mut HashSet::new(),
+        );
         assert!(result.contains("tok%3Dabc") || result.contains("tok"));
     }
 
@@ -591,7 +671,14 @@ mod tests {
         let base = Url::parse("https://cdn.example.com/live/master.m3u8").unwrap();
         let line = "#EXT-X-KEY:METHOD=AES-128,URI=\"https://keys.example.com/enc.bin\"";
         let patterns = vec![".pkey".to_string()];
-        let result = rewrite_uri_attributes(line, &base, Some("c1"), Some("tok=abc"), &patterns);
+        let result = rewrite_uri_attributes(
+            line,
+            &base,
+            Some("c1"),
+            Some("tok=abc"),
+            &patterns,
+            &mut HashSet::new(),
+        );
         // enc.bin doesn't match ".pkey" → query must NOT be present
         assert!(!result.contains("tok%3Dabc") && !result.contains("tok=abc"));
         // But the URI itself is still proxied
@@ -604,7 +691,14 @@ mod tests {
         let base = Url::parse("https://cdn.example.com/live/master.m3u8").unwrap();
         let line = "#EXT-X-KEY:METHOD=AES-128,URI=\"https://keys.example.com/enc.pkey\"";
         let patterns = vec![".bin".to_string(), ".pkey".to_string(), ".dat".to_string()];
-        let result = rewrite_uri_attributes(line, &base, Some("c1"), Some("tok=abc"), &patterns);
+        let result = rewrite_uri_attributes(
+            line,
+            &base,
+            Some("c1"),
+            Some("tok=abc"),
+            &patterns,
+            &mut HashSet::new(),
+        );
         assert!(result.contains("tok%3Dabc") || result.contains("tok"));
         assert!(result.contains("/api/proxy?url="));
     }
@@ -615,7 +709,14 @@ mod tests {
         let base = Url::parse("https://cdn.example.com/live/master.m3u8").unwrap();
         let line = "#EXT-X-KEY:METHOD=AES-128,URI=\"https://keys.example.com/enc.key\"";
         let patterns = vec![".pkey".to_string(), "/custom-ks/".to_string()];
-        let result = rewrite_uri_attributes(line, &base, Some("c1"), Some("tok=abc"), &patterns);
+        let result = rewrite_uri_attributes(
+            line,
+            &base,
+            Some("c1"),
+            Some("tok=abc"),
+            &patterns,
+            &mut HashSet::new(),
+        );
         assert!(!result.contains("tok%3Dabc") && !result.contains("tok=abc"));
         assert!(result.contains("/api/proxy?url="));
     }
@@ -626,7 +727,14 @@ mod tests {
         let base = Url::parse("https://cdn.example.com/live/master.m3u8").unwrap();
         let line = "#EXT-X-KEY:METHOD=AES-128,URI=\"https://keys.example.com/ENC.PKEY\"";
         let patterns = vec![".pkey".to_string()]; // lowercase pattern, uppercase URI
-        let result = rewrite_uri_attributes(line, &base, Some("c1"), Some("tok=abc"), &patterns);
+        let result = rewrite_uri_attributes(
+            line,
+            &base,
+            Some("c1"),
+            Some("tok=abc"),
+            &patterns,
+            &mut HashSet::new(),
+        );
         assert!(result.contains("tok%3Dabc") || result.contains("tok"));
     }
 
