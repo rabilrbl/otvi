@@ -991,7 +991,20 @@ async fn proxy_rejects_invalid_url() {
 
     let req = Request::builder()
         .method("GET")
-        .uri("/api/proxy?url=not-a-valid-url")
+        .uri("/api/proxy?url=not-a-valid-url&ctx=missing")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn proxy_rejects_invalid_context() {
+    let (app, _db_dir) = build_test_app().await;
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/proxy?url=https%3A%2F%2Fhttpbin.org%2Fget&ctx=missing")
         .body(Body::empty())
         .unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
@@ -1002,13 +1015,21 @@ async fn proxy_rejects_invalid_url() {
 #[ignore = "requires httpbin (run via ./scripts/integration-test.sh)"]
 async fn proxy_fetches_upstream() {
     let (app, _db_dir) = build_test_app().await;
-    let httpbin = std::env::var("HTTPBIN_URL").unwrap_or("https://httpbin.org".into());
-    let url = format!("{httpbin}/get");
-    let encoded = urlencoding::encode(&url);
+    let (admin_token, _) = register_admin(&app).await;
+
+    let (status, stream_body) = send(
+        &app,
+        get_auth(
+            "/api/providers/test-httpbin/channels/Wake%20up%20to%20WonderWidgets!/stream",
+            &admin_token,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "stream: {stream_body}");
 
     let req = Request::builder()
         .method("GET")
-        .uri(format!("/api/proxy?url={encoded}"))
+        .uri(stream_body["url"].as_str().unwrap())
         .body(Body::empty())
         .unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
@@ -1636,6 +1657,78 @@ async fn user_with_restricted_providers() {
     assert_eq!(status, StatusCode::OK);
     let providers = body.as_array().unwrap();
     assert!(providers.is_empty());
+
+    let (status, _) = send(
+        &app,
+        get_auth("/api/providers/test-httpbin/channels", user_token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let (status, _) = send(
+        &app,
+        get_auth(
+            "/api/providers/test-httpbin/channels/categories",
+            user_token,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let (status, _) = send(
+        &app,
+        get_auth(
+            "/api/providers/test-httpbin/channels/Wake%20up%20to%20WonderWidgets!/stream",
+            user_token,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let (status, _) = send(
+        &app,
+        post_json_auth(
+            "/api/providers/test-httpbin/auth/login",
+            &json!({
+                "flow_id": "simple",
+                "step": 0,
+                "inputs": {"username": "viewer", "password": "secret"}
+            }),
+            user_token,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn stream_response_includes_channel_metadata_when_channel_exists() {
+    let (app, _db_dir) = build_test_app().await;
+    let (admin_token, _) = register_admin(&app).await;
+
+    let (status, channels_body) = send(
+        &app,
+        get_auth("/api/providers/test-httpbin/channels", &admin_token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "channels: {channels_body}");
+
+    let channel_id = channels_body["channels"][0]["id"].as_str().unwrap();
+    let channel_name = channels_body["channels"][0]["name"].as_str().unwrap();
+
+    let (status, stream_body) = send(
+        &app,
+        get_auth(
+            &format!(
+                "/api/providers/test-httpbin/channels/{}/stream",
+                urlencoding::encode(channel_id)
+            ),
+            &admin_token,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "stream: {stream_body}");
+    assert_eq!(stream_body["channel_name"], channel_name);
 }
 
 // ── Full End-to-End Flow ────────────────────────────────────────────────────

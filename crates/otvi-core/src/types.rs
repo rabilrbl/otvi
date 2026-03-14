@@ -106,6 +106,10 @@ pub struct StreamInfo {
     pub stream_type: StreamType,
     #[serde(default)]
     pub drm: Option<DrmInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_logo: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

@@ -154,12 +154,12 @@ pub fn App() -> impl IntoView {
                 fallback=|| ()
             >
                 <nav class="bg-gray-900 px-6 py-3 flex items-center justify-between sticky top-0 z-40 shadow-lg shadow-black/30">
-                    <a
-                        class="text-xl font-bold text-rose-500 hover:text-rose-400 transition-colors"
+                    <A
+                        attr:class="text-xl font-bold text-rose-500 hover:text-rose-400 transition-colors"
                         href="/"
                     >
                         "OTVI"
-                    </a>
+                    </A>
                     <div class="flex gap-3 items-center">
                         <span class="text-sm text-gray-400 hidden sm:inline">
                             {move || auth_ctx.username()}
@@ -168,12 +168,12 @@ pub fn App() -> impl IntoView {
                             <span class="text-xs bg-rose-500/20 text-rose-400 px-2 py-0.5 rounded-full hidden sm:inline">
                                 "admin"
                             </span>
-                            <a
+                            <A
                                 href="/admin"
-                                class="px-3 py-1.5 text-sm rounded-lg bg-gray-800 text-gray-300 hover:bg-gray-700 transition-colors no-underline hidden sm:inline-block"
+                                attr:class="px-3 py-1.5 text-sm rounded-lg bg-gray-800 text-gray-300 hover:bg-gray-700 transition-colors no-underline hidden sm:inline-block"
                             >
                                 "Dashboard"
-                            </a>
+                            </A>
                         </Show>
                         <Show when=move || boot_state.get() == BootState::Ready>
                             <button

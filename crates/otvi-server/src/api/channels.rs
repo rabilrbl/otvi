@@ -44,11 +44,12 @@ use axum::extract::{Path, Query, State};
 use serde::Deserialize;
 use serde_json::Value;
 
-use otvi_core::template::extract_json_path;
+use otvi_core::template::{extract_json_path, select_json_path_value};
 use otvi_core::types::*;
 
 use tracing::{debug, error, instrument};
 
+use crate::api::provider_access::authorize_provider_route;
 use crate::auth_middleware::ActiveClaims;
 use crate::error::AppError;
 use crate::provider_client;
@@ -112,12 +113,13 @@ pub async fn list(
     Query(query): Query<ChannelListQuery>,
     claims: ActiveClaims,
 ) -> Result<Json<ChannelListResponse>, AppError> {
+    let scope = authorize_provider_route(&state, &claims, &provider_id, false).await?;
+
     // Extract everything we need from the provider while holding the lock
     // for the shortest possible time.
     let provider_data = state
         .with_provider(&provider_id, |p| {
             (
-                p.auth.scope.clone(),
                 p.defaults.base_url.clone(),
                 p.defaults.headers.clone(),
                 p.channels.list.request.clone(),
@@ -126,7 +128,7 @@ pub async fn list(
         })
         .ok_or_else(|| AppError::NotFound("Provider not found".into()))?;
 
-    let (scope, base_url, default_headers, list_request, list_response) = provider_data;
+    let (base_url, default_headers, list_request, list_response) = provider_data;
     let cache_key = ChannelCacheKey::from_auth_scope(&provider_id, &scope, &claims.sub);
     // The session UID used to build the provider context: empty for Global scope,
     // the OTVI user ID for PerUser scope.
@@ -136,53 +138,26 @@ pub async fn list(
     };
 
     // ── Cache lookup ──────────────────────────────────────────────────────
-    let all_channels: Arc<[Channel]> =
-        if let Some(cached) = state.channel_cache.channels.get(&cache_key).await {
-            debug!(provider = %provider_id, "channel list cache HIT");
-            cached.channels
-        } else {
-            debug!(provider = %provider_id, "channel list cache MISS — fetching from upstream");
+    let mut context = build_provider_context(&state, &uid, &provider_id).await?;
 
-            let mut context = build_provider_context(&state, &uid, &provider_id).await?;
+    if let Some(cat) = &query.category {
+        context.set("input.category", cat);
+    }
+    if let Some(s) = &query.search {
+        context.set("input.search", s);
+    }
 
-            // Forward any extra query params into the template context so
-            // provider YAML can reference them as `{{input.*}}`.
-            if let Some(cat) = &query.category {
-                context.set("input.category", cat);
-            }
-            if let Some(s) = &query.search {
-                context.set("input.search", s);
-            }
-
-            let response = provider_client::execute_request_body(
-                &state.http_client,
-                &base_url,
-                &default_headers,
-                &list_request,
-                &context,
-            )
-            .await
-            .map_err(|e| {
-                error!(provider = %provider_id, "Upstream channel list error: {e}");
-                AppError::Internal(e.to_string())
-            })?;
-
-            let channels = Arc::<[Channel]>::from(map_channels(&response, &list_response)?);
-
-            // Populate the cache with the full unfiltered list.
-            state
-                .channel_cache
-                .channels
-                .insert(
-                    cache_key,
-                    CachedChannels {
-                        channels: channels.clone(),
-                    },
-                )
-                .await;
-
-            channels
-        };
+    let all_channels = load_all_channels(
+        &state,
+        &provider_id,
+        &cache_key,
+        &base_url,
+        &default_headers,
+        &list_request,
+        &list_response,
+        &context,
+    )
+    .await?;
 
     // ── Server-side filtering ─────────────────────────────────────────────
     let mut channels: Vec<&Channel> = all_channels.iter().collect();
@@ -257,11 +232,12 @@ pub async fn categories(
     Path(provider_id): Path<String>,
     claims: ActiveClaims,
 ) -> Result<Json<CategoryListResponse>, AppError> {
+    let scope = authorize_provider_route(&state, &claims, &provider_id, false).await?;
+
     // Extract what we need under a short lock window.
     let provider_data = state
         .with_provider(&provider_id, |p| {
             (
-                p.auth.scope.clone(),
                 p.defaults.base_url.clone(),
                 p.defaults.headers.clone(),
                 p.channels.static_categories.clone(),
@@ -270,7 +246,7 @@ pub async fn categories(
         })
         .ok_or_else(|| AppError::NotFound("Provider not found".into()))?;
 
-    let (scope, base_url, default_headers, static_cats, dynamic_endpoint) = provider_data;
+    let (base_url, default_headers, static_cats, dynamic_endpoint) = provider_data;
 
     // ── Static categories: return immediately, no caching needed ──────────
     if !static_cats.is_empty() {
@@ -361,19 +337,22 @@ pub async fn stream(
     Path((provider_id, channel_id)): Path<(String, String)>,
     claims: ActiveClaims,
 ) -> Result<Json<StreamInfo>, AppError> {
+    let scope = authorize_provider_route(&state, &claims, &provider_id, false).await?;
+
     // Extract everything we need from the provider config under a short lock.
     let provider_data = state
         .with_provider(&provider_id, |p| {
             (
-                p.auth.scope.clone(),
                 p.defaults.base_url.clone(),
                 p.defaults.headers.clone(),
+                p.channels.list.request.clone(),
+                p.channels.list.response.clone(),
                 p.playback.stream.clone(),
             )
         })
         .ok_or_else(|| AppError::NotFound("Provider not found".into()))?;
 
-    let (scope, base_url, default_headers, stream_endpoint) = provider_data;
+    let (base_url, default_headers, list_request, list_response, stream_endpoint) = provider_data;
 
     // Derive the session UID from the auth scope without the old string sentinel.
     let uid = match scope {
@@ -400,6 +379,29 @@ pub async fn stream(
         AppError::Internal(e.to_string())
     })?;
 
+    let cache_key = ChannelCacheKey::from_auth_scope(&provider_id, &scope, &claims.sub);
+    let channel_meta = match build_provider_context(&state, &uid, &provider_id).await {
+        Ok(meta_context) => load_all_channels(
+            &state,
+            &provider_id,
+            &cache_key,
+            &base_url,
+            &default_headers,
+            &list_request,
+            &list_response,
+            &meta_context,
+        )
+        .await
+        .ok()
+        .and_then(|channels| {
+            channels
+                .iter()
+                .find(|channel| channel.id == channel_id)
+                .cloned()
+        }),
+        Err(_) => None,
+    };
+
     // Extract stream URL
     let stream_url =
         extract_json_path(&response, &stream_endpoint.response.url).ok_or_else(|| {
@@ -407,7 +409,6 @@ pub async fn stream(
                 channel_id = %channel_id,
                 provider   = %provider_id,
                 url_path   = %stream_endpoint.response.url,
-                response   = %response,
                 "Stream URL not found in response"
             );
             AppError::Internal("Stream URL not found in response".into())
@@ -469,10 +470,11 @@ pub async fn stream(
             || stream_endpoint.append_manifest_query_to_key_uris;
 
         let base = format!("/api/proxy?url={}", urlencoding::encode(&stream_url));
-
         if needs_ctx {
             let ctx = crate::state::ProxyContext {
+                upstream_url: stream_url.clone(),
                 headers: resolved_headers,
+                allowed_hosts: allowed_hosts_from_url(&stream_url),
                 url_param_cookies,
                 resolved_cookies: Default::default(),
                 static_cookies,
@@ -494,6 +496,8 @@ pub async fn stream(
         url: proxied_url,
         stream_type,
         drm,
+        channel_name: channel_meta.as_ref().map(|channel| channel.name.clone()),
+        channel_logo: channel_meta.and_then(|channel| channel.logo),
     }))
 }
 
@@ -554,6 +558,61 @@ fn map_categories(
     Ok(categories)
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn load_all_channels(
+    state: &Arc<AppState>,
+    provider_id: &str,
+    cache_key: &ChannelCacheKey,
+    base_url: &str,
+    default_headers: &HashMap<String, String>,
+    list_request: &otvi_core::config::RequestSpec,
+    list_response: &otvi_core::config::ResponseMapping,
+    context: &otvi_core::template::TemplateContext,
+) -> Result<Arc<[Channel]>, AppError> {
+    if let Some(cached) = state.channel_cache.channels.get(cache_key).await {
+        debug!(provider = %provider_id, "channel list cache HIT");
+        return Ok(cached.channels);
+    }
+
+    debug!(provider = %provider_id, "channel list cache MISS — fetching from upstream");
+
+    let response = provider_client::execute_request_body(
+        &state.http_client,
+        base_url,
+        default_headers,
+        list_request,
+        context,
+    )
+    .await
+    .map_err(|e| {
+        error!(provider = %provider_id, "Upstream channel list error: {e}");
+        AppError::Internal(e.to_string())
+    })?;
+
+    let channels = Arc::<[Channel]>::from(map_channels(&response, list_response)?);
+
+    state
+        .channel_cache
+        .channels
+        .insert(
+            cache_key.clone(),
+            CachedChannels {
+                channels: channels.clone(),
+            },
+        )
+        .await;
+
+    Ok(channels)
+}
+
+fn allowed_hosts_from_url(url: &str) -> Vec<String> {
+    url::Url::parse(url)
+        .ok()
+        .and_then(|parsed| parsed.host_str().map(str::to_string))
+        .into_iter()
+        .collect()
+}
+
 /// Navigate to the array indicated by `items_path` in the response JSON and
 /// return it by reference.
 ///
@@ -566,7 +625,7 @@ fn get_items_array<'a>(
 ) -> Result<&'a [Value], AppError> {
     match items_path {
         Some(path) => {
-            let node = navigate_json(response, path).ok_or_else(|| {
+            let node = select_json_path_value(response, path).ok_or_else(|| {
                 AppError::Internal(format!("items_path '{path}' not found in response"))
             })?;
             node.as_array()
@@ -585,6 +644,7 @@ fn get_items_array<'a>(
 ///
 /// This is used instead of `extract_json_path` in contexts where we need the
 /// raw `Value` node rather than a scalar string.
+#[cfg(test)]
 fn navigate_json<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
     let path = path.strip_prefix("$.").unwrap_or(path);
     let path = path.strip_prefix('$').unwrap_or(path);
