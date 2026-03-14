@@ -1,9 +1,9 @@
 use leptos::prelude::*;
 use leptos::task::spawn_local;
+use leptos_router::components::A;
 use leptos_router::hooks::*;
 use wasm_bindgen::prelude::*;
 
-use futures::join;
 use otvi_core::types::StreamType;
 
 use crate::api;
@@ -38,7 +38,7 @@ pub fn PlayerPage() -> impl IntoView {
     let (channel_logo, set_channel_logo) = signal(Option::<String>::None);
     let (loading, set_loading) = signal(true);
 
-    // ── Fetch stream info and resolve channel metadata on mount ─────────────
+    // ── Fetch stream info on mount ──────────────────────────────────────────
     Effect::new(move |_| {
         let pid = provider_id();
         let cid = channel_id();
@@ -48,44 +48,32 @@ pub fn PlayerPage() -> impl IntoView {
         }
 
         spawn_local(async move {
-            // Fetch channel list to resolve the display name + logo.
-            // This runs in parallel with the stream fetch below.
-            let meta_future = async {
-                let params = std::collections::HashMap::new();
-                if let Ok(list) = api::fetch_channels(&pid, &params).await
-                    && let Some(ch) = list.channels.into_iter().find(|c| c.id == cid)
-                {
-                    set_channel_name.set(ch.name);
-                    set_channel_logo.set(ch.logo);
-                    return;
-                }
-                // Fall back to the raw channel ID when the list fetch fails
-                // or the channel is not found.
-                set_channel_name.set(cid.clone());
-            };
-
-            let stream_future = api::fetch_stream(&pid, &cid);
-
-            let ((), stream_result) = join!(meta_future, stream_future);
+            let stream_result = api::fetch_stream(&pid, &cid).await;
 
             set_loading.set(false);
 
             match stream_result {
-                Ok(stream) => match stream.stream_type {
-                    StreamType::Hls => {
-                        gloo_timers_delay(100).await;
-                        init_hls_player("otvi-video", &stream.url);
+                Ok(stream) => {
+                    set_channel_name
+                        .set(stream.channel_name.clone().unwrap_or_else(|| cid.clone()));
+                    set_channel_logo.set(stream.channel_logo.clone());
+
+                    match stream.stream_type {
+                        StreamType::Hls => {
+                            gloo_timers_delay(100).await;
+                            init_hls_player("otvi-video", &stream.url);
+                        }
+                        StreamType::Dash => {
+                            let drm_json = stream
+                                .drm
+                                .as_ref()
+                                .map(|d| serde_json::to_string(d).unwrap_or_default())
+                                .unwrap_or_default();
+                            gloo_timers_delay(100).await;
+                            init_dash_player("otvi-video", &stream.url, &drm_json);
+                        }
                     }
-                    StreamType::Dash => {
-                        let drm_json = stream
-                            .drm
-                            .as_ref()
-                            .map(|d| serde_json::to_string(d).unwrap_or_default())
-                            .unwrap_or_default();
-                        gloo_timers_delay(100).await;
-                        init_dash_player("otvi-video", &stream.url, &drm_json);
-                    }
-                },
+                }
                 Err(e) => set_error.set(Some(e)),
             }
         });
@@ -101,13 +89,13 @@ pub fn PlayerPage() -> impl IntoView {
             <div class="max-w-[1100px] mx-auto">
 
                 // ── Back navigation ─────────────────────────────────────────
-                <a
+                <A
                     href=move || format!("/providers/{}/channels", provider_id())
-                    class="inline-flex items-center gap-1.5 mb-4 text-gray-400 text-sm \
+                    attr:class="inline-flex items-center gap-1.5 mb-4 text-gray-400 text-sm \
                            hover:text-gray-200 transition-colors"
                 >
                     "← Back to channels"
-                </a>
+                </A>
 
                 // ── Error banner ────────────────────────────────────────────
                 <Show when=move || error.get().is_some()>

@@ -123,8 +123,12 @@ use crate::db::Db;
 /// (auth headers, cookie mappings) never travel in URLs.
 #[derive(Debug, Clone, Default)]
 pub struct ProxyContext {
+    /// The concrete upstream URL this proxy token is allowed to fetch.
+    pub upstream_url: String,
     /// HTTP headers to apply to every upstream proxy request.
     pub headers: HashMap<String, String>,
+    /// Explicit upstream hosts that this playback session may reach.
+    pub allowed_hosts: Vec<String>,
     /// URL query-param name → cookie name.
     /// The proxy extracts the param from the upstream URL and sends it as the
     /// named cookie, enabling CDNs that authenticate via cookies (e.g. Akamai
@@ -355,7 +359,6 @@ impl ChannelCache {
 
 fn build_http_client() -> reqwest::Client {
     reqwest::Client::builder()
-        .cookie_store(true)
         .build()
         .expect("Failed to build HTTP client")
 }
@@ -420,8 +423,6 @@ impl AppState {
     /// Scan `dir` for `*.yaml` / `*.yml` files and parse each as a
     /// [`ProviderConfig`].
     pub fn load_providers(dir: &str, db: Db, jwt_keys: JwtKeys) -> anyhow::Result<Self> {
-        let mut providers = HashMap::new();
-
         let read_dir = match std::fs::read_dir(dir) {
             Ok(rd) => rd,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -429,7 +430,7 @@ impl AppState {
                     "Providers directory '{dir}' not found – starting with no providers"
                 );
                 return Ok(Self {
-                    providers_rw: RwLock::new(providers),
+                    providers_rw: RwLock::new(HashMap::new()),
                     db,
                     jwt_keys,
                     http_client: build_http_client(),
@@ -440,30 +441,7 @@ impl AppState {
             Err(e) => return Err(e.into()),
         };
 
-        for entry in read_dir {
-            let entry = entry?;
-            let path = entry.path();
-            let is_yaml = path
-                .extension()
-                .is_some_and(|ext| ext == "yaml" || ext == "yml");
-            if !is_yaml {
-                continue;
-            }
-            let content = std::fs::read_to_string(&path)?;
-            match serde_yaml_ng::from_str::<ProviderConfig>(&content) {
-                Ok(config) => {
-                    tracing::info!(
-                        "Loaded provider '{}' from {}",
-                        config.provider.id,
-                        path.display()
-                    );
-                    providers.insert(config.provider.id.clone(), config);
-                }
-                Err(e) => {
-                    tracing::error!("Failed to parse {}: {e}", path.display());
-                }
-            }
-        }
+        let providers = load_provider_map_from_iter(read_dir)?;
 
         Ok(Self {
             providers_rw: RwLock::new(providers),
@@ -474,6 +452,112 @@ impl AppState {
             channel_cache: ChannelCache::from_env(),
         })
     }
+}
+
+pub fn load_provider_map(dir: &str) -> anyhow::Result<HashMap<String, ProviderConfig>> {
+    let read_dir = std::fs::read_dir(dir)?;
+    load_provider_map_from_iter(read_dir)
+}
+
+fn load_provider_map_from_iter(
+    read_dir: std::fs::ReadDir,
+) -> anyhow::Result<HashMap<String, ProviderConfig>> {
+    let mut providers = HashMap::new();
+
+    for entry in read_dir {
+        let entry = entry?;
+        let path = entry.path();
+        let is_yaml = path
+            .extension()
+            .is_some_and(|ext| ext == "yaml" || ext == "yml");
+        if !is_yaml {
+            continue;
+        }
+
+        let content = std::fs::read_to_string(&path)?;
+        match serde_yaml_ng::from_str::<ProviderConfig>(&content) {
+            Ok(config) => {
+                validate_provider_config(&config)
+                    .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
+                tracing::info!(
+                    "Loaded provider '{}' from {}",
+                    config.provider.id,
+                    path.display()
+                );
+                providers.insert(config.provider.id.clone(), config);
+            }
+            Err(e) => {
+                tracing::error!("Failed to parse {}: {e}", path.display());
+            }
+        }
+    }
+
+    Ok(providers)
+}
+
+fn validate_provider_config(config: &ProviderConfig) -> anyhow::Result<()> {
+    use anyhow::bail;
+
+    if config.auth.refresh.is_some() {
+        bail!(
+            "provider '{}' uses unsupported auth.refresh; refresh flows are not implemented",
+            config.provider.id
+        );
+    }
+
+    for flow in &config.auth.flows {
+        for field in &flow.inputs {
+            if let Some(transform) = &field.transform
+                && transform != "base64"
+            {
+                bail!(
+                    "provider '{}' uses unsupported transform '{}' for auth input '{}'; supported transforms: base64",
+                    config.provider.id,
+                    transform,
+                    field.key
+                );
+            }
+        }
+
+        for step in &flow.steps {
+            validate_request_spec(
+                config,
+                &step.request,
+                &format!("auth flow '{}' step '{}'", flow.id, step.name),
+            )?;
+        }
+    }
+
+    if let Some(logout) = &config.auth.logout {
+        validate_request_spec(config, &logout.request, "auth logout")?;
+    }
+
+    validate_request_spec(config, &config.channels.list.request, "channels list")?;
+    if let Some(categories) = &config.channels.categories {
+        validate_request_spec(config, &categories.request, "channels categories")?;
+    }
+    validate_request_spec(config, &config.playback.stream.request, "playback stream")?;
+
+    Ok(())
+}
+
+fn validate_request_spec(
+    config: &ProviderConfig,
+    spec: &otvi_core::config::RequestSpec,
+    location: &str,
+) -> anyhow::Result<()> {
+    use anyhow::bail;
+
+    if spec.body_encoding != "json" && spec.body_encoding != "form" {
+        bail!(
+            "provider '{}' uses unsupported body_encoding '{}' in {}; supported encodings: json, form",
+            config.provider.id,
+            spec.body_encoding,
+            location
+        );
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -951,5 +1035,100 @@ playback:
             AppState::load_providers(dir.path().to_str().unwrap(), db, test_keys()).unwrap();
         assert_eq!(state.providers_rw.read().unwrap().len(), 1);
         assert!(state.providers_rw.read().unwrap().contains_key("yml_tv"));
+    }
+
+    #[tokio::test]
+    async fn load_providers_rejects_unsupported_refresh_config() {
+        let (db, _db_dir) = test_db().await;
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let yaml = r#"
+provider:
+  name: RefreshTV
+  id: refresh_tv
+auth:
+  flows:
+    - id: email
+      name: Email Login
+      inputs:
+        - key: email
+          label: Email
+      steps:
+        - name: login
+          request:
+            method: POST
+            path: /api/login
+  refresh:
+    request:
+      method: POST
+      path: /api/refresh
+    on_success:
+      extract: {}
+channels:
+  list:
+    request:
+      method: GET
+      path: /api/channels
+    response:
+      items_path: "$.channels"
+playback:
+  stream:
+    request:
+      method: GET
+      path: /api/play/{{input.id}}
+    response:
+      url: "$.url"
+      type: "hls"
+"#;
+        std::fs::write(dir.path().join("refresh.yaml"), yaml).unwrap();
+
+        let err = AppState::load_providers(dir.path().to_str().unwrap(), db, test_keys())
+            .err()
+            .expect("refresh should be rejected");
+        assert!(err.to_string().contains("auth.refresh"));
+    }
+
+    #[tokio::test]
+    async fn load_providers_rejects_unsupported_body_encoding() {
+        let (db, _db_dir) = test_db().await;
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let yaml = r#"
+provider:
+  name: EncTV
+  id: enc_tv
+auth:
+  flows:
+    - id: email
+      name: Email Login
+      inputs:
+        - key: email
+          label: Email
+      steps:
+        - name: login
+          request:
+            method: POST
+            path: /api/login
+            body_encoding: xml
+channels:
+  list:
+    request:
+      method: GET
+      path: /api/channels
+    response:
+      items_path: "$.channels"
+playback:
+  stream:
+    request:
+      method: GET
+      path: /api/play/{{input.id}}
+    response:
+      url: "$.url"
+      type: "hls"
+"#;
+        std::fs::write(dir.path().join("encoding.yaml"), yaml).unwrap();
+
+        let err = AppState::load_providers(dir.path().to_str().unwrap(), db, test_keys())
+            .err()
+            .expect("unsupported body encoding should be rejected");
+        assert!(err.to_string().contains("body_encoding"));
     }
 }

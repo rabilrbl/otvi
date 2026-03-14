@@ -26,7 +26,7 @@ OTVI is a generic, **YAML-driven television interface** that lets any TV provide
 - **Provider JSON Schema** — live `GET /api/schema/provider` endpoint for VS Code YAML auto-complete
 - **Structured logging** — human-readable text by default; set `LOG_FORMAT=json` for Loki / Datadog
 - **Configurable CORS** — permissive in dev, locked to specific origins in production via `CORS_ORIGINS`
-- **Modern web UI** — responsive Leptos/WASM frontend with channel search, skeleton loading states, URL-persisted category filter, and proper channel names in the player
+- **Modern web UI** — responsive Leptos/WASM frontend with URL-driven channel search/filter state, skeleton loading states, and backend-supplied channel metadata in the player
 - **Docker ready** — multi-stage build with built-in `HEALTHCHECK`, optimised release profile (LTO, symbol strip)
 
 ## How It Works
@@ -50,13 +50,13 @@ OTVI is a generic, **YAML-driven television interface** that lets any TV provide
                          ▲
                          │ fetch / JSON
 ┌──────────────── otvi-web (Leptos WASM) ─────────────────┐
-│  Home   Login   Channels (search + filter)   Player     │
+│  Home   Provider Login   Channels   Player              │
 └─────────────────────────────────────────────────────────┘
 ```
 
 1. Provider YAML configs are loaded at server startup and **watched for changes** — any create, modify, or delete of a `.yaml`/`.yml` file is picked up automatically without restarting.
 2. The Axum-based REST API proxies requests to external provider APIs based on the YAML definitions.
-3. The Leptos WASM frontend communicates with the REST API to display providers, handle login flows, browse and search channels, and play streams.
+3. The Leptos WASM frontend communicates with the REST API to display providers, drive overlay-based OTVI auth, browse channels using URL query state, and play streams.
 
 ## Tech Stack
 
@@ -120,11 +120,11 @@ otvi/
         ├── api.rs                  # Backend HTTP client (token storage, typed calls)
         └── pages/
             ├── home.rs             # Provider listing
-            ├── login.rs            # OTVI user login / registration
-            ├── setup.rs            # First-run admin setup wizard
-            ├── app_login.rs        # Provider authentication flows
-            ├── channels.rs         # Channel grid (search, URL-persisted category, skeletons)
-            ├── player.rs           # Video player (resolved name/logo, loading skeleton)
+            ├── login.rs            # Provider authentication flows
+            ├── setup.rs            # First-run admin setup overlay
+            ├── app_login.rs        # OTVI user login / registration overlay
+            ├── channels.rs         # Channel grid (URL-driven search/category state, skeletons)
+            ├── player.rs           # Video player (backend-supplied name/logo, loading skeleton)
             ├── admin.rs            # User management dashboard
             ├── change_password.rs  # Forced + voluntary password change
             └── not_found.rs        # 404 page

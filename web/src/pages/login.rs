@@ -56,6 +56,7 @@ pub fn LoginPage() -> impl IntoView {
     let on_submit = move |ev: ev::SubmitEvent| {
         ev.prevent_default();
         let pid = provider_id();
+        let provider_info = provider.get_untracked();
         let flow_idx = selected_flow_idx.get_untracked();
         let step = current_step.get_untracked();
         let current_inputs = inputs.get_untracked();
@@ -66,10 +67,15 @@ pub fn LoginPage() -> impl IntoView {
         set_error.set(None);
 
         spawn_local(async move {
-            let provider_info = match api::fetch_provider(&pid).await {
-                Ok(p) => p,
-                Err(e) => {
+            let provider_info = match provider_info {
+                Some(Ok(info)) => info,
+                Some(Err(e)) => {
                     set_error.set(Some(e));
+                    set_loading.set(false);
+                    return;
+                }
+                None => {
+                    set_error.set(Some("Provider details are still loading".into()));
                     set_loading.set(false);
                     return;
                 }

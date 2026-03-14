@@ -13,15 +13,12 @@
 //! watcher::spawn(state.clone(), providers_dir.clone());
 //! ```
 
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
-
-use otvi_core::config::ProviderConfig;
 
 use crate::state::AppState;
 
@@ -107,51 +104,13 @@ fn is_yaml_event(event: &Event) -> bool {
 
 /// Re-scan `dir` and atomically replace the provider map in `state`.
 fn reload_providers(state: &AppState, dir: &str) {
-    let mut new_providers: HashMap<String, ProviderConfig> = HashMap::new();
-
-    let read_dir = match std::fs::read_dir(dir) {
-        Ok(rd) => rd,
+    let new_providers = match crate::state::load_provider_map(dir) {
+        Ok(map) => map,
         Err(e) => {
-            tracing::error!("Provider hot-reload: cannot read directory '{dir}': {e}");
+            tracing::error!("Provider hot-reload: cannot reload providers from '{dir}': {e}");
             return;
         }
     };
-
-    for entry in read_dir.flatten() {
-        let path = entry.path();
-        let is_yaml = path
-            .extension()
-            .is_some_and(|ext| ext == "yaml" || ext == "yml");
-        if !is_yaml {
-            continue;
-        }
-
-        let content = match std::fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::error!("Provider hot-reload: cannot read {}: {e}", path.display());
-                continue;
-            }
-        };
-
-        match serde_yaml_ng::from_str::<ProviderConfig>(&content) {
-            Ok(cfg) => {
-                tracing::info!(
-                    provider_id = %cfg.provider.id,
-                    path = %path.display(),
-                    "Provider hot-reloaded"
-                );
-                new_providers.insert(cfg.provider.id.clone(), cfg);
-            }
-            Err(e) => {
-                tracing::error!(
-                    path = %path.display(),
-                    error = %e,
-                    "Provider hot-reload: failed to parse YAML"
-                );
-            }
-        }
-    }
 
     // Atomically swap the map using the write lock.
     match state.providers_rw.write() {

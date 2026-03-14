@@ -22,12 +22,11 @@ pub fn AdminPage() -> impl IntoView {
     // ── Load on mount ─────────────────────────────────────────────────────
     Effect::new(move |_| {
         spawn_local(async move {
-            let (u, p, s) = futures_join3(
+            let (u, p, s) = futures::join!(
                 api::admin_list_users(),
                 api::fetch_providers(),
                 api::admin_get_settings(),
-            )
-            .await;
+            );
             match u {
                 Ok(list) => users.set(list),
                 Err(e) => page_error.set(Some(format!("Failed to load users: {e}"))),
@@ -57,18 +56,6 @@ pub fn AdminPage() -> impl IntoView {
             <UsersSection users=users providers=providers />
         </div>
     }
-}
-
-// ── Parallel async helper (no external futures crate needed) ─────────────────
-
-async fn futures_join3<A, B, C>(a: A, b: B, c: C) -> (A::Output, B::Output, C::Output)
-where
-    A: std::future::Future,
-    B: std::future::Future,
-    C: std::future::Future,
-{
-    // Sequential is fine for an admin page that loads once.
-    (a.await, b.await, c.await)
 }
 
 // ── Settings section ─────────────────────────────────────────────────────────

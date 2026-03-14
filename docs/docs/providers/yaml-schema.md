@@ -132,7 +132,7 @@ steps:
           "password": "{{input.password}}",
           "device_id": "{{uuid}}"
         }
-      body_type: "json" # "json" (default) or "form"
+      body_encoding: "json" # "json" (default) or "form"
     on_success:
       extract: # Values to extract from response
         access_token: "$.data.token"
@@ -157,6 +157,10 @@ auth:
 ```
 
 ### Token Refresh
+
+:::warning
+`auth.refresh` is currently reserved in the schema but not implemented by the runtime loader. Provider files using it are rejected during validation.
+:::
 
 ```yaml
 auth:

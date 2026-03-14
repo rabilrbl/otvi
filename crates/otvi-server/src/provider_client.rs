@@ -6,8 +6,11 @@ use std::collections::HashMap;
 use otvi_core::config::RequestSpec;
 use otvi_core::template::TemplateContext;
 use reqwest::Client;
+use reqwest::header::SET_COOKIE;
 use serde_json::Value;
 use tracing::warn;
+
+const STORED_COOKIE_PREFIX: &str = "stored.__cookie_";
 
 /// Result of executing a provider request, including the HTTP status code.
 #[derive(Debug)]
@@ -15,6 +18,7 @@ use tracing::warn;
 pub struct ProviderResponse {
     pub status: u16,
     pub body: Value,
+    pub cookies: HashMap<String, String>,
 }
 
 /// Resolve `template` against `context`, emitting a `tracing::warn` for every
@@ -81,6 +85,21 @@ pub async fn execute_request(
         builder = builder.header(k, resolve_warn(context, v, "header"));
     }
 
+    let explicit_cookie_header = default_headers
+        .keys()
+        .chain(spec.headers.keys())
+        .any(|key| key.eq_ignore_ascii_case("cookie"));
+    if !explicit_cookie_header {
+        let cookie_pairs = context
+            .values_with_prefix(STORED_COOKIE_PREFIX)
+            .into_iter()
+            .map(|(name, value)| format!("{name}={value}"))
+            .collect::<Vec<_>>();
+        if !cookie_pairs.is_empty() {
+            builder = builder.header("Cookie", cookie_pairs.join("; "));
+        }
+    }
+
     // Query parameters – skip any that still contain unresolved `{{…}}`
     for (k, v) in &spec.params {
         let resolved = resolve_warn(context, v, "param");
@@ -114,17 +133,36 @@ pub async fn execute_request(
     }
 
     let response = builder.send().await?;
+    let cookies = response
+        .headers()
+        .get_all(SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .filter_map(parse_set_cookie)
+        .collect::<HashMap<_, _>>();
     let status = response.status();
     let (status_code, body) = parse_response_body(response).await?;
 
     if !status.is_success() {
-        anyhow::bail!("Provider API returned {status}: {body}");
+        anyhow::bail!("Provider API returned non-success status {status_code}");
     }
 
     Ok(ProviderResponse {
         status: status_code,
         body,
+        cookies,
     })
+}
+
+fn parse_set_cookie(header: &str) -> Option<(String, String)> {
+    let first = header.split(';').next()?.trim();
+    let mut parts = first.splitn(2, '=');
+    let name = parts.next()?.trim();
+    let value = parts.next()?.trim();
+    if name.is_empty() {
+        return None;
+    }
+    Some((name.to_string(), value.to_string()))
 }
 
 /// Convenience wrapper that returns just the JSON body (backwards-compatible).

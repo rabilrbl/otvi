@@ -1,17 +1,11 @@
 use leptos::either::EitherOf3;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
+use leptos_router::NavigateOptions;
 use leptos_router::hooks::*;
 
 use crate::api;
 
-/// Channel browse page.
-///
-/// Features:
-/// - Category filter pills (persisted in the URL as `?cat=<id>`)
-/// - Live text-search box (filters the already-fetched list client-side)
-/// - Skeleton loading cards while the channel list loads
-/// - Pagination (`?limit=48&offset=0` forwarded to the backend)
 #[component]
 pub fn ChannelsPage() -> impl IntoView {
     let params = use_params_map();
@@ -19,34 +13,37 @@ pub fn ChannelsPage() -> impl IntoView {
     let navigate = use_navigate();
 
     let provider_id = move || params.with(|p| p.get("provider_id").unwrap_or_default());
-
-    // ── Category state (persisted in URL ?cat=…) ──────────────────────────
     let selected_category = move || query.with(|q| q.get("cat").unwrap_or_default());
+    let search_term = move || query.with(|q| q.get("search").unwrap_or_default());
 
-    // Wrap in StoredValue + Arc so the closure is Fn (not FnOnce) and can be
-    // shared across multiple event handlers inside the view.
-    let set_category = {
+    let update_filters = {
         let navigate = navigate.clone();
-        let nav = std::sync::Arc::new(navigate.clone());
-        StoredValue::new(move |cat: String| {
+        StoredValue::new(move |category: String, search: String| {
             let pid = params.with(|p| p.get("provider_id").unwrap_or_default());
-            let new_url = if cat.is_empty() {
-                format!("/providers/{pid}/channels")
+            let mut query_parts = Vec::new();
+            if !category.is_empty() {
+                query_parts.push(format!("cat={}", urlencoding::encode(&category)));
+            }
+            if !search.is_empty() {
+                query_parts.push(format!("search={}", urlencoding::encode(&search)));
+            }
+
+            let suffix = if query_parts.is_empty() {
+                String::new()
             } else {
-                format!(
-                    "/providers/{pid}/channels?cat={}",
-                    urlencoding::encode(&cat)
-                )
+                format!("?{}", query_parts.join("&"))
             };
-            nav(&new_url, Default::default());
+
+            navigate(
+                &format!("/providers/{pid}/channels{suffix}"),
+                NavigateOptions {
+                    replace: true,
+                    ..Default::default()
+                },
+            );
         })
     };
-    let _ = navigate; // moved into set_category above; silence unused-variable lint
 
-    // ── Search state (client-side, not persisted) ─────────────────────────
-    let (search_term, set_search_term) = signal(String::new());
-
-    // ── Provider session guard ────────────────────────────────────────────
     {
         let navigate = navigate.clone();
         Effect::new(move |_| {
@@ -63,26 +60,27 @@ pub fn ChannelsPage() -> impl IntoView {
         });
     }
 
-    // ── Fetch channels whenever category changes ───────────────────────────
     let channels = LocalResource::new(move || {
         let pid = provider_id();
         let cat = selected_category();
+        let search = search_term();
         async move {
             let mut params = std::collections::HashMap::new();
             if !cat.is_empty() {
                 params.insert("category".to_string(), cat);
             }
+            if !search.is_empty() {
+                params.insert("search".to_string(), search);
+            }
             api::fetch_channels(&pid, &params).await
         }
     });
 
-    // ── Fetch categories once ─────────────────────────────────────────────
     let categories = LocalResource::new(move || {
         let pid = provider_id();
         async move { api::fetch_categories(&pid).await.ok() }
     });
 
-    // ── Logout handler ────────────────────────────────────────────────────
     let pid_for_logout = provider_id;
     let nav_for_logout = navigate.clone();
     let on_logout = move |_| {
@@ -96,8 +94,6 @@ pub fn ChannelsPage() -> impl IntoView {
 
     view! {
         <div class="max-w-7xl mx-auto px-6 py-8">
-
-            // ── Page header ───────────────────────────────────────────────
             <div class="flex justify-between items-start mb-6">
                 <div>
                     <h1 class="text-3xl font-bold mb-1">"Channels"</h1>
@@ -112,7 +108,6 @@ pub fn ChannelsPage() -> impl IntoView {
                 </button>
             </div>
 
-            // ── Search box ────────────────────────────────────────────────
             <div class="relative mb-4">
                 <span class="absolute inset-y-0 left-3 flex items-center text-gray-400 pointer-events-none">
                     "🔍"
@@ -123,21 +118,25 @@ pub fn ChannelsPage() -> impl IntoView {
                     class="w-full pl-9 pr-4 py-2.5 bg-gray-900 border border-white/10 rounded-lg \
                            text-gray-200 text-sm placeholder-gray-500 \
                            focus:outline-none focus:border-rose-500 transition-colors"
-                    prop:value=move || search_term.get()
-                    on:input=move |ev| set_search_term.set(event_target_value(&ev))
+                    prop:value=search_term
+                    on:input=move |ev| {
+                        let value = event_target_value(&ev);
+                        update_filters.with_value(|set| set(selected_category(), value));
+                    }
                 />
-                <Show when=move || !search_term.get().is_empty()>
+                <Show when=move || !search_term().is_empty()>
                     <button
                         class="absolute inset-y-0 right-3 flex items-center text-gray-400 \
                                hover:text-gray-200 transition-colors cursor-pointer"
-                        on:click=move |_| set_search_term.set(String::new())
+                        on:click=move |_| {
+                            update_filters.with_value(|set| set(selected_category(), String::new()));
+                        }
                     >
                         "✕"
                     </button>
                 </Show>
             </div>
 
-            // ── Category filter pills ─────────────────────────────────────
             <Suspense fallback=|| ()>
                 {move || {
                     let maybe_cats = categories.get().flatten();
@@ -148,7 +147,6 @@ pub fn ChannelsPage() -> impl IntoView {
                     let cats_sv = StoredValue::new(some_cats);
                     Some(view! {
                         <div class="flex gap-2 flex-wrap mb-4">
-                            // "All" pill
                             <button
                                 class=move || {
                                     let base = "px-4 py-1.5 rounded-full text-sm cursor-pointer transition-all border";
@@ -158,12 +156,13 @@ pub fn ChannelsPage() -> impl IntoView {
                                         format!("{base} bg-gray-900 text-gray-400 border-white/10 hover:bg-rose-500 hover:text-white hover:border-rose-500")
                                     }
                                 }
-                                on:click=move |_| set_category.with_value(|f| f(String::new()))
+                                on:click=move |_| {
+                                    update_filters.with_value(|set| set(String::new(), search_term()));
+                                }
                             >
                                 "All"
                             </button>
 
-                            // Per-category pills
                             <For
                                 each=move || cats_sv.get_value()
                                 key=|c| c.id.clone()
@@ -182,7 +181,7 @@ pub fn ChannelsPage() -> impl IntoView {
                                             }
                                             on:click=move |_| {
                                                 let id = cat_id_click.clone();
-                                                set_category.with_value(|f| f(id));
+                                                update_filters.with_value(|set| set(id, search_term()));
                                             }
                                         >
                                             {cat.name.clone()}
@@ -195,10 +194,8 @@ pub fn ChannelsPage() -> impl IntoView {
                 }}
             </Suspense>
 
-            // ── Channel grid ──────────────────────────────────────────────
             <Suspense
                 fallback=move || view! {
-                    // ── Skeleton grid ─────────────────────────────────────
                     <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 mt-4">
                         {(0..18).map(|_| view! {
                             <div class="bg-gray-900 border border-white/5 rounded-lg p-4 animate-pulse">
@@ -213,10 +210,8 @@ pub fn ChannelsPage() -> impl IntoView {
                 {let navigate = navigate.clone(); move || {
                     let pid = provider_id();
                     let navigate = navigate.clone();
-                    let term = search_term.get();
 
                     channels.get().map(|result| match result {
-                        // ── Error state ───────────────────────────────────
                         Err(e) => {
                             let navigate = navigate.clone();
                             navigate(&format!("/login/{pid}"), Default::default());
@@ -226,120 +221,90 @@ pub fn ChannelsPage() -> impl IntoView {
                                 </div>
                             })
                         }
-
-                        // ── Data: filter client-side by search term ───────
-                        Ok(data) => {
-                            // Apply client-side search filter.
-                            let filtered: Vec<_> = if term.is_empty() {
-                                data.channels.clone()
-                            } else {
-                                let lower = term.to_lowercase();
-                                data.channels
-                                    .iter()
-                                    .filter(|ch| ch.name.to_lowercase().contains(&lower))
-                                    .cloned()
-                                    .collect()
-                            };
-
-                            let total = data.total.unwrap_or(filtered.len());
-
-                            let empty_msg = if term.is_empty() {
+                        Ok(data) if data.channels.is_empty() => {
+                            let empty_msg = if search_term().is_empty() && selected_category().is_empty() {
                                 "No channels found.".to_string()
                             } else {
-                                format!("No channels match \"{}\".", term)
+                                "No channels match the current filters.".to_string()
                             };
+                            EitherOf3::B(view! {
+                                <div class="text-center py-12 text-gray-400">
+                                    {empty_msg}
+                                </div>
+                            })
+                        }
+                        Ok(data) => {
+                            let count_label = match data.total {
+                                Some(total) => format!("{total} channel{}", if total == 1 { "" } else { "s" }),
+                                None => format!("{} channels", data.channels.len()),
+                            };
+                            let channels_sv = StoredValue::new(data.channels.clone());
 
-                            if filtered.is_empty() {
-                                EitherOf3::B(view! {
-                                    <div class="text-center py-12 text-gray-400">
-                                        {empty_msg}
-                                    </div>
-                                })
-                            } else {
-                                let count_label = if term.is_empty() {
-                                    format!("{total} channels")
-                                } else {
-                                    format!(
-                                        "{} of {total} channel{}",
-                                        filtered.len(),
-                                        if total == 1 { "" } else { "s" }
-                                    )
-                                };
+                            EitherOf3::C(view! {
+                                <div>
+                                    <p class="text-xs text-gray-500 mb-3">{count_label}</p>
 
-                                EitherOf3::C(view! {
-                                    <div>
-                                        // Result count badge
-                                        <p class="text-xs text-gray-500 mb-3">
-                                            {count_label}
-                                        </p>
+                                    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+                                        <For
+                                            each=move || channels_sv.get_value()
+                                            key=|ch| ch.id.clone()
+                                            children=move |channel| {
+                                                let pid = pid.clone();
+                                                let ch_id = channel.id.clone();
+                                                let navigate = navigate.clone();
+                                                let ch_name = channel.name.clone();
+                                                view! {
+                                                    <div
+                                                        class="group bg-gray-900 border border-white/5 rounded-lg p-4 \
+                                                               text-center hover:-translate-y-0.5 hover:border-rose-500 \
+                                                               hover:shadow-lg hover:shadow-rose-500/10 \
+                                                               transition-all duration-150 cursor-pointer"
+                                                        title=ch_name.clone()
+                                                        on:click=move |_| {
+                                                            navigate(
+                                                                &format!("/providers/{pid}/play/{ch_id}"),
+                                                                Default::default(),
+                                                            );
+                                                        }
+                                                    >
+                                                        {match channel.logo.clone() {
+                                                            Some(url) => view! {
+                                                                <div class="w-18 h-18 flex items-center justify-center mx-auto mb-2">
+                                                                    <img
+                                                                        class="max-w-full max-h-full object-contain rounded"
+                                                                        src=url
+                                                                        alt=ch_name.clone()
+                                                                        loading="lazy"
+                                                                        decoding="async"
+                                                                    />
+                                                                </div>
+                                                            }.into_any(),
+                                                            None => view! {
+                                                                <div class="w-18 h-18 flex items-center justify-center mx-auto mb-2 \
+                                                                            bg-gray-800 rounded text-gray-600 text-2xl">
+                                                                    "📺"
+                                                                </div>
+                                                            }.into_any(),
+                                                        }}
 
-                                        // Channel grid
-                                        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-                                            <For
-                                                each=move || filtered.clone()
-                                                key=|ch| ch.id.clone()
-                                                children=move |channel| {
-                                                    let pid = pid.clone();
-                                                    let ch_id = channel.id.clone();
-                                                    let navigate = navigate.clone();
-                                                    let ch_name = channel.name.clone();
-                                                    view! {
-                                                        <div
-                                                            class="group bg-gray-900 border border-white/5 rounded-lg p-4 \
-                                                                   text-center hover:-translate-y-0.5 hover:border-rose-500 \
-                                                                   hover:shadow-lg hover:shadow-rose-500/10 \
-                                                                   transition-all duration-150 cursor-pointer"
-                                                            title=ch_name.clone()
-                                                            on:click=move |_| {
-                                                                navigate(
-                                                                    &format!("/providers/{pid}/play/{ch_id}"),
-                                                                    Default::default(),
-                                                                );
-                                                            }
-                                                        >
-                                                            // Logo or placeholder icon
-                                                            {match channel.logo.clone() {
-                                                                Some(url) => view! {
-                                                                    <div class="w-18 h-18 flex items-center justify-center mx-auto mb-2">
-                                                                        <img
-                                                                            class="max-w-full max-h-full object-contain rounded"
-                                                                            src=url
-                                                                            alt=ch_name.clone()
-                                                                            loading="lazy"
-                                                                            decoding="async"
-                                                                        />
-                                                                    </div>
-                                                                }.into_any(),
-                                                                None => view! {
-                                                                    <div class="w-18 h-18 flex items-center justify-center mx-auto mb-2 \
-                                                                                bg-gray-800 rounded text-gray-600 text-2xl">
-                                                                        "📺"
-                                                                    </div>
-                                                                }.into_any(),
-                                                            }}
-
-                                                            // Channel name
-                                                            <div class="font-medium text-sm leading-tight line-clamp-2">
-                                                                {channel.name.clone()}
-                                                            </div>
-
-                                                            // Channel number badge
-                                                            {channel.number.clone().map(|n| view! {
-                                                                <div class="text-xs text-gray-400 mt-1">"CH " {n}</div>
-                                                            })}
-
-                                                            // Category badge
-                                                            {channel.category.clone().map(|c| view! {
-                                                                <div class="text-xs text-gray-500 mt-0.5 truncate">{c}</div>
-                                                            })}
+                                                        <div class="font-medium text-sm leading-tight line-clamp-2">
+                                                            {channel.name.clone()}
                                                         </div>
-                                                    }
+
+                                                        {channel.number.clone().map(|n| view! {
+                                                            <div class="text-xs text-gray-400 mt-1">"CH " {n}</div>
+                                                        })}
+
+                                                        {channel.category.clone().map(|c| view! {
+                                                            <div class="text-xs text-gray-500 mt-0.5 truncate">{c}</div>
+                                                        })}
+                                                    </div>
                                                 }
-                                            />
-                                        </div>
+                                            }
+                                        />
                                     </div>
-                                })
-                            }
+                                </div>
+                            })
                         }
                     })
                 }}

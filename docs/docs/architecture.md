@@ -189,18 +189,18 @@ The frontend is built with [Leptos](https://leptos.dev/) and compiled to WebAsse
   | Page | File | Description |
   |------|------|-------------|
   | Home | `home.rs` | Provider listing |
-  | Login | `login.rs` | OTVI user login / registration |
-  | Setup | `setup.rs` | First-time admin setup wizard |
-  | Provider Login | `app_login.rs` | Multi-step provider authentication flows |
-  | Channels | `channels.rs` | Channel grid with **search box**, **URL-persisted category filter** (`?cat=<id>`), and **skeleton loading states** |
-  | Player | `player.rs` | Video player with **resolved channel name & logo** in the info card, **spinner skeleton** while loading |
+  | Login | `login.rs` | Multi-step provider authentication route |
+  | Setup | `setup.rs` | First-time admin setup overlay |
+  | App Login | `app_login.rs` | OTVI user login / registration overlay |
+  | Channels | `channels.rs` | Channel grid with **URL-driven search** (`?search=`), **URL-persisted category filter** (`?cat=<id>`), and **skeleton loading states** |
+  | Player | `player.rs` | Video player with backend-supplied **channel name & logo** in the info card, plus a spinner skeleton while loading |
   | Admin | `admin.rs` | User management dashboard |
   | Change Password | `change_password.rs` | Forced + voluntary password change |
   | 404 | `not_found.rs` | Not-found page |
 
 ### Channel Search & Filter
 
-- A **search box** with a clear button appears above the channel grid. Typing sends a `?search=<term>` query to the server, which applies a case-insensitive substring filter before pagination.
+- A **search box** with a clear button appears above the channel grid. The active search term is stored in the URL as `?search=<term>` and sent directly to the backend channels API.
 - The **selected category** is stored in the URL as `?cat=<id>`, making filtered views bookmarkable and browser-history-aware.
 - While channels are loading an **18-card skeleton grid** is displayed; the player shows a **spinning loader overlay**.
 
@@ -217,19 +217,20 @@ The frontend uses a JavaScript bridge in `index.html` for video playback:
 ### Authentication Flow
 
 ```
-User → Frontend → POST /api/auth/login (OTVI login)
-                → JWT token stored in LocalStorage
-                → POST /api/providers/:id/auth/login (Provider login)
-                → Session stored in database
-                → Channel browsing enabled
+User → Frontend overlay → POST /api/auth/login (OTVI login)
+                       → JWT token stored in LocalStorage
+                       → Route to /login/:provider_id for provider auth when needed
+                       → POST /api/providers/:id/auth/login
+                       → Session stored in database
+                       → Channel browsing enabled
 ```
 
 ### Channel List Flow
 
 ```
 Frontend → GET /api/providers/:id/channels[?search=…&category=…&limit=…&offset=…]
-         → ChannelCache lookup by (provider_id, CacheScope)
-         → HIT:  return cached full list, apply filters + pagination server-side
+          → ChannelCache lookup by (provider_id, CacheScope)
+          → HIT:  return cached full list, apply filters + pagination server-side
          → MISS: fetch from upstream provider API
                  → store full unfiltered list in cache (TTL: 24 h)
                  → apply filters + pagination, return result
@@ -249,10 +250,11 @@ POST /api/providers/:id/auth/login  (or /logout)
 ```
 Frontend → GET /api/providers/:id/channels/:cid/stream
          → Server fetches stream URL from provider API
-         → Returns stream URL + DRM info + proxy context token
+         → Server resolves channel metadata from cached/provider channel data
+         → Returns stream URL + DRM info + channel metadata + proxy context token
          → Frontend initializes HLS.js or Shaka Player
          → Video requests proxied through GET /api/proxy
-         → Server handles CDN auth, CORS, header injection
+         → Server handles CDN auth, host-constrained proxying, and header/cookie injection
 ```
 
 ### Hot-Reload Flow
