@@ -50,6 +50,16 @@ impl TemplateContext {
         }
     }
 
+    pub fn values_with_prefix(&self, prefix: &str) -> Vec<(String, String)> {
+        self.values
+            .iter()
+            .filter_map(|(key, value)| {
+                key.strip_prefix(prefix)
+                    .map(|stripped| (stripped.to_string(), value.clone()))
+            })
+            .collect()
+    }
+
     /// Resolve all `{{key}}` placeholders in `template`.
     ///
     /// Returns a [`ResolveResult`] containing both the rendered string and
@@ -103,6 +113,30 @@ impl TemplateContext {
 
 // ── JSONPath extraction ───────────────────────────────────────────────────────
 
+fn normalise_json_path(path: &str) -> String {
+    if path.starts_with("$.") || path == "$" || path.starts_with("$[") || path.starts_with("$..") {
+        path.to_string()
+    } else {
+        format!("$.{path}")
+    }
+}
+
+/// Select the first JSON value matched by a JSONPath expression.
+///
+/// This mirrors [`extract_json_path`] but returns a borrowed [`Value`] instead
+/// of a scalar string. Callers can use it when they need structured JSON data
+/// such as an array node.
+pub fn select_json_path_value<'a>(json: &'a Value, path: &str) -> Option<&'a Value> {
+    let normalised = normalise_json_path(path);
+
+    use jsonpath_rust::JsonPath;
+
+    match json.query(&normalised) {
+        Ok(results) => results.into_iter().next(),
+        Err(_) => select_dot_path_value(json, path),
+    }
+}
+
 /// Extract a scalar value from a JSON tree using a JSONPath expression.
 ///
 /// Full JSONPath syntax is supported via the `jsonpath-rust` crate.  For
@@ -124,24 +158,7 @@ impl TemplateContext {
 /// assert_eq!(extract_json_path(&list, "$.items[?(@.id == 2)].name"), Some("b".into()));
 /// ```
 pub fn extract_json_path(json: &Value, path: &str) -> Option<String> {
-    // Normalise: ensure the path starts with "$."
-    let normalised: String = if path.starts_with("$.") || path == "$" || path.starts_with("$[") {
-        path.to_string()
-    } else {
-        format!("$.{path}")
-    };
-
-    // Try full JSONPath via jsonpath-rust 1.x trait-based API.
-    // `JsonPath::query` is implemented directly on `serde_json::Value` and
-    // returns `Queried<Vec<&Value>>` (Ok on valid paths, Err on parse failure).
-    use jsonpath_rust::JsonPath;
-
-    match json.query(&normalised) {
-        Ok(results) => results.into_iter().next().and_then(scalar_to_string),
-        // If the JSONPath parser rejects the expression fall back to the
-        // original simple dot-notation walk so existing configs keep working.
-        Err(_) => extract_dot_path(json, path),
-    }
+    select_json_path_value(json, path).and_then(scalar_to_string)
 }
 
 /// Scalar JSON value → `String`.  Returns `None` for `null` and objects/arrays
@@ -156,9 +173,7 @@ fn scalar_to_string(v: &Value) -> Option<String> {
     }
 }
 
-/// Fallback simple dot-notation walker (no filter expressions).
-/// Paths may start with `$.` (stripped) or be bare (`data.token`).
-fn extract_dot_path(json: &Value, path: &str) -> Option<String> {
+fn select_dot_path_value<'a>(json: &'a Value, path: &str) -> Option<&'a Value> {
     let path = path.strip_prefix("$.").unwrap_or(path);
     let mut current = json;
 
@@ -175,7 +190,7 @@ fn extract_dot_path(json: &Value, path: &str) -> Option<String> {
         }
     }
 
-    scalar_to_string(current)
+    Some(current)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

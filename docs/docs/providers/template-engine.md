@@ -53,36 +53,24 @@ headers:
   Authorization: "Bearer {{stored.access_token}}"
 ```
 
-### `{{extract.X}}` — Previous Step Values
+### `{{extract.X}}` — Not Supported in Runtime Requests
 
-Values extracted in the **immediately preceding** authentication step. Useful in multi-step flows where intermediate values need to be passed between steps.
+Older examples referenced `{{extract.X}}` as a temporary per-step binding. The current runtime does **not** populate `extract.*` placeholders separately during request execution.
+
+Use `on_success.extract` together with `{{stored.X}}` instead:
 
 ```yaml
-steps:
-  - name: "Send OTP"
-    request: ...
-    on_success:
-      extract:
-        request_id: "$.data.request_id"    # Available as {{extract.request_id}}
+on_success:
+  extract:
+    request_id: "$.data.request_id"
 
-  - name: "Verify OTP"
-    request:
-      method: "POST"
-      path: "/auth/verify"
-      body: |
-        {
-          "request_id": "{{extract.request_id}}",
-          "code": "{{input.otp}}"
-        }
+headers:
+  X-Request-Id: "{{stored.request_id}}"
 ```
-
-:::note
-`{{extract.X}}` values are only available in the step immediately following the extraction. For values that need to persist across multiple steps, use `{{stored.X}}` instead.
-:::
 
 ### `{{uuid}}` — Auto-Generated UUID
 
-Generates a new UUID v4 each time the template is rendered. Useful for device IDs, request IDs, and other unique identifiers.
+Generates one request-scoped UUID v4 per template context. Reusing `{{uuid}}` multiple times within the same request yields the same value.
 
 ```yaml
 body: |
@@ -92,7 +80,7 @@ body: |
   }
 ```
 
-Each `{{uuid}}` occurrence produces a **different** UUID, so you can generate multiple distinct IDs in a single request.
+If you need multiple different generated IDs, extract one into stored state and derive additional values explicitly in provider logic.
 
 ### `{{utcnow}}` — UTC Timestamp
 
@@ -141,7 +129,7 @@ The template engine replaces every `{{variable}}` placeholder in a string with t
 | --- | --- |
 | `resolve()` | Returns `ResolveResult { rendered, unresolved }` — the rendered string plus a list of placeholder names that could not be substituted |
 | `resolve_warn()` | Calls `resolve()` and emits a `tracing::warn!` for every unresolved key. Used by `provider_client.rs` for all outbound requests. |
-| `resolve_lossy()` | Silently removes unresolved placeholders (replaces them with an empty string). Legacy behaviour for callers that do not need warnings. |
+| `resolve_lossy()` | Returns the rendered string and leaves unresolved placeholders as-is. |
 
 In production, `resolve_warn()` is used for every outbound API request. Any placeholder that could not be substituted — for example because a previous step failed to extract a value — is logged at `WARN` level:
 
@@ -158,8 +146,7 @@ When a template is rendered, variables are resolved in the following order:
 
 1. **Built-in variables** (`{{uuid}}`, `{{utcnow}}`, `{{utcdate}}`)
 2. **Input variables** (`{{input.X}}`) — from the user's form submission
-3. **Extract variables** (`{{extract.X}}`) — from the immediately preceding step
-4. **Stored variables** (`{{stored.X}}`) — from persistent session storage
+3. **Stored variables** (`{{stored.X}}`) — from persistent session storage
 
 ### Usage Locations
 

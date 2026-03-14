@@ -185,7 +185,13 @@ When a user logs out of a provider:
 
 ## Token Refresh
 
-Configure automatic token refresh:
+:::warning
+`auth.refresh` is not implemented by the current runtime. Provider files that include it are rejected during validation.
+:::
+
+The schema reserves the field for future work, but today you should model token rotation explicitly inside your normal auth flow and store any replacement tokens with `on_success.extract`.
+
+Reserved example shape:
 
 ```yaml
 auth:

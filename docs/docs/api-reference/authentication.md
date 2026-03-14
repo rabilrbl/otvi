@@ -3,37 +3,33 @@ sidebar_position: 3
 title: Authentication
 ---
 
-# Authentication API
+# Provider Authentication API
 
-Endpoints for authenticating with TV providers.
+These endpoints authenticate an OTVI user with a configured TV provider.
 
 ## Login to Provider
 
-```
+```text
 POST /api/providers/:id/auth/login
 ```
 
-Starts or continues a provider authentication flow. Handles both single-step and multi-step flows.
+Starts or continues a provider authentication flow.
 
-**Headers:**
-```
+### Headers
+
+```text
 Authorization: Bearer <jwt_token>
 Content-Type: application/json
 ```
 
-**Path Parameters:**
+### Request body
 
-| Parameter | Description |
-|-----------|-------------|
-| `id` | Provider identifier |
-
-### Initial Login Request
-
-**Request Body:**
+`step` is required on every request, including the first one.
 
 ```json
 {
   "flow_id": "email_password",
+  "step": 0,
   "inputs": {
     "email": "user@example.com",
     "password": "secretpassword"
@@ -42,29 +38,35 @@ Content-Type: application/json
 ```
 
 | Field | Type | Description |
-|-------|------|-------------|
-| `flow_id` | string | Authentication flow identifier |
-| `inputs` | object | Key-value pairs matching the flow's input fields |
+| --- | --- | --- |
+| `flow_id` | string | Provider flow identifier |
+| `step` | number | Zero-based step index |
+| `inputs` | object | Collected field values for the current flow |
+| `session_id` | string or null | Present in the shared type for compatibility; currently unused by the server |
 
-### Success Response (Single-Step)
-
-**Response:** `200 OK`
-
-```json
-{
-  "success": true
-}
-```
-
-### Success Response (Multi-Step — Next Step Required)
-
-**Response:** `200 OK`
+### Successful single-step response
 
 ```json
 {
   "success": true,
+  "session_id": null,
+  "next_step": null,
+  "user_name": "alice",
+  "error": null
+}
+```
+
+### Successful intermediate-step response
+
+Intermediate steps return `success: false` and provide `next_step` details when more user input is required.
+
+```json
+{
+  "success": false,
+  "session_id": null,
   "next_step": {
     "step_index": 1,
+    "step_name": "Verify OTP",
     "fields": [
       {
         "key": "otp",
@@ -73,84 +75,52 @@ Content-Type: application/json
         "required": true
       }
     ]
-  }
+  },
+  "user_name": null,
+  "error": null
 }
 ```
 
-### Continue Multi-Step Login
-
-When a next step is returned, send another request with additional inputs:
-
-**Request Body:**
-
-```json
-{
-  "flow_id": "phone_otp",
-  "step": 1,
-  "inputs": {
-    "phone": "+1234567890",
-    "otp": "123456"
-  }
-}
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `step` | number | The step index from the `next_step` response |
-| `inputs` | object | All inputs including both initial and new values |
-
-### Error Responses
+### Error responses
 
 | Status | Condition |
-|--------|-----------|
-| `400` | Invalid flow ID, missing inputs, or provider API error |
+| --- | --- |
+| `400` | Invalid step index or malformed request |
 | `401` | Missing or invalid JWT token |
-| `403` | Global-scoped provider and user is not admin |
-| `404` | Provider not found |
+| `403` | Provider access denied, password change required, or non-admin attempting a global-provider credential action |
+| `404` | Provider or flow not found |
 
 ## Check Provider Session
 
-```
+```text
 GET /api/providers/:id/auth/check
 ```
 
-Checks if the user has a valid session with the specified provider.
-
-**Headers:**
-```
-Authorization: Bearer <jwt_token>
-```
-
-**Response (authenticated):** `200 OK`
+Returns whether the current OTVI user has a stored session for the provider.
 
 ```json
 {
-  "authenticated": true
+  "valid": true
 }
 ```
 
-**Response (not authenticated):** `200 OK`
+or
 
 ```json
 {
-  "authenticated": false
+  "valid": false
 }
 ```
 
 ## Logout from Provider
 
-```
+```text
 POST /api/providers/:id/auth/logout
 ```
 
-Logs out from a provider, clearing the stored session.
+Clears the stored provider session. If a provider-specific logout request is configured, the server attempts that request before deleting local session state.
 
-**Headers:**
-```
-Authorization: Bearer <jwt_token>
-```
-
-**Response:** `200 OK`
+### Response
 
 ```json
 {
@@ -158,12 +128,10 @@ Authorization: Bearer <jwt_token>
 }
 ```
 
-If the provider has a configured logout endpoint, the server calls it before clearing the local session.
-
-**Error Responses:**
+### Error responses
 
 | Status | Condition |
-|--------|-----------|
+| --- | --- |
 | `401` | Missing or invalid JWT token |
-| `403` | Global-scoped provider and user is not admin |
+| `403` | Provider access denied, password change required, or non-admin attempting a global-provider credential action |
 | `404` | Provider not found |
