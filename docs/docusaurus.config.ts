@@ -11,8 +11,7 @@ const config: Config = {
     v4: true,
   },
 
-  url: 'https://rabilrbl.github.io',
-  baseUrl: '/otvi/',
+  url: 'https://otvi.rbls.eu.org',
 
   organizationName: 'rabilrbl',
   projectName: 'otvi',
