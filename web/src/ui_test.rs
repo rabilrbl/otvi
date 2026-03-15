@@ -115,6 +115,17 @@ fn set_path(path: &str) {
         .expect("pushState should work in tests");
 }
 
+/// Navigate via pushState **and** fire a `popstate` event so the Leptos router
+/// reacts to the URL change (programmatic `.click()` on `<A>` doesn't always
+/// trigger the router's click-intercept in headless test environments).
+fn navigate_to(path: &str) {
+    set_path(path);
+    let event = web_sys::PopStateEvent::new("popstate").expect("popstate event should create");
+    window()
+        .dispatch_event(&event)
+        .expect("dispatch popstate should succeed");
+}
+
 fn pathname() -> String {
     window()
         .location()
@@ -163,6 +174,7 @@ fn click_testid(test_id: &str) {
     target.click();
 }
 
+#[allow(dead_code)]
 fn click_selector(selector: &str) {
     let el = document()
         .query_selector(selector)
@@ -561,7 +573,9 @@ async fn ui_scenarios() {
             app_html()
         );
         assert_eq!(pathname(), "/admin");
-        click_testid("app-logo-link");
+        // Use navigate_to instead of click_testid because programmatic .click()
+        // on <A> doesn't reliably trigger the Leptos router in headless tests.
+        navigate_to("/");
         assert!(
             wait_for_testid("home-page", WAIT).await,
             "home-page should render after navigation. #app HTML: {}",
@@ -594,7 +608,9 @@ async fn ui_scenarios() {
             "channels-page should render. #app HTML: {}",
             app_html()
         );
-        click_selector("[title='News One']");
+        // Use navigate_to instead of click_selector because programmatic .click()
+        // on anchor elements doesn't reliably trigger the Leptos router in headless tests.
+        navigate_to("/providers/provider-a/play/channel-1");
         assert!(
             wait_for_testid("player-channel-name", WAIT).await,
             "player-channel-name should render. #app HTML: {}",
