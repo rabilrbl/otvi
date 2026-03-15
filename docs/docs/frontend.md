@@ -121,12 +121,12 @@ The frontend has browser-driven UI tests implemented with `wasm-bindgen-test` an
 
 ```bash
 cd web
-wasm-pack test --headless --chrome --features ui-test --lib
+wasm-pack test --headless --firefox --features ui-test --lib
 # or
 bun run ui:test
 ```
 
-The browser test runner reads `web/webdriver.json`, which pins the headless Chrome flags used locally and in CI.
+The browser test runner reads `web/webdriver.json` when using the Chrome backend; CI currently uses Firefox for a more stable hosted-runner setup.
 
 ### Scope
 
