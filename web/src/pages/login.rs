@@ -117,7 +117,7 @@ pub fn LoginPage() -> impl IntoView {
     };
 
     view! {
-        <div class="max-w-7xl mx-auto px-6 py-8">
+        <div class="max-w-7xl mx-auto px-6 py-8" attr:data-testid="provider-login-page">
             <div class="max-w-md mx-auto mt-12">
                 <Suspense fallback=move || view! { <div class="text-center py-12 text-gray-400">"Loading…"</div> }>
                     {let on_submit = on_submit.clone(); move || {

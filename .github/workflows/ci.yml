@@ -151,3 +151,31 @@ jobs:
         env:
           HTTPBIN_URL: http://localhost:8888
         run: cargo test -p otvi-server --test integration -- --include-ignored
+
+  frontend-ui-tests:
+    name: Frontend UI Tests
+    needs: [fmt, clippy, test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: browser-actions/setup-firefox@v1
+        id: setup-firefox
+        with:
+          firefox-version: latest
+      - uses: browser-actions/setup-geckodriver@latest
+        with:
+          geckodriver-version: latest
+      - name: Install wasm target
+        run: rustup target add wasm32-unknown-unknown
+      - name: Install wasm-pack
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+      - name: Run frontend UI tests
+        working-directory: web
+        env:
+          WASM_BINDGEN_USE_BROWSER: "1"
+          MOZ_HEADLESS: "1"
+        run: wasm-pack test --headless --firefox --features ui-test --lib

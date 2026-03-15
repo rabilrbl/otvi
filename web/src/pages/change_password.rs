@@ -70,12 +70,18 @@ pub fn ChangePasswordPage(
     };
 
     view! {
-        <div class="min-h-screen flex items-center justify-center bg-gray-950 px-4">
+        <div
+            class="min-h-screen flex items-center justify-center bg-gray-950 px-4"
+            attr:data-testid=move || if forced { "forced-change-password-page" } else { "voluntary-change-password-page" }
+        >
             <div class="w-full max-w-sm">
                 // ── Header ─────────────────────────────────────────────────
                 <div class="text-center mb-8">
                     <div class="text-4xl font-bold text-rose-500 mb-3">"OTVI"</div>
-                    <h1 class="text-xl font-semibold text-white mb-2">
+                    <h1
+                        class="text-xl font-semibold text-white mb-2"
+                        attr:data-testid=move || if forced { "forced-change-password-title" } else { "voluntary-change-password-title" }
+                    >
                         {if forced { "Set your password" } else { "Change password" }}
                     </h1>
                     <p class="text-gray-400 text-sm">

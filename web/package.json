@@ -4,7 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "ui:test": "wasm-pack test --headless --firefox --features ui-test --lib",
+    "test": "bun run ui:test"
   },
   "keywords": [],
   "author": "",

@@ -93,13 +93,16 @@ pub fn ChannelsPage() -> impl IntoView {
     };
 
     view! {
-        <div class="max-w-7xl mx-auto px-6 py-8">
+        <div class="max-w-7xl mx-auto px-6 py-8" attr:data-testid="channels-page">
             <div class="flex justify-between items-start mb-6">
                 <div>
-                    <h1 class="text-3xl font-bold mb-1">"Channels"</h1>
+                    <h1 class="text-3xl font-bold mb-1" attr:data-testid="channels-title">
+                        "Channels"
+                    </h1>
                     <p class="text-gray-400">"Browse and pick a channel to watch"</p>
                 </div>
                 <button
+                    attr:data-testid="channels-sign-out"
                     class="px-3 py-1.5 text-sm rounded-lg border border-red-500 text-red-500 \
                            bg-transparent hover:bg-red-500/15 transition-colors cursor-pointer"
                     on:click=on_logout

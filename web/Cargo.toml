@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 license = "CC-BY-NC-SA-4.0"
 
+[features]
+default = []
+ui-test = ["dep:wasm-bindgen-test"]
+
 [dependencies]
 otvi-core = { path = "../crates/otvi-core" }
 
@@ -20,9 +24,16 @@ gloo-storage = "0.3"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 web-sys = { version = "0.3", features = [
+    "Document",
+    "Element",
+    "History",
+    "HtmlElement",
+    "Location",
     "HtmlVideoElement",
     "HtmlInputElement",
+    "Storage",
     "Window",
 ] }
 js-sys = "0.3"
 console_error_panic_hook = "0.1"
+wasm-bindgen-test = { version = "0.3", optional = true }

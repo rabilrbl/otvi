@@ -42,8 +42,10 @@ pub fn AdminPage() -> impl IntoView {
     });
 
     view! {
-        <div class="max-w-4xl mx-auto px-6 py-8 space-y-8">
-            <h1 class="text-3xl font-bold">"Admin Dashboard"</h1>
+        <div class="max-w-4xl mx-auto px-6 py-8 space-y-8" attr:data-testid="admin-page">
+            <h1 class="text-3xl font-bold" attr:data-testid="admin-title">
+                "Admin Dashboard"
+            </h1>
 
             <Show when=move || page_error.get().is_some()>
                 <div class="text-red-400 bg-red-400/10 px-4 py-3 rounded-lg text-sm">

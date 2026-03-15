@@ -43,6 +43,8 @@ describe the API in a YAML file.
 - Rust stable (1.83+)
 - `trunk` CLI for the WASM frontend: `cargo install trunk`
 - `wasm32-unknown-unknown` target: `rustup target add wasm32-unknown-unknown`
+- `wasm-pack` for frontend UI tests: `cargo binstall wasm-pack` (or `cargo install wasm-pack`)
+- Firefox or Chrome/Chromium for browser UI tests
 
 ### Build & Run (development)
 
@@ -54,6 +56,17 @@ cd web && trunk build && cd ..
 cargo run -p otvi-server
 # → http://localhost:3000
 ```
+
+### Frontend UI Tests
+
+```bash
+cd web
+wasm-pack test --headless --firefox --features ui-test --lib
+# or
+bun run ui:test
+```
+
+The browser runner reads `web/webdriver.json` for Chrome headless capabilities when you use the Chrome backend.
 
 ### Docker
 
