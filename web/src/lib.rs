@@ -20,9 +20,3 @@ pub fn mount_app() {
         .unchecked_into::<web_sys::HtmlElement>();
     leptos::mount::mount_to(container, app::App).forget();
 }
-
-/// Mount the app to an arbitrary parent element (used by tests).
-pub fn mount_app_to(parent: web_sys::HtmlElement) {
-    console_error_panic_hook::set_once();
-    leptos::mount::mount_to(parent, app::App).forget();
-}

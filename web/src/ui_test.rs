@@ -11,6 +11,10 @@ use wasm_bindgen_test::*;
 
 wasm_bindgen_test_configure!(run_in_browser);
 
+// ---------------------------------------------------------------------------
+// Fixtures
+// ---------------------------------------------------------------------------
+
 pub mod fixtures {
     use super::*;
 
@@ -90,6 +94,10 @@ pub mod fixtures {
     }
 }
 
+// ---------------------------------------------------------------------------
+// DOM helpers
+// ---------------------------------------------------------------------------
+
 fn window() -> web_sys::Window {
     web_sys::window().expect("window must exist in browser test")
 }
@@ -159,7 +167,7 @@ async fn sleep_ms(ms: i32) {
 }
 
 async fn settle() {
-    sleep_ms(20).await;
+    sleep_ms(50).await;
 }
 
 fn install_player_stubs() {
@@ -171,7 +179,13 @@ fn install_player_stubs() {
     .expect("player bridge stubs should install");
 }
 
-fn reset_dom_and_state(path: &str, state: UiTestMockState) {
+// ---------------------------------------------------------------------------
+// Test lifecycle helpers
+// ---------------------------------------------------------------------------
+
+/// Prepare a fresh DOM and mock state for a sub-test scenario. Returns the
+/// `#app` container element that should be passed to [`mount`].
+fn setup(path: &str, state: UiTestMockState) {
     api::clear_ui_test_mock_state();
     api::clear_token();
 
@@ -196,17 +210,23 @@ fn reset_dom_and_state(path: &str, state: UiTestMockState) {
     api::set_ui_test_mock_state(state);
 }
 
-fn mount() {
+/// Mount the Leptos app into `#app`. Returns an opaque handle; dropping it
+/// tears down the reactive system so the next sub-test starts clean.
+fn mount() -> Box<dyn std::any::Any> {
+    console_error_panic_hook::set_once();
     let container = document()
         .get_element_by_id("app")
-        .expect("#app must exist after reset_dom_and_state")
+        .expect("#app must exist after setup()")
         .unchecked_into::<web_sys::HtmlElement>();
-    crate::mount_app_to(container);
+    let handle = leptos::mount::mount_to(container, crate::app::App);
+    Box::new(handle)
 }
 
-fn reset_test_page() {
+/// Tear down the current sub-test: drop the reactive system, remove the app
+/// container, and clear mock state.
+fn teardown(handle: Box<dyn std::any::Any>) {
+    drop(handle);
     set_path("/");
-    // Remove the #app container but leave the test runner harness intact.
     if let Some(old) = document().get_element_by_id("app") {
         old.remove();
     }
@@ -214,257 +234,281 @@ fn reset_test_page() {
     api::clear_token();
 }
 
-#[wasm_bindgen_test(async)]
-async fn renders_setup_gate_when_boot_needs_setup() {
-    reset_dom_and_state(
-        "/",
-        UiTestMockState {
-            boot: Some(AppBoot::NeedsSetup),
-            ..Default::default()
-        },
-    );
-
-    mount();
-    settle().await;
-
-    assert!(has_testid("setup-overlay"));
-    assert!(has_testid("setup-page"));
-    reset_test_page();
-}
+// ---------------------------------------------------------------------------
+// All UI scenarios in a single sequential test
+// ---------------------------------------------------------------------------
+//
+// wasm_bindgen_test runs async tests *concurrently* in the same browser page.
+// Because every scenario needs exclusive access to the DOM and the History API,
+// we run them sequentially inside one top-level test function.
+// ---------------------------------------------------------------------------
 
 #[wasm_bindgen_test(async)]
-async fn renders_login_gate_when_boot_needs_login() {
-    reset_dom_and_state(
-        "/",
-        UiTestMockState {
-            boot: Some(AppBoot::NeedsLogin),
-            ..Default::default()
-        },
-    );
-
-    mount();
-    settle().await;
-
-    assert!(has_testid("login-overlay"));
-    assert!(has_testid("app-login-page"));
-    reset_test_page();
-}
-
-#[wasm_bindgen_test(async)]
-async fn renders_forced_password_gate_when_required() {
-    reset_dom_and_state(
-        "/",
-        UiTestMockState {
-            boot: Some(AppBoot::Ready(fixtures::user(UserRole::User, true))),
-            ..Default::default()
-        },
-    );
-
-    mount();
-    settle().await;
-
-    assert!(has_testid("forced-password-overlay"));
-    assert!(has_testid("forced-change-password-page"));
-    reset_test_page();
-}
-
-#[wasm_bindgen_test(async)]
-async fn renders_authenticated_home_shell() {
-    reset_dom_and_state(
-        "/",
-        UiTestMockState {
-            boot: Some(AppBoot::Ready(fixtures::user(UserRole::User, false))),
-            providers: Some(Ok(fixtures::providers())),
-            ..Default::default()
-        },
-    );
-
-    mount();
-    settle().await;
-
-    assert!(has_testid("app-shell-nav"));
-    assert!(has_testid("home-page"));
-    reset_test_page();
-}
-
-#[wasm_bindgen_test(async)]
-async fn renders_admin_route_for_admin_user() {
-    reset_dom_and_state(
-        "/admin",
-        UiTestMockState {
-            boot: Some(AppBoot::Ready(fixtures::user(UserRole::Admin, false))),
-            providers: Some(Ok(fixtures::providers())),
-            admin_users: Some(Ok(vec![fixtures::user(UserRole::Admin, false)])),
-            settings: Some(Ok(fixtures::settings())),
-            ..Default::default()
-        },
-    );
-
-    mount();
-    settle().await;
-    assert!(has_testid("admin-page"));
-    reset_test_page();
-}
-
-#[wasm_bindgen_test(async)]
-async fn renders_provider_login_route() {
-    reset_dom_and_state(
-        "/login/provider-a",
-        UiTestMockState {
-            boot: Some(AppBoot::Ready(fixtures::user(UserRole::User, false))),
-            provider: Some(Ok(fixtures::providers()[0].clone())),
-            provider_session_valid: Some(false),
-            ..Default::default()
-        },
-    );
-    mount();
-    settle().await;
-    assert!(has_testid("provider-login-page"));
-    reset_test_page();
-}
-
-#[wasm_bindgen_test(async)]
-async fn renders_not_found_route() {
-    reset_dom_and_state(
-        "/404-missing",
-        UiTestMockState {
-            boot: Some(AppBoot::Ready(fixtures::user(UserRole::User, false))),
-            providers: Some(Ok(fixtures::providers())),
-            ..Default::default()
-        },
-    );
-    mount();
-    settle().await;
-    assert!(has_testid("not-found-page"));
-    reset_test_page();
-}
-
-#[wasm_bindgen_test(async)]
-async fn admin_dashboard_link_visible_for_admin() {
-    reset_dom_and_state(
-        "/",
-        UiTestMockState {
-            boot: Some(AppBoot::Ready(fixtures::user(UserRole::Admin, false))),
-            providers: Some(Ok(fixtures::providers())),
-            ..Default::default()
-        },
-    );
-
-    mount();
-    settle().await;
-    assert!(has_testid("admin-dashboard-link"));
-    reset_test_page();
-}
-
-#[wasm_bindgen_test(async)]
-async fn admin_dashboard_link_hidden_for_non_admin() {
-    reset_dom_and_state(
-        "/",
-        UiTestMockState {
-            boot: Some(AppBoot::Ready(fixtures::user(UserRole::User, false))),
-            providers: Some(Ok(fixtures::providers())),
-            ..Default::default()
-        },
-    );
-
-    mount();
-    settle().await;
-    assert!(!has_testid("admin-dashboard-link"));
-    reset_test_page();
-}
-
-#[wasm_bindgen_test(async)]
-async fn voluntary_password_action_opens_overlay() {
-    reset_dom_and_state(
-        "/",
-        UiTestMockState {
-            boot: Some(AppBoot::Ready(fixtures::user(UserRole::User, false))),
-            providers: Some(Ok(fixtures::providers())),
-            ..Default::default()
-        },
-    );
-
-    mount();
-    settle().await;
-    click_testid("open-change-password-button");
-    settle().await;
-
-    assert!(has_testid("voluntary-password-overlay"));
-    assert!(has_testid("voluntary-change-password-page"));
-    reset_test_page();
-}
-
-#[wasm_bindgen_test(async)]
-async fn sign_out_returns_to_login_gate() {
-    reset_dom_and_state(
-        "/",
-        UiTestMockState {
-            boot: Some(AppBoot::Ready(fixtures::user(UserRole::User, false))),
-            providers: Some(Ok(fixtures::providers())),
-            ..Default::default()
-        },
-    );
-
-    mount();
-    settle().await;
-    assert!(has_testid("sign-out-button"));
-
-    click_testid("sign-out-button");
-    settle().await;
-
-    assert!(has_testid("login-overlay"));
-    reset_test_page();
-}
-
-#[wasm_bindgen_test(async)]
-async fn in_app_navigation_uses_spa_route_transition() {
-    reset_dom_and_state(
-        "/admin",
-        UiTestMockState {
-            boot: Some(AppBoot::Ready(fixtures::user(UserRole::Admin, false))),
-            providers: Some(Ok(fixtures::providers())),
-            admin_users: Some(Ok(vec![fixtures::user(UserRole::Admin, false)])),
-            settings: Some(Ok(fixtures::settings())),
-            ..Default::default()
-        },
-    );
-
-    mount();
-    settle().await;
-    assert_eq!(pathname(), "/admin");
-
-    click_testid("app-logo-link");
-    settle().await;
-
-    assert_eq!(pathname(), "/");
-    assert!(has_testid("app-shell-nav"));
-    assert!(has_testid("home-page"));
-    reset_test_page();
-}
-
-#[wasm_bindgen_test(async)]
-async fn channel_to_player_navigation_keeps_playback_context() {
+async fn ui_scenarios() {
     install_player_stubs();
-    reset_dom_and_state(
-        "/providers/provider-a/channels",
-        UiTestMockState {
-            boot: Some(AppBoot::Ready(fixtures::user(UserRole::User, false))),
-            provider_session_valid: Some(true),
-            channels: Some(Ok(fixtures::channels())),
-            categories: Some(Ok(fixtures::categories())),
-            stream: Some(Ok(fixtures::stream())),
-            ..Default::default()
-        },
-    );
 
-    mount();
-    sleep_ms(60).await;
-    assert!(has_testid("channels-page"));
+    // ── 1. Setup gate ────────────────────────────────────────────────
+    {
+        setup(
+            "/",
+            UiTestMockState {
+                boot: Some(AppBoot::NeedsSetup),
+                ..Default::default()
+            },
+        );
+        let h = mount();
+        settle().await;
+        assert!(has_testid("setup-overlay"), "setup-overlay should render");
+        assert!(has_testid("setup-page"), "setup-page should render");
+        teardown(h);
+    }
 
-    click_selector("[title='News One']");
-    sleep_ms(180).await;
+    // ── 2. Login gate ────────────────────────────────────────────────
+    {
+        setup(
+            "/",
+            UiTestMockState {
+                boot: Some(AppBoot::NeedsLogin),
+                ..Default::default()
+            },
+        );
+        let h = mount();
+        settle().await;
+        assert!(has_testid("login-overlay"), "login-overlay should render");
+        assert!(has_testid("app-login-page"), "app-login-page should render");
+        teardown(h);
+    }
 
-    assert_eq!(pathname(), "/providers/provider-a/play/channel-1");
-    assert_eq!(text_for_testid("player-channel-name"), "News One");
-    reset_test_page();
+    // ── 3. Forced password change gate ───────────────────────────────
+    {
+        setup(
+            "/",
+            UiTestMockState {
+                boot: Some(AppBoot::Ready(fixtures::user(UserRole::User, true))),
+                ..Default::default()
+            },
+        );
+        let h = mount();
+        settle().await;
+        assert!(
+            has_testid("forced-password-overlay"),
+            "forced-password-overlay should render"
+        );
+        assert!(
+            has_testid("forced-change-password-page"),
+            "forced-change-password-page should render"
+        );
+        teardown(h);
+    }
+
+    // ── 4. Authenticated home shell ──────────────────────────────────
+    {
+        setup(
+            "/",
+            UiTestMockState {
+                boot: Some(AppBoot::Ready(fixtures::user(UserRole::User, false))),
+                providers: Some(Ok(fixtures::providers())),
+                ..Default::default()
+            },
+        );
+        let h = mount();
+        settle().await;
+        assert!(has_testid("app-shell-nav"), "app-shell-nav should render");
+        assert!(has_testid("home-page"), "home-page should render");
+        teardown(h);
+    }
+
+    // ── 5. Admin route for admin user ────────────────────────────────
+    {
+        setup(
+            "/admin",
+            UiTestMockState {
+                boot: Some(AppBoot::Ready(fixtures::user(UserRole::Admin, false))),
+                providers: Some(Ok(fixtures::providers())),
+                admin_users: Some(Ok(vec![fixtures::user(UserRole::Admin, false)])),
+                settings: Some(Ok(fixtures::settings())),
+                ..Default::default()
+            },
+        );
+        let h = mount();
+        settle().await;
+        assert!(has_testid("admin-page"), "admin-page should render");
+        teardown(h);
+    }
+
+    // ── 6. Provider login route ──────────────────────────────────────
+    {
+        setup(
+            "/login/provider-a",
+            UiTestMockState {
+                boot: Some(AppBoot::Ready(fixtures::user(UserRole::User, false))),
+                provider: Some(Ok(fixtures::providers()[0].clone())),
+                provider_session_valid: Some(false),
+                ..Default::default()
+            },
+        );
+        let h = mount();
+        settle().await;
+        assert!(
+            has_testid("provider-login-page"),
+            "provider-login-page should render"
+        );
+        teardown(h);
+    }
+
+    // ── 7. Not-found route ───────────────────────────────────────────
+    {
+        setup(
+            "/404-missing",
+            UiTestMockState {
+                boot: Some(AppBoot::Ready(fixtures::user(UserRole::User, false))),
+                providers: Some(Ok(fixtures::providers())),
+                ..Default::default()
+            },
+        );
+        let h = mount();
+        settle().await;
+        assert!(has_testid("not-found-page"), "not-found-page should render");
+        teardown(h);
+    }
+
+    // ── 8. Admin dashboard link visible for admin ────────────────────
+    {
+        setup(
+            "/",
+            UiTestMockState {
+                boot: Some(AppBoot::Ready(fixtures::user(UserRole::Admin, false))),
+                providers: Some(Ok(fixtures::providers())),
+                ..Default::default()
+            },
+        );
+        let h = mount();
+        settle().await;
+        assert!(
+            has_testid("admin-dashboard-link"),
+            "admin-dashboard-link should be visible for admin"
+        );
+        teardown(h);
+    }
+
+    // ── 9. Admin dashboard link hidden for non-admin ─────────────────
+    {
+        setup(
+            "/",
+            UiTestMockState {
+                boot: Some(AppBoot::Ready(fixtures::user(UserRole::User, false))),
+                providers: Some(Ok(fixtures::providers())),
+                ..Default::default()
+            },
+        );
+        let h = mount();
+        settle().await;
+        assert!(
+            !has_testid("admin-dashboard-link"),
+            "admin-dashboard-link should NOT be visible for non-admin"
+        );
+        teardown(h);
+    }
+
+    // ── 10. Voluntary password change overlay ────────────────────────
+    {
+        setup(
+            "/",
+            UiTestMockState {
+                boot: Some(AppBoot::Ready(fixtures::user(UserRole::User, false))),
+                providers: Some(Ok(fixtures::providers())),
+                ..Default::default()
+            },
+        );
+        let h = mount();
+        settle().await;
+        click_testid("open-change-password-button");
+        settle().await;
+        assert!(
+            has_testid("voluntary-password-overlay"),
+            "voluntary-password-overlay should render"
+        );
+        assert!(
+            has_testid("voluntary-change-password-page"),
+            "voluntary-change-password-page should render"
+        );
+        teardown(h);
+    }
+
+    // ── 11. Sign-out returns to login gate ───────────────────────────
+    {
+        setup(
+            "/",
+            UiTestMockState {
+                boot: Some(AppBoot::Ready(fixtures::user(UserRole::User, false))),
+                providers: Some(Ok(fixtures::providers())),
+                ..Default::default()
+            },
+        );
+        let h = mount();
+        settle().await;
+        assert!(
+            has_testid("sign-out-button"),
+            "sign-out-button should exist"
+        );
+        click_testid("sign-out-button");
+        settle().await;
+        assert!(
+            has_testid("login-overlay"),
+            "login-overlay should appear after sign-out"
+        );
+        teardown(h);
+    }
+
+    // ── 12. In-app SPA navigation ────────────────────────────────────
+    {
+        setup(
+            "/admin",
+            UiTestMockState {
+                boot: Some(AppBoot::Ready(fixtures::user(UserRole::Admin, false))),
+                providers: Some(Ok(fixtures::providers())),
+                admin_users: Some(Ok(vec![fixtures::user(UserRole::Admin, false)])),
+                settings: Some(Ok(fixtures::settings())),
+                ..Default::default()
+            },
+        );
+        let h = mount();
+        settle().await;
+        assert_eq!(pathname(), "/admin");
+        click_testid("app-logo-link");
+        settle().await;
+        assert_eq!(pathname(), "/");
+        assert!(
+            has_testid("app-shell-nav"),
+            "app-shell-nav should persist after navigation"
+        );
+        assert!(
+            has_testid("home-page"),
+            "home-page should render after navigation"
+        );
+        teardown(h);
+    }
+
+    // ── 13. Channel → Player navigation ──────────────────────────────
+    {
+        setup(
+            "/providers/provider-a/channels",
+            UiTestMockState {
+                boot: Some(AppBoot::Ready(fixtures::user(UserRole::User, false))),
+                provider_session_valid: Some(true),
+                channels: Some(Ok(fixtures::channels())),
+                categories: Some(Ok(fixtures::categories())),
+                stream: Some(Ok(fixtures::stream())),
+                ..Default::default()
+            },
+        );
+        let h = mount();
+        sleep_ms(150).await;
+        assert!(has_testid("channels-page"), "channels-page should render");
+        click_selector("[title='News One']");
+        sleep_ms(300).await;
+        assert_eq!(pathname(), "/providers/provider-a/play/channel-1");
+        assert_eq!(text_for_testid("player-channel-name"), "News One");
+        teardown(h);
+    }
 }
