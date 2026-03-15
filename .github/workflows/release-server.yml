@@ -84,7 +84,7 @@ jobs:
 
       - name: Install frontend dependencies
         working-directory: web
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: Build bundled frontend assets
         working-directory: web

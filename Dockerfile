@@ -13,7 +13,7 @@ COPY crates crates
 COPY web web
 
 WORKDIR /app/web
-RUN bun install
+RUN bun install --frozen-lockfile
 RUN trunk build --release
 
 # ── Stage 2: Build the server binary ─────────────────────────────────────────

@@ -19,13 +19,7 @@ pub async fn serve_embedded_frontend(uri: Uri) -> Response {
         return response;
     }
 
-    // A path is an SPA route if its last segment has no file extension (e.g. `/channels`),
-    // or if the original path ended with `/` (e.g. `/channels/`). The trailing-slash case
-    // must be checked against the original path because normalize_path appends `index.html`,
-    // making the normalized last segment look like a file.
-    let is_spa_route =
-        !path.rsplit('/').next().unwrap_or_default().contains('.') || original_path.ends_with('/');
-    if (is_spa_route || path == "/index.html")
+    if should_fallback_to_index_html(original_path, &path)
         && let Some(response) = asset_response("/index.html")
     {
         return response;
@@ -54,6 +48,11 @@ fn normalize_path(path: &str) -> String {
     }
 }
 
+fn should_fallback_to_index_html(original_path: &str, normalized_path: &str) -> bool {
+    let last_segment = normalized_path.rsplit('/').next().unwrap_or_default();
+    normalized_path == "/index.html" || !last_segment.contains('.') || original_path.ends_with('/')
+}
+
 fn asset_response(path: &str) -> Option<Response> {
     let index = EMBEDDED_ASSETS
         .binary_search_by(|(asset_path, _)| compare_asset_path(asset_path, path))
@@ -76,4 +75,50 @@ fn asset_response(path: &str) -> Option<Response> {
 
 fn compare_asset_path(asset_path: &str, requested_path: &str) -> Ordering {
     asset_path.cmp(requested_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{normalize_path, should_fallback_to_index_html};
+
+    #[test]
+    fn normalize_root_path_to_index() {
+        assert_eq!(normalize_path("/"), "/index.html");
+    }
+
+    #[test]
+    fn normalize_directory_path_to_index() {
+        assert_eq!(normalize_path("/channels/"), "/channels/index.html");
+    }
+
+    #[test]
+    fn normalize_asset_path_without_changes() {
+        assert_eq!(normalize_path("/assets/app.js"), "/assets/app.js");
+    }
+
+    #[test]
+    fn spa_route_without_extension_falls_back() {
+        assert!(should_fallback_to_index_html("/channels", "/channels"));
+    }
+
+    #[test]
+    fn spa_route_with_trailing_slash_falls_back() {
+        assert!(should_fallback_to_index_html(
+            "/channels/",
+            "/channels/index.html"
+        ));
+    }
+
+    #[test]
+    fn asset_path_does_not_fall_back() {
+        assert!(!should_fallback_to_index_html(
+            "/assets/app.js",
+            "/assets/app.js"
+        ));
+    }
+
+    #[test]
+    fn root_index_falls_back() {
+        assert!(should_fallback_to_index_html("/", "/index.html"));
+    }
 }
