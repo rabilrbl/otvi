@@ -184,7 +184,7 @@ This typically reduces the binary size by 20–40% compared to default release s
 
 Release assets publish two tarballs for each `vX.Y.Z` tag:
 
-- bundled `otvi` release artifact with the frontend embedded into the binary
+- bundled `otvi` release artifact with the frontend embedded into the binary and the executable named `otvi`
 - `otvi-server` release artifact for API-only use
 
 ### Build from Source
@@ -203,6 +203,22 @@ cargo build --release -p otvi-server
 
 ### Run
 
+Bundled binary (frontend embedded):
+
+```bash
+export DATABASE_URL=sqlite://data.db
+export JWT_SECRET=$(openssl rand -hex 32)
+export PORT=3000
+export PROVIDERS_DIR=./providers
+export RUST_LOG=otvi_server=info
+export LOG_FORMAT=text
+export CORS_ORIGINS=https://tv.example.com
+
+./otvi
+```
+
+API-only binary (serves frontend files from disk):
+
 ```bash
 export DATABASE_URL=sqlite://data.db
 export JWT_SECRET=$(openssl rand -hex 32)
@@ -213,7 +229,7 @@ export RUST_LOG=otvi_server=info
 export LOG_FORMAT=text
 export CORS_ORIGINS=https://tv.example.com
 
-./target/release/otvi-server
+./otvi-server
 ```
 
 Or use a `.env` file:

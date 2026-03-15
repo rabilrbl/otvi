@@ -13,7 +13,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages-${{ github.ref }}
+  group: pages
   cancel-in-progress: false
 
 jobs:
@@ -37,9 +37,7 @@ jobs:
           import os
 
           tag = pathlib.Path(os.environ['GITHUB_REF_NAME'])
-          version = tag.name.removeprefix('server-v')
-          if version == tag.name:
-              version = tag.name.removeprefix('v')
+          version = tag.name.removeprefix('v')
 
           manifests = {
               'otvi-core': 'crates/otvi-core/Cargo.toml',

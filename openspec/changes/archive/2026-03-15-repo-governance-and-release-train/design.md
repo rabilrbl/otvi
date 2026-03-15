@@ -67,18 +67,18 @@ Platform limitation:
 
 - The default pull request base branch cannot be fully enforced by repository files alone; the proposal will document the required GitHub setting change and branch protection expectations.
 
-### 3. Use an explicit server release tag pattern and make `otvi-server` the canonical public release stream
+### 3. Use a unified `vX.Y.Z` release tag pattern and keep `otvi-server` as the primary runtime artifact
 
-The release workflow will be designed around a single documented server-release tag pattern, preferably `server-vX.Y.Z`, rather than a generic `vX.Y.Z` tag.
+The release workflow will use a single documented `vX.Y.Z` tag pattern for releases, with all publishable workspace components versioned to match the same tag.
 
 Rationale:
 
-- The project already contains multiple versioned packages (`otvi-core`, `otvi-server`, `otvi-web`), so an explicit server tag avoids ambiguity if component-specific releases are introduced later.
-- It makes the docs publication contract clearer because the docs version tracks the canonical server release rather than an unspecified workspace version.
+- A single semver tag keeps the release contract straightforward for binaries, containers, and docs.
+- Requiring all publishable workspace components to share the release version keeps validation deterministic and avoids partial-release ambiguity.
 
 Alternatives considered:
 
-- Keep generic `vX.Y.Z` tags: shorter and compatible with current docs automation, but less explicit once multiple publishable components exist.
+- Use an explicit `server-vX.Y.Z` tag family: more explicit for one component, but unnecessary once the whole release train is version-locked to the same semver tag.
 - Create fully separate tag families for every package: precise, but more operational overhead than the current request calls for.
 
 ### 4. Require explicit release preparation and use tag-driven CD for validation and publication
@@ -98,9 +98,9 @@ Alternatives considered:
 
 Implementation consequence:
 
-- `otvi-server` version changes are mandatory for a server release.
-- `otvi-core` and `otvi-web` version changes are optional and must only be included when maintainers intentionally prepare them for the same release.
+- `otvi-core`, `otvi-server`, and `otvi-web` version changes are mandatory for a tagged release.
 - The release workflow should fail on version mismatch or missing release artifacts instead of silently changing unrelated files.
+- Bundled and API-only release artifacts may differ in packaging, but both are produced from the same tagged repository state.
 
 ### 5. Make the latest released docs the stable default and keep unreleased docs as an explicit in-progress version
 
@@ -136,7 +136,7 @@ Alternatives considered:
 - [Risk] The nonstandard `dev` -> `main` flow may confuse outside contributors. -> Mitigation: document branch roles prominently in `CONTRIBUTING.md`, PR templates, and release guidance.
 - [Risk] Some expectations, such as default PR base branch and branch protection, cannot be enforced entirely in-repo. -> Mitigation: add an explicit administrator checklist and call out required GitHub settings in repository docs.
 - [Risk] Moving material out of `README.md` can temporarily make information feel harder to find. -> Mitigation: keep the README focused but link clearly to the new governance and docs entrypoints.
-- [Risk] Tag naming changes from `v*` to `server-v*` may break existing maintainer habits or scripts. -> Mitigation: document the new tag contract and update workflows consistently in one change.
+- [Risk] A unified `v*` tag contract may be mistaken for a server-only release marker unless the docs clearly call out the version-locked workspace contract. -> Mitigation: document the shared-version release contract across `README.md`, `RELEASING.md`, and the specs.
 - [Risk] Requiring prepared manifest/docs versions before tagging adds release ceremony. -> Mitigation: provide `RELEASING.md` with a repeatable checklist and keep the release workflow deterministic.
 - [Risk] Stable-default docs can drift from unreleased branch docs if maintainers forget to version snapshots. -> Mitigation: validate docs-version artifacts as part of the documented release preparation flow.
 
@@ -151,6 +151,6 @@ Alternatives considered:
 
 ## Open Questions
 
-- Should the first implementation preserve backward compatibility with existing `v*` tags for a transition period, or switch directly to `server-v*` only?
-- What exact server artifact target should the release workflow publish first (for example GitHub Release assets only, container images, or both)?
-- Should the unreleased docs label remain `Next`, or should it be renamed to something more explicit such as `Unreleased` or `Main` once stable docs become default?
+- Should future releases also produce additional platform-specific binaries beyond Linux x86_64?
+- What exact release asset mix should remain mandatory long-term (for example GitHub Release assets only, container images, or both)?
+- Should the unreleased docs label remain `Unreleased`, or should it eventually map directly to the release-train branch name in the UI?

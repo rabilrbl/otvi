@@ -107,7 +107,7 @@ jobs:
 
           mkdir -p "$FULL_DIR" "$API_DIR"
 
-          cp target/release-bundled/release/otvi-server "$FULL_DIR/otvi-server"
+          cp target/release-bundled/release/otvi-server "$FULL_DIR/otvi"
           cp target/release-server-only/release/otvi-server "$API_DIR/otvi-server"
           cp README.md LICENSE RELEASING.md "$FULL_DIR/"
           cp README.md LICENSE RELEASING.md "$API_DIR/"

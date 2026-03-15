@@ -9,18 +9,18 @@ This repository uses a `dev` -> `main` release train.
 ## Release Scope
 
 - Every release tag requires matching versions in `crates/otvi-core/Cargo.toml`, `crates/otvi-server/Cargo.toml`, and `web/Cargo.toml`.
-- Release binaries include both a bundled `otvi-server` artifact with the frontend embedded and a server-only API artifact.
+- Release binaries include both a bundled `otvi` artifact with the frontend embedded and a server-only `otvi-server` API artifact.
 - GHCR publishes two images: `ghcr.io/rabilrbl/otvi` (bundled frontend) and `ghcr.io/rabilrbl/otvi-server` (API only).
 
 ## Release Preparation Checklist
 
 1. Promote the intended changes from `dev` into `main`.
 2. Update `crates/otvi-core/Cargo.toml`, `crates/otvi-server/Cargo.toml`, and `web/Cargo.toml` to the target release version.
-4. Update in-progress docs in `docs/docs/`.
-5. Add a release blog post in `docs/blog/` if public notes are needed.
-6. Create the docs snapshot with `cd docs && bun run docs:version <version>`.
-7. Verify `docs/versions.json` lists the new version first and that the matching `versioned_docs/` and `versioned_sidebars/` artifacts exist.
-8. Run the validation commands:
+3. Update in-progress docs in `docs/docs/`.
+4. Add a release blog post in `docs/blog/` if public notes are needed.
+5. Create the docs snapshot with `cd docs && bun run docs:version <version>`.
+6. Verify `docs/versions.json` lists the new version first and that the matching `versioned_docs/` and `versioned_sidebars/` artifacts exist.
+7. Run the validation commands:
 
 ```bash
 cargo fmt --all -- --check
@@ -29,9 +29,9 @@ cargo test --workspace --all-features
 cd docs && bun install --frozen-lockfile && bun run build:release
 ```
 
-9. Commit the release-preparation changes on `main`.
-10. Create and push the release tag: `vX.Y.Z`.
-11. Confirm the binary release, docs deployment, and GHCR publishing workflows all succeed.
+8. Commit the release-preparation changes on `main`.
+9. Create and push the release tag: `vX.Y.Z`.
+10. Confirm the binary release, docs deployment, and GHCR publishing workflows all succeed.
 
 ## What the Release Workflow Validates
 

@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use axum::body::Body;
 use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
 use axum::http::{HeaderValue, StatusCode, Uri};
@@ -47,12 +49,13 @@ fn normalize_path(path: &str) -> String {
 }
 
 fn asset_response(path: &str) -> Option<Response> {
-    let (_, bytes) = EMBEDDED_ASSETS
-        .iter()
-        .find(|(asset_path, _)| *asset_path == path)?;
+    let index = EMBEDDED_ASSETS
+        .binary_search_by(|(asset_path, _)| compare_asset_path(asset_path, path))
+        .ok()?;
+    let (_, bytes) = EMBEDDED_ASSETS[index];
     let mime = mime_guess::from_path(path).first_or_octet_stream();
 
-    let mut response = Response::new(Body::from(*bytes));
+    let mut response = Response::new(Body::from(bytes));
     *response.status_mut() = StatusCode::OK;
     response
         .headers_mut()
@@ -63,4 +66,8 @@ fn asset_response(path: &str) -> Option<Response> {
     );
 
     Some(response)
+}
+
+fn compare_asset_path(asset_path: &str, requested_path: &str) -> Ordering {
+    asset_path.cmp(requested_path)
 }

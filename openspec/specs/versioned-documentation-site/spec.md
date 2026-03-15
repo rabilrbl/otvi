@@ -34,12 +34,12 @@ The docs site configuration MUST use supported Docusaurus options for docs versi
 - **THEN** the instructions describe how to cut a docs version, where versioned artifacts are stored, and how to add release blog posts before publishing a release
 
 ### Requirement: Docs publishing MUST run automatically for release tags
-The CI/CD workflow MUST build and deploy the documentation site automatically when a new server release tag matching the documented release pattern is pushed, using the repository state associated with that tag. The published site for that run MUST promote the tagged release documentation as the latest stable docs version rather than leaving the unreleased current docs as the default public landing view.
+The CI/CD workflow MUST build and deploy the documentation site automatically when a new `vX.Y.Z` release tag matching the documented release pattern is pushed, using the repository state associated with that tag. The published site for that run MUST promote the tagged release documentation as the latest stable docs version rather than leaving the unreleased current docs as the default public landing view.
 
 #### Scenario: Release tag triggers docs deploy
-- **WHEN** a new server release tag that matches the configured release pattern is pushed to the repository
+- **WHEN** a new `vX.Y.Z` release tag that matches the configured release pattern is pushed to the repository
 - **THEN** GitHub Actions runs the docs build and GitHub Pages deployment workflow without requiring a manual follow-up step
 
 #### Scenario: Tagged deployment publishes the matching stable docs version
-- **WHEN** the docs deployment workflow runs for a matching server release tag
+- **WHEN** the docs deployment workflow runs for a matching `vX.Y.Z` release tag
 - **THEN** the built site content comes from the checked-out tagged ref and the tagged docs version becomes the site's latest stable documentation selection

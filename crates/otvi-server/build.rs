@@ -87,6 +87,7 @@ fn collect_assets(root: &Path, current: &Path, assets: &mut Vec<(String, PathBuf
             .to_string_lossy()
             .replace('\\', "/");
 
+        println!("cargo:rerun-if-changed={}", canonical_path.display());
         assets.push((format!("/{relative_path}"), canonical_path));
     }
 }
