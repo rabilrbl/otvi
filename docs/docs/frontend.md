@@ -121,7 +121,7 @@ The frontend has browser-driven UI tests implemented with `wasm-bindgen-test` an
 
 ```bash
 cd web
-wasm-pack test --headless --chrome --features ui-test
+wasm-pack test --headless --chrome --features ui-test --lib
 # or
 bun run ui:test
 ```

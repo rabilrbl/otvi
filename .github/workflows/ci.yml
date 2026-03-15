@@ -176,4 +176,5 @@ jobs:
         working-directory: web
         env:
           CHROMEDRIVER: ${{ steps.setup-chrome.outputs.chromedriver-path }}
-        run: wasm-pack test --headless --chrome --features ui-test
+          WASM_BINDGEN_USE_BROWSER: "1"
+        run: wasm-pack test --headless --chrome --features ui-test --lib

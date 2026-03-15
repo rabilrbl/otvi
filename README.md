@@ -61,7 +61,7 @@ cargo run -p otvi-server
 
 ```bash
 cd web
-wasm-pack test --headless --chrome --features ui-test
+wasm-pack test --headless --chrome --features ui-test --lib
 # or
 bun run ui:test
 ```
