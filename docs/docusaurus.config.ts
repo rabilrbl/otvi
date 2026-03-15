@@ -48,7 +48,7 @@ const config: Config = {
           lastVersion: latestReleasedVersion,
           versions: {
             current: {
-              label: 'Next',
+              label: 'Unreleased',
             },
           },
         },
