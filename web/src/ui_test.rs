@@ -186,6 +186,16 @@ fn mount() {
     crate::mount_app();
 }
 
+fn reset_test_page() {
+    set_path("/");
+    document()
+        .body()
+        .expect("body must exist")
+        .set_inner_html("");
+    api::clear_ui_test_mock_state();
+    api::clear_token();
+}
+
 #[wasm_bindgen_test(async)]
 async fn renders_setup_gate_when_boot_needs_setup() {
     reset_dom_and_state(
@@ -201,6 +211,7 @@ async fn renders_setup_gate_when_boot_needs_setup() {
 
     assert!(has_testid("setup-overlay"));
     assert!(has_testid("setup-page"));
+    reset_test_page();
 }
 
 #[wasm_bindgen_test(async)]
@@ -218,6 +229,7 @@ async fn renders_login_gate_when_boot_needs_login() {
 
     assert!(has_testid("login-overlay"));
     assert!(has_testid("app-login-page"));
+    reset_test_page();
 }
 
 #[wasm_bindgen_test(async)]
@@ -235,6 +247,7 @@ async fn renders_forced_password_gate_when_required() {
 
     assert!(has_testid("forced-password-overlay"));
     assert!(has_testid("forced-change-password-page"));
+    reset_test_page();
 }
 
 #[wasm_bindgen_test(async)]
@@ -253,6 +266,7 @@ async fn renders_authenticated_home_shell() {
 
     assert!(has_testid("app-shell-nav"));
     assert!(has_testid("home-page"));
+    reset_test_page();
 }
 
 #[wasm_bindgen_test(async)]
@@ -271,6 +285,7 @@ async fn renders_admin_route_for_admin_user() {
     mount();
     settle().await;
     assert!(has_testid("admin-page"));
+    reset_test_page();
 }
 
 #[wasm_bindgen_test(async)]
@@ -287,6 +302,7 @@ async fn renders_provider_login_route() {
     mount();
     settle().await;
     assert!(has_testid("provider-login-page"));
+    reset_test_page();
 }
 
 #[wasm_bindgen_test(async)]
@@ -302,6 +318,7 @@ async fn renders_not_found_route() {
     mount();
     settle().await;
     assert!(has_testid("not-found-page"));
+    reset_test_page();
 }
 
 #[wasm_bindgen_test(async)]
@@ -318,6 +335,7 @@ async fn admin_dashboard_link_visible_for_admin() {
     mount();
     settle().await;
     assert!(has_testid("admin-dashboard-link"));
+    reset_test_page();
 }
 
 #[wasm_bindgen_test(async)]
@@ -334,6 +352,7 @@ async fn admin_dashboard_link_hidden_for_non_admin() {
     mount();
     settle().await;
     assert!(!has_testid("admin-dashboard-link"));
+    reset_test_page();
 }
 
 #[wasm_bindgen_test(async)]
@@ -354,6 +373,7 @@ async fn voluntary_password_action_opens_overlay() {
 
     assert!(has_testid("voluntary-password-overlay"));
     assert!(has_testid("voluntary-change-password-page"));
+    reset_test_page();
 }
 
 #[wasm_bindgen_test(async)]
@@ -375,6 +395,7 @@ async fn sign_out_returns_to_login_gate() {
     settle().await;
 
     assert!(has_testid("login-overlay"));
+    reset_test_page();
 }
 
 #[wasm_bindgen_test(async)]
@@ -400,6 +421,7 @@ async fn in_app_navigation_uses_spa_route_transition() {
     assert_eq!(pathname(), "/");
     assert!(has_testid("app-shell-nav"));
     assert!(has_testid("home-page"));
+    reset_test_page();
 }
 
 #[wasm_bindgen_test(async)]
@@ -426,4 +448,5 @@ async fn channel_to_player_navigation_keeps_playback_context() {
 
     assert_eq!(pathname(), "/providers/provider-a/play/channel-1");
     assert_eq!(text_for_testid("player-channel-name"), "News One");
+    reset_test_page();
 }
