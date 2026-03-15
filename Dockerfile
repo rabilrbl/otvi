@@ -22,6 +22,7 @@ FROM rust:1.94-bookworm AS build-server
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
+COPY web web
 COPY --from=build-web /app/dist /app/dist
 
 # Build with optimised release profile (LTO + single codegen unit).
