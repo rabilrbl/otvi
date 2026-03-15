@@ -23,7 +23,7 @@ This guide walks you through setting up OTVI from scratch — from installing pr
 
 - **Trunk** CLI (WASM bundler for Leptos)
   ```bash
-  cargo install trunk
+  cargo binstall trunk
   ```
 
 ### Optional

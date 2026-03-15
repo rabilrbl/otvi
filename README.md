@@ -37,7 +37,7 @@ providers/*.yaml
 ### Prerequisites
 
 - Rust stable
-- `trunk` for the frontend: `cargo install trunk`
+- `trunk` for the frontend: `cargo binstall trunk`
 - `wasm32-unknown-unknown`: `rustup target add wasm32-unknown-unknown`
 - `wasm-pack` for frontend UI tests: `cargo binstall wasm-pack`
 - Bun for the docs site and frontend package scripts

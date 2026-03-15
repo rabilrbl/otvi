@@ -14,7 +14,7 @@ Thanks for contributing to OTVI.
 
 - Rust stable
 - `wasm32-unknown-unknown`: `rustup target add wasm32-unknown-unknown`
-- `trunk`: `cargo install trunk`
+- `trunk`: `cargo binstall trunk`
 - `wasm-pack`: `cargo binstall wasm-pack`
 - Bun for docs work and frontend package scripts
 

@@ -1,11 +1,25 @@
 # ── Stage 1: Build the WASM frontend ─────────────────────────────────────────
 FROM rust:1.94-bookworm AS build-web
 
+ARG TRUNK_VERSION=0.21.14
+ARG TARGETARCH
+
 COPY --from=oven/bun:1 /usr/local/bin/bun /usr/local/bin/bun
 RUN ln -s /usr/local/bin/bun /usr/local/bin/bunx
 
-RUN rustup target add wasm32-unknown-unknown \
-    && cargo install trunk --locked
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN case "${TARGETARCH}" in \
+        amd64) trunk_target=x86_64-unknown-linux-gnu ;; \
+        arm64) trunk_target=aarch64-unknown-linux-gnu ;; \
+        *) printf 'Unsupported TARGETARCH: %s\n' "${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && rustup target add wasm32-unknown-unknown \
+    && curl -fsSL "https://github.com/trunk-rs/trunk/releases/download/v${TRUNK_VERSION}/trunk-${trunk_target}.tar.gz" \
+    | tar -xz -C /usr/local/bin trunk
 
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
