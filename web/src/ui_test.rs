@@ -174,24 +174,42 @@ fn install_player_stubs() {
 fn reset_dom_and_state(path: &str, state: UiTestMockState) {
     api::clear_ui_test_mock_state();
     api::clear_token();
-    document()
-        .body()
+
+    // Remove old #app container if it exists, but preserve the
+    // wasm-bindgen-test-runner harness elements (e.g. #logs).
+    let doc = document();
+    if let Some(old) = doc.get_element_by_id("app") {
+        old.remove();
+    }
+
+    // Create a fresh #app container for the Leptos mount.
+    let container = doc
+        .create_element("div")
+        .expect("create_element should work");
+    container.set_id("app");
+    doc.body()
         .expect("body must exist")
-        .set_inner_html("");
+        .append_child(&container)
+        .expect("append_child should work");
+
     set_path(path);
     api::set_ui_test_mock_state(state);
 }
 
 fn mount() {
-    crate::mount_app();
+    let container = document()
+        .get_element_by_id("app")
+        .expect("#app must exist after reset_dom_and_state")
+        .unchecked_into::<web_sys::HtmlElement>();
+    crate::mount_app_to(container);
 }
 
 fn reset_test_page() {
     set_path("/");
-    document()
-        .body()
-        .expect("body must exist")
-        .set_inner_html("");
+    // Remove the #app container but leave the test runner harness intact.
+    if let Some(old) = document().get_element_by_id("app") {
+        old.remove();
+    }
     api::clear_ui_test_mock_state();
     api::clear_token();
 }
