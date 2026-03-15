@@ -12,13 +12,19 @@ pub fn has_embedded_frontend() -> bool {
 }
 
 pub async fn serve_embedded_frontend(uri: Uri) -> Response {
-    let path = normalize_path(uri.path());
+    let original_path = uri.path();
+    let path = normalize_path(original_path);
 
     if let Some(response) = asset_response(&path) {
         return response;
     }
 
-    let is_spa_route = !path.rsplit('/').next().unwrap_or_default().contains('.');
+    // A path is an SPA route if its last segment has no file extension (e.g. `/channels`),
+    // or if the original path ended with `/` (e.g. `/channels/`). The trailing-slash case
+    // must be checked against the original path because normalize_path appends `index.html`,
+    // making the normalized last segment look like a file.
+    let is_spa_route = !path.rsplit('/').next().unwrap_or_default().contains('.')
+        || original_path.ends_with('/');
     if (is_spa_route || path == "/index.html")
         && let Some(response) = asset_response("/index.html")
     {
