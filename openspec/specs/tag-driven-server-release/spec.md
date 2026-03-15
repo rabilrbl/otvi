@@ -8,7 +8,7 @@ The repository SHALL define one canonical `vX.Y.Z` tag pattern for releases, and
 - **THEN** GitHub Actions starts the server release workflow for that tag
 
 #### Scenario: Non-release tag is pushed
-- **WHEN** a maintainer pushes a tag that does not match the documented `otvi-server` release pattern
+- **WHEN** a maintainer pushes a tag that does not match the documented `vX.Y.Z` release pattern
 - **THEN** the server release workflow does not run
 
 ### Requirement: The release process MUST use explicit component version scope

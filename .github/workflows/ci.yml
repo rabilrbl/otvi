@@ -63,6 +63,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      issues: write
     services:
       httpbin:
         image: kennethreitz/httpbin
