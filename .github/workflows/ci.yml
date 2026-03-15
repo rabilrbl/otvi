@@ -160,6 +160,12 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - uses: browser-actions/setup-chrome@v1
+        id: setup-chrome
+        with:
+          chrome-version: 120
+          install-chromedriver: true
+          install-dependencies: true
       - name: Install wasm target
         run: rustup target add wasm32-unknown-unknown
       - name: Install wasm-pack
@@ -168,4 +174,6 @@ jobs:
           tool: wasm-pack
       - name: Run frontend UI tests
         working-directory: web
+        env:
+          CHROMEDRIVER: ${{ steps.setup-chrome.outputs.chromedriver-path }}
         run: wasm-pack test --headless --chrome --features ui-test

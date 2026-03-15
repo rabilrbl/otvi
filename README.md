@@ -66,6 +66,8 @@ wasm-pack test --headless --chrome --features ui-test
 bun run ui:test
 ```
 
+The browser runner reads `web/webdriver.json` for Chrome headless capabilities.
+
 ### Docker
 
 ```bash

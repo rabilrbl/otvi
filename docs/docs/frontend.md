@@ -126,6 +126,8 @@ wasm-pack test --headless --chrome --features ui-test
 bun run ui:test
 ```
 
+The browser test runner reads `web/webdriver.json`, which pins the headless Chrome flags used locally and in CI.
+
 ### Scope
 
 - Boot-state overlays (`setup`, app login, forced password change)
