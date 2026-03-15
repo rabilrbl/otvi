@@ -18,13 +18,6 @@
 - [ ] Docs updated in this PR
 - [ ] Follow-up docs work required
 
-## Release Impact
-
-- [ ] No release-train impact
-- [ ] Affects `main` release-train promotion
-- [ ] Affects `vX.Y.Z` tagging or release validation
-- [ ] Affects docs versioning or release blog workflow
-
 ## Branch Target
 
 This repository expects normal pull requests to target `dev`. If this PR targets another branch, explain why.
