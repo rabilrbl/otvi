@@ -46,7 +46,7 @@ providers/*.yaml
 
 ```bash
 # build the frontend
-cd web && trunk build
+(cd web && trunk build)
 
 # run the backend
 cargo run -p otvi-server
@@ -61,10 +61,10 @@ The app serves on `http://localhost:3000` by default.
 cargo test --workspace --all-features
 
 # frontend UI tests
-cd web && wasm-pack test --headless --firefox --features ui-test --lib
+(cd web && wasm-pack test --headless --firefox --features ui-test --lib)
 
 # docs site
-cd docs && bun install && bun run build
+(cd docs && bun install && bun run build)
 ```
 
 ## Documentation

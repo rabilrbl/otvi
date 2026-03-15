@@ -3,7 +3,7 @@ name: Release otvi-server
 on:
   push:
     tags:
-      - v*
+      - v*.*.*
 
 permissions:
   contents: write
@@ -44,6 +44,9 @@ jobs:
           if not tag.startswith(prefix):
               raise SystemExit(f'Tag must start with {prefix}: {tag}')
           version = tag[len(prefix):]
+          parts = version.split('.')
+          if len(parts) != 3 or any(not part.isdigit() for part in parts):
+              raise SystemExit(f'Tag must use vX.Y.Z semantic versioning: {tag}')
 
           manifests = {
               'otvi-core': 'crates/otvi-core/Cargo.toml',

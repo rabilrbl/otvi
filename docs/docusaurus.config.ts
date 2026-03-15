@@ -42,7 +42,7 @@ const config: Config = {
       {
         docs: {
           sidebarPath: './sidebars.ts',
-          editUrl: 'https://github.com/rabilrbl/otvi/tree/main/docs/',
+          editUrl: 'https://github.com/rabilrbl/otvi/tree/dev/docs/',
           editCurrentVersion: true,
           showLastUpdateTime: true,
           lastVersion: latestReleasedVersion,
@@ -55,7 +55,7 @@ const config: Config = {
         blog: {
           routeBasePath: 'blogs',
           showReadingTime: true,
-          editUrl: 'https://github.com/rabilrbl/otvi/tree/main/docs/',
+          editUrl: 'https://github.com/rabilrbl/otvi/tree/dev/docs/',
           blogTitle: 'OTVI Blog',
           blogDescription: 'Release notes, documentation updates, and project announcements for OTVI.',
           blogSidebarTitle: 'Recent posts',

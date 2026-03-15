@@ -65,10 +65,12 @@ fn asset_response(path: &str) -> Option<Response> {
     response
         .headers_mut()
         .insert(CONTENT_TYPE, HeaderValue::from_str(mime.as_ref()).ok()?);
-    response.headers_mut().insert(
-        CACHE_CONTROL,
-        HeaderValue::from_static("public, max-age=300"),
-    );
+    let cache_control = if path == "/index.html" {
+        HeaderValue::from_static("no-cache")
+    } else {
+        HeaderValue::from_static("public, max-age=300")
+    };
+    response.headers_mut().insert(CACHE_CONTROL, cache_control);
 
     Some(response)
 }
@@ -79,7 +81,8 @@ fn compare_asset_path(asset_path: &str, requested_path: &str) -> Ordering {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_path, should_fallback_to_index_html};
+    use super::{asset_response, normalize_path, should_fallback_to_index_html};
+    use axum::http::header::CACHE_CONTROL;
 
     #[test]
     fn normalize_root_path_to_index() {
@@ -120,5 +123,13 @@ mod tests {
     #[test]
     fn root_index_falls_back() {
         assert!(should_fallback_to_index_html("/", "/index.html"));
+    }
+
+    #[test]
+    fn index_html_is_not_cached_aggressively() {
+        let response = asset_response("/index.html");
+        if let Some(response) = response {
+            assert_eq!(response.headers().get(CACHE_CONTROL).unwrap(), "no-cache");
+        }
     }
 }
