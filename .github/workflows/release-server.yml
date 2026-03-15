@@ -1,0 +1,129 @@
+name: Release otvi-server
+
+on:
+  push:
+    tags:
+      - v*
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Validate and publish server release
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Validate release metadata
+        run: |
+          python <<'PY'
+          import json
+          import os
+          import pathlib
+          import tomllib
+
+          tag = os.environ['RELEASE_TAG']
+          prefix = 'v'
+          if not tag.startswith(prefix):
+              raise SystemExit(f'Tag must start with {prefix}: {tag}')
+          version = tag[len(prefix):]
+
+          manifests = {
+              'otvi-core': 'crates/otvi-core/Cargo.toml',
+              'otvi-server': 'crates/otvi-server/Cargo.toml',
+              'otvi-web': 'web/Cargo.toml',
+          }
+          for package, manifest_path in manifests.items():
+              manifest = tomllib.loads(pathlib.Path(manifest_path).read_text())
+              package_version = manifest['package']['version']
+              if package_version != version:
+                  raise SystemExit(f'{package} version {package_version} does not match tag {version}')
+
+          versions = json.loads(pathlib.Path('docs/versions.json').read_text())
+          if not versions or versions[0] != version:
+              found = versions[0] if versions else 'missing'
+              raise SystemExit(f'docs/versions.json must promote {version} as latest release, found {found}')
+
+          docs_snapshot = pathlib.Path(f'docs/versioned_docs/version-{version}')
+          sidebar_snapshot = pathlib.Path(f'docs/versioned_sidebars/version-{version}-sidebars.json')
+          if not docs_snapshot.exists():
+              raise SystemExit(f'Missing docs snapshot: {docs_snapshot}')
+          if not sidebar_snapshot.exists():
+              raise SystemExit(f'Missing sidebar snapshot: {sidebar_snapshot}')
+          PY
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install Trunk
+        uses: taiki-e/install-action@v2
+        with:
+          tool: trunk
+
+      - name: Install wasm target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Install frontend dependencies
+        working-directory: web
+        run: bun install
+
+      - name: Build bundled frontend assets
+        working-directory: web
+        run: trunk build --release
+
+      - name: Build bundled release binary
+        env:
+          OTVI_EMBED_FRONTEND: "1"
+        run: cargo build --locked --release -p otvi-server --target-dir target/release-bundled
+
+      - name: Build server-only release binary
+        run: cargo build --locked --release -p otvi-server --target-dir target/release-server-only
+
+      - name: Package release assets
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+
+          FULL_DIR="release/otvi-${VERSION}-linux-x86_64"
+          API_DIR="release/otvi-server-${VERSION}-linux-x86_64"
+
+          mkdir -p "$FULL_DIR" "$API_DIR"
+
+          cp target/release-bundled/release/otvi-server "$FULL_DIR/otvi-server"
+          cp target/release-server-only/release/otvi-server "$API_DIR/otvi-server"
+          cp README.md LICENSE RELEASING.md "$FULL_DIR/"
+          cp README.md LICENSE RELEASING.md "$API_DIR/"
+
+          tar -C release -czf "otvi-${VERSION}-linux-x86_64.tar.gz" "otvi-${VERSION}-linux-x86_64"
+          tar -C release -czf "otvi-server-${VERSION}-linux-x86_64.tar.gz" "otvi-server-${VERSION}-linux-x86_64"
+
+          sha256sum "otvi-${VERSION}-linux-x86_64.tar.gz" > "otvi-${VERSION}-linux-x86_64.tar.gz.sha256"
+          sha256sum "otvi-server-${VERSION}-linux-x86_64.tar.gz" > "otvi-server-${VERSION}-linux-x86_64.tar.gz.sha256"
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            otvi-*-linux-x86_64.tar.gz
+            otvi-*-linux-x86_64.tar.gz.sha256
+            otvi-server-*-linux-x86_64.tar.gz
+            otvi-server-*-linux-x86_64.tar.gz.sha256

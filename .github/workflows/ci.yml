@@ -2,9 +2,19 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches:
+      - dev
+      - main
   pull_request:
-    branches: [main]
+    branches:
+      - dev
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -75,14 +85,12 @@ jobs:
       - name: Generate coverage report
         env:
           HTTPBIN_URL: http://localhost:8888
-        run: |
-          cargo llvm-cov --workspace --exclude otvi-web --all-features --summary-only -- --include-ignored > coverage-summary.txt
+        run: cargo llvm-cov --workspace --exclude otvi-web --all-features --summary-only -- --include-ignored > coverage-summary.txt
       - name: Upload coverage report
         uses: actions/upload-artifact@v7
         with:
           name: coverage-report
-          path: |
-            coverage-summary.txt
+          path: coverage-summary.txt
       - name: Post coverage comment
         uses: actions/github-script@v8
         with:
@@ -90,16 +98,14 @@ jobs:
             const fs = require('fs');
             const summary = fs.readFileSync('coverage-summary.txt', 'utf8');
 
-            const comment = `## 📊 Coverage Report
+            const comment = `## Coverage Report
 
             \`\`\`
             ${summary}
             \`\`\`
 
-            Coverage report generated with \`cargo-llvm-cov\`.
-            `;
+            Coverage report generated with \`cargo-llvm-cov\`.`;
 
-            // Find existing comment
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -108,11 +114,10 @@ jobs:
 
             const botComment = comments.find(comment =>
               comment.user.type === 'Bot' &&
-              comment.body.includes('📊 Coverage Report')
+              comment.body.includes('## Coverage Report')
             );
 
             if (botComment) {
-              // Delete existing comment
               await github.rest.issues.deleteComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -120,12 +125,11 @@ jobs:
               });
             }
 
-            // Create new comment
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: comment
+              body: comment,
             });
 
   integration:
@@ -161,7 +165,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: browser-actions/setup-firefox@v1
-        id: setup-firefox
         with:
           firefox-version: latest
       - uses: browser-actions/setup-geckodriver@latest
