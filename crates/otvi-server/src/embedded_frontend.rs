@@ -23,8 +23,8 @@ pub async fn serve_embedded_frontend(uri: Uri) -> Response {
     // or if the original path ended with `/` (e.g. `/channels/`). The trailing-slash case
     // must be checked against the original path because normalize_path appends `index.html`,
     // making the normalized last segment look like a file.
-    let is_spa_route = !path.rsplit('/').next().unwrap_or_default().contains('.')
-        || original_path.ends_with('/');
+    let is_spa_route =
+        !path.rsplit('/').next().unwrap_or_default().contains('.') || original_path.ends_with('/');
     if (is_spa_route || path == "/index.html")
         && let Some(response) = asset_response("/index.html")
     {
