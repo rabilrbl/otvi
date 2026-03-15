@@ -1,6 +1,7 @@
 pub mod api;
 pub mod auth_middleware;
 pub mod db;
+pub mod embedded_frontend;
 pub mod error;
 pub mod provider_client;
 pub mod state;
@@ -24,6 +25,8 @@ use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa_swagger_ui::SwaggerUi;
 
 use state::{AppState, RateLimitConfig};
+
+pub use embedded_frontend::{has_embedded_frontend, serve_embedded_frontend};
 
 // ── OpenAPI root document ─────────────────────────────────────────────────
 

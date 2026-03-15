@@ -1,67 +1,61 @@
 # OTVI Documentation
 
-This directory contains the OTVI documentation site, built with [Docusaurus](https://docusaurus.io/).
+This directory contains the Docusaurus documentation site for OTVI.
 
-The site supports both versioned docs and a blog for release posts. The active documentation lives in `docs/docs/`, frozen releases are stored in Docusaurus versioned-docs artifacts, and release posts live under `docs/blog/` and are served from `/blogs`.
+## Docs Model
 
-## Prerequisites
-
-- [Bun](https://bun.sh/) (recommended) or Node.js 20+
+- `docs/docs/` contains the unreleased documentation that is promoted onto `main` for the next release train
+- `docs/versioned_docs/`, `docs/versioned_sidebars/`, and `docs/versions.json` store release snapshots checked into the repository
+- the published site defaults to the latest released docs version
+- the unreleased docs remain available in version navigation as `Unreleased`
+- release notes and announcements live in `docs/blog/`
 
 ## Development
 
 ```bash
-# Install dependencies
 bun install
-
-# Start the development server
 bun start
-
-# Build for production
 bun run build
-
-# Create a new versioned docs snapshot
-bun run docs:version <version>
-
-# Serve the production build locally
 bun run serve
 ```
 
-## Release Workflow
+## Maintainer Release Workflow
 
-Use this checklist when preparing a release that should publish updated documentation.
+Use this flow when preparing a server release that updates public docs.
 
-1. Update the in-progress docs in `docs/docs/`.
-2. If the release needs public notes, add a new post in `docs/blog/` using the existing blog front matter structure.
-3. Create a frozen docs snapshot with `bun run docs:version <version>`.
-4. Review the generated artifacts in `docs/versions.json`, `docs/versioned_docs/`, and `docs/versioned_sidebars/`.
-5. Verify the site locally with `bun install --frozen-lockfile` and `bun run build:release`.
-6. Commit the docs changes, then create and push a release tag in the `vX.Y.Z` format.
+1. Land normal docs changes through `dev`, then promote them onto `main` as part of release preparation.
+2. Update unreleased docs in `docs/docs/` on `main`.
+3. Add a release blog post in `docs/blog/` when public release notes are needed.
+4. Create the docs snapshot with `bun run docs:version <version>`.
+5. Confirm `docs/versions.json` lists the new version first.
+6. Confirm the generated artifacts exist in `docs/versioned_docs/version-<version>/` and `docs/versioned_sidebars/version-<version>-sidebars.json`.
+7. Validate the site with `bun install --frozen-lockfile` and `bun run build:release`.
+8. Commit the docs changes as part of the reviewed release preparation.
+9. Confirm `crates/otvi-core/Cargo.toml`, `crates/otvi-server/Cargo.toml`, and `web/Cargo.toml` all match `<version>`.
+10. Push the matching release tag: `v<version>`.
 
-Only `v*` tags are treated as release-doc publishing tags. Existing ad hoc or test tags outside that pattern are ignored by the docs deploy workflow.
+The docs deployment workflow publishes on:
+
+- pushes to `main`, so unreleased docs remain visible in version navigation
+- `v*` tags, so the tagged release state is published immediately
+
+## Edit Links and Branching
+
+- public stable docs default to the latest released version snapshot
+- `Unreleased` docs represent the next release train tracked from `main`
+- normal code and docs pull requests should still target `dev` unless the work is part of documented release promotion
 
 ## Project Structure
 
-```
+```text
 docs/
-├── blog/                  # Release notes and project announcements
-├── docs/                  # Markdown documentation pages
-│   ├── introduction.md
-│   ├── getting-started.md
-│   ├── architecture.md
-│   ├── configuration.md
-│   ├── providers/         # Provider guide
-│   ├── api-reference/     # API reference
-│   ├── frontend.md
-│   ├── deployment.md
-│   └── admin-guide.md
-├── versioned_docs/        # Frozen docs snapshots created by Docusaurus
-├── versioned_sidebars/    # Sidebar snapshots for versioned docs
-├── versions.json          # Published docs versions metadata
-├── src/
-│   ├── pages/             # Custom pages (landing page)
-│   └── css/               # Custom styles
-├── docusaurus.config.ts   # Docusaurus configuration
-├── sidebars.ts            # Sidebar navigation
-└── package.json
+|- blog/
+|- docs/
+|- versioned_docs/
+|- versioned_sidebars/
+|- versions.json
+|- src/
+|- docusaurus.config.ts
+|- sidebars.ts
+`- package.json
 ```

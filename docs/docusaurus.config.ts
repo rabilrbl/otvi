@@ -1,6 +1,13 @@
+import {readFileSync} from 'node:fs';
+import path from 'node:path';
 import {themes as prismThemes} from 'prism-react-renderer';
 import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
+
+const releasedVersions = JSON.parse(
+  readFileSync(path.join(__dirname, 'versions.json'), 'utf8'),
+) as string[];
+const latestReleasedVersion = releasedVersions[0] ?? 'current';
 
 const config: Config = {
   title: 'OTVI',
@@ -35,20 +42,20 @@ const config: Config = {
       {
         docs: {
           sidebarPath: './sidebars.ts',
-          editUrl: 'https://github.com/rabilrbl/otvi/tree/main/docs/',
+          editUrl: 'https://github.com/rabilrbl/otvi/tree/dev/docs/',
           editCurrentVersion: true,
           showLastUpdateTime: true,
-          lastVersion: 'current',
+          lastVersion: latestReleasedVersion,
           versions: {
             current: {
-              label: 'Next',
+              label: 'Unreleased',
             },
           },
         },
         blog: {
           routeBasePath: 'blogs',
           showReadingTime: true,
-          editUrl: 'https://github.com/rabilrbl/otvi/tree/main/docs/',
+          editUrl: 'https://github.com/rabilrbl/otvi/tree/dev/docs/',
           blogTitle: 'OTVI Blog',
           blogDescription: 'Release notes, documentation updates, and project announcements for OTVI.',
           blogSidebarTitle: 'Recent posts',
@@ -83,8 +90,7 @@ const config: Config = {
         },
         {
           type: 'docsVersionDropdown',
-          position: 'left',
-          dropdownActiveClassDisabled: true,
+          position: 'right',
         },
         {
           to: '/blogs',

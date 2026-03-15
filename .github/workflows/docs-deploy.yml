@@ -2,22 +2,21 @@ name: Deploy Documentation to GitHub Pages
 
 on:
   push:
-    branches: [main]
-    tags:
-      - 'v*'
+    branches:
+      - main
     paths:
-      - 'docs/**'
-      - '.github/workflows/docs-deploy.yml'
+      - docs/**
+      - .github/workflows/docs-deploy.yml
+    tags:
+      - v*.*.*
 
 permissions:
   contents: read
   pages: write
   id-token: write
 
-# Allow only one concurrent deployment; additional runs will queue and execute sequentially.
-# Do NOT cancel in-progress runs, as we want to allow these production deployments to complete.
 concurrency:
-  group: "pages"
+  group: pages
   cancel-in-progress: false
 
 jobs:
@@ -31,21 +30,61 @@ jobs:
           ref: ${{ github.ref }}
           fetch-depth: 0
 
+      - name: Validate tagged docs metadata
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          python <<'PY'
+          import json
+          import tomllib
+          import pathlib
+          import os
+
+          tag = pathlib.Path(os.environ['GITHUB_REF_NAME'])
+          version = tag.name.removeprefix('v')
+          parts = version.split('.')
+          if len(parts) != 3 or any(not part.isdigit() for part in parts):
+              raise SystemExit(f'Tag must use vX.Y.Z semantic versioning: {tag.name}')
+
+          manifests = {
+              'otvi-core': 'crates/otvi-core/Cargo.toml',
+              'otvi-server': 'crates/otvi-server/Cargo.toml',
+              'otvi-web': 'web/Cargo.toml',
+          }
+          for package, manifest_path in manifests.items():
+              manifest = tomllib.loads(pathlib.Path(manifest_path).read_text())
+              package_version = manifest['package']['version']
+              if package_version != version:
+                  raise SystemExit(f'{package} version {package_version} does not match tag {version}')
+
+          versions = json.loads(pathlib.Path('docs/versions.json').read_text())
+          if not versions:
+              raise SystemExit('docs/versions.json is empty')
+          if versions[0] != version:
+              raise SystemExit(f'Latest docs version must be {version}, found {versions[0]}')
+
+          versioned_docs = pathlib.Path(f'docs/versioned_docs/version-{version}')
+          versioned_sidebar = pathlib.Path(f'docs/versioned_sidebars/version-{version}-sidebars.json')
+          if not versioned_docs.exists():
+              raise SystemExit(f'Missing docs snapshot directory: {versioned_docs}')
+          if not versioned_sidebar.exists():
+              raise SystemExit(f'Missing versioned sidebar file: {versioned_sidebar}')
+          PY
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
       - name: Install dependencies
-        working-directory: ./docs
+        working-directory: docs
         run: bun install --frozen-lockfile
 
       - name: Typecheck documentation site
-        working-directory: ./docs
+        working-directory: docs
         run: bun run typecheck
 
       - name: Build documentation
-        working-directory: ./docs
+        working-directory: docs
         run: bun run build
 
       - name: Setup Pages
@@ -54,7 +93,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v4
         with:
-          path: ./docs/build
+          path: docs/build
 
   deploy:
     name: Deploy to GitHub Pages
