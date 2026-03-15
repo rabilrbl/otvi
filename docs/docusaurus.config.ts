@@ -48,7 +48,7 @@ const config: Config = {
           lastVersion: latestReleasedVersion,
           versions: {
             current: {
-              label: 'Unreleased',
+              label: 'Next',
             },
           },
         },
@@ -90,8 +90,7 @@ const config: Config = {
         },
         {
           type: 'docsVersionDropdown',
-          position: 'left',
-          dropdownActiveClassDisabled: true,
+          position: 'right',
         },
         {
           to: '/blogs',
