@@ -166,8 +166,48 @@ async fn sleep_ms(ms: i32) {
     let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
 }
 
+#[allow(dead_code)]
 async fn settle() {
-    sleep_ms(50).await;
+    sleep_ms(100).await;
+}
+
+/// Returns the innerHTML of the `#app` container (useful for diagnostic messages).
+fn app_html() -> String {
+    document()
+        .get_element_by_id("app")
+        .map(|el| el.inner_html())
+        .unwrap_or_else(|| "(#app not found)".into())
+}
+
+/// Poll the DOM for up to `timeout_ms` until `[data-testid='id']` appears.
+/// Returns `true` if found, `false` on timeout.
+async fn wait_for_testid(test_id: &str, timeout_ms: i32) -> bool {
+    let step = 25;
+    let mut elapsed = 0;
+    while elapsed < timeout_ms {
+        if has_testid(test_id) {
+            return true;
+        }
+        sleep_ms(step).await;
+        elapsed += step;
+    }
+    has_testid(test_id)
+}
+
+/// Poll the DOM for up to `timeout_ms` until `[data-testid='id']` is gone.
+/// Returns `true` if absent, `false` on timeout.
+#[allow(dead_code)]
+async fn wait_for_no_testid(test_id: &str, timeout_ms: i32) -> bool {
+    let step = 25;
+    let mut elapsed = 0;
+    while elapsed < timeout_ms {
+        if !has_testid(test_id) {
+            return true;
+        }
+        sleep_ms(step).await;
+        elapsed += step;
+    }
+    !has_testid(test_id)
 }
 
 fn install_player_stubs() {
@@ -247,6 +287,9 @@ fn teardown(handle: Box<dyn std::any::Any>) {
 async fn ui_scenarios() {
     install_player_stubs();
 
+    // Maximum time (ms) to wait for a testid to appear.
+    const WAIT: i32 = 2000;
+
     // ── 1. Setup gate ────────────────────────────────────────────────
     {
         setup(
@@ -257,8 +300,11 @@ async fn ui_scenarios() {
             },
         );
         let h = mount();
-        settle().await;
-        assert!(has_testid("setup-overlay"), "setup-overlay should render");
+        assert!(
+            wait_for_testid("setup-overlay", WAIT).await,
+            "setup-overlay should render. #app HTML: {}",
+            app_html()
+        );
         assert!(has_testid("setup-page"), "setup-page should render");
         teardown(h);
     }
@@ -273,8 +319,11 @@ async fn ui_scenarios() {
             },
         );
         let h = mount();
-        settle().await;
-        assert!(has_testid("login-overlay"), "login-overlay should render");
+        assert!(
+            wait_for_testid("login-overlay", WAIT).await,
+            "login-overlay should render. #app HTML: {}",
+            app_html()
+        );
         assert!(has_testid("app-login-page"), "app-login-page should render");
         teardown(h);
     }
@@ -289,10 +338,10 @@ async fn ui_scenarios() {
             },
         );
         let h = mount();
-        settle().await;
         assert!(
-            has_testid("forced-password-overlay"),
-            "forced-password-overlay should render"
+            wait_for_testid("forced-password-overlay", WAIT).await,
+            "forced-password-overlay should render. #app HTML: {}",
+            app_html()
         );
         assert!(
             has_testid("forced-change-password-page"),
@@ -312,8 +361,11 @@ async fn ui_scenarios() {
             },
         );
         let h = mount();
-        settle().await;
-        assert!(has_testid("app-shell-nav"), "app-shell-nav should render");
+        assert!(
+            wait_for_testid("app-shell-nav", WAIT).await,
+            "app-shell-nav should render. #app HTML: {}",
+            app_html()
+        );
         assert!(has_testid("home-page"), "home-page should render");
         teardown(h);
     }
@@ -331,8 +383,11 @@ async fn ui_scenarios() {
             },
         );
         let h = mount();
-        settle().await;
-        assert!(has_testid("admin-page"), "admin-page should render");
+        assert!(
+            wait_for_testid("admin-page", WAIT).await,
+            "admin-page should render. #app HTML: {}",
+            app_html()
+        );
         teardown(h);
     }
 
@@ -348,10 +403,10 @@ async fn ui_scenarios() {
             },
         );
         let h = mount();
-        settle().await;
         assert!(
-            has_testid("provider-login-page"),
-            "provider-login-page should render"
+            wait_for_testid("provider-login-page", WAIT).await,
+            "provider-login-page should render. #app HTML: {}",
+            app_html()
         );
         teardown(h);
     }
@@ -367,8 +422,11 @@ async fn ui_scenarios() {
             },
         );
         let h = mount();
-        settle().await;
-        assert!(has_testid("not-found-page"), "not-found-page should render");
+        assert!(
+            wait_for_testid("not-found-page", WAIT).await,
+            "not-found-page should render. #app HTML: {}",
+            app_html()
+        );
         teardown(h);
     }
 
@@ -383,10 +441,10 @@ async fn ui_scenarios() {
             },
         );
         let h = mount();
-        settle().await;
         assert!(
-            has_testid("admin-dashboard-link"),
-            "admin-dashboard-link should be visible for admin"
+            wait_for_testid("admin-dashboard-link", WAIT).await,
+            "admin-dashboard-link should be visible for admin. #app HTML: {}",
+            app_html()
         );
         teardown(h);
     }
@@ -402,7 +460,12 @@ async fn ui_scenarios() {
             },
         );
         let h = mount();
-        settle().await;
+        // Wait for the shell to render first, then verify admin link is absent.
+        assert!(
+            wait_for_testid("app-shell-nav", WAIT).await,
+            "app-shell-nav should render for non-admin. #app HTML: {}",
+            app_html()
+        );
         assert!(
             !has_testid("admin-dashboard-link"),
             "admin-dashboard-link should NOT be visible for non-admin"
@@ -421,12 +484,16 @@ async fn ui_scenarios() {
             },
         );
         let h = mount();
-        settle().await;
-        click_testid("open-change-password-button");
-        settle().await;
         assert!(
-            has_testid("voluntary-password-overlay"),
-            "voluntary-password-overlay should render"
+            wait_for_testid("open-change-password-button", WAIT).await,
+            "open-change-password-button should render. #app HTML: {}",
+            app_html()
+        );
+        click_testid("open-change-password-button");
+        assert!(
+            wait_for_testid("voluntary-password-overlay", WAIT).await,
+            "voluntary-password-overlay should render. #app HTML: {}",
+            app_html()
         );
         assert!(
             has_testid("voluntary-change-password-page"),
@@ -446,16 +513,16 @@ async fn ui_scenarios() {
             },
         );
         let h = mount();
-        settle().await;
         assert!(
-            has_testid("sign-out-button"),
-            "sign-out-button should exist"
+            wait_for_testid("sign-out-button", WAIT).await,
+            "sign-out-button should exist. #app HTML: {}",
+            app_html()
         );
         click_testid("sign-out-button");
-        settle().await;
         assert!(
-            has_testid("login-overlay"),
-            "login-overlay should appear after sign-out"
+            wait_for_testid("login-overlay", WAIT).await,
+            "login-overlay should appear after sign-out. #app HTML: {}",
+            app_html()
         );
         teardown(h);
     }
@@ -473,18 +540,22 @@ async fn ui_scenarios() {
             },
         );
         let h = mount();
-        settle().await;
+        assert!(
+            wait_for_testid("admin-page", WAIT).await,
+            "admin-page should render before navigation. #app HTML: {}",
+            app_html()
+        );
         assert_eq!(pathname(), "/admin");
         click_testid("app-logo-link");
-        settle().await;
+        assert!(
+            wait_for_testid("home-page", WAIT).await,
+            "home-page should render after navigation. #app HTML: {}",
+            app_html()
+        );
         assert_eq!(pathname(), "/");
         assert!(
             has_testid("app-shell-nav"),
             "app-shell-nav should persist after navigation"
-        );
-        assert!(
-            has_testid("home-page"),
-            "home-page should render after navigation"
         );
         teardown(h);
     }
@@ -503,10 +574,17 @@ async fn ui_scenarios() {
             },
         );
         let h = mount();
-        sleep_ms(150).await;
-        assert!(has_testid("channels-page"), "channels-page should render");
+        assert!(
+            wait_for_testid("channels-page", WAIT).await,
+            "channels-page should render. #app HTML: {}",
+            app_html()
+        );
         click_selector("[title='News One']");
-        sleep_ms(300).await;
+        assert!(
+            wait_for_testid("player-channel-name", WAIT).await,
+            "player-channel-name should render. #app HTML: {}",
+            app_html()
+        );
         assert_eq!(pathname(), "/providers/provider-a/play/channel-1");
         assert_eq!(text_for_testid("player-channel-name"), "News One");
         teardown(h);
