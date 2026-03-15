@@ -94,11 +94,17 @@ async fn main() -> anyhow::Result<()> {
     watcher::spawn(state.clone(), providers_dir.clone());
     tracing::info!(dir = %providers_dir, "Provider hot-reload enabled");
 
-    let app = otvi_server::build_router(state, rate_limit).fallback_service(
-        ServeDir::new(&static_dir)
-            .append_index_html_on_directories(true)
-            .fallback(ServeFile::new(format!("{static_dir}/index.html"))),
-    );
+    let app = if otvi_server::has_embedded_frontend() {
+        tracing::info!("Serving embedded frontend assets from the otvi-server binary");
+        otvi_server::build_router(state, rate_limit).fallback(otvi_server::serve_embedded_frontend)
+    } else {
+        tracing::info!(dir = %static_dir, "Serving frontend assets from the filesystem");
+        otvi_server::build_router(state, rate_limit).fallback_service(
+            ServeDir::new(&static_dir)
+                .append_index_html_on_directories(true)
+                .fallback(ServeFile::new(format!("{static_dir}/index.html"))),
+        )
+    };
 
     let addr = format!("0.0.0.0:{port}");
     tracing::info!("Listening on {addr}");

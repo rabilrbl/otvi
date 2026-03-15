@@ -2477,6 +2477,7 @@ dependencies = [
  "dotenvy",
  "http-body-util",
  "jsonwebtoken",
+ "mime_guess",
  "moka",
  "notify",
  "otvi-core",
