@@ -28,6 +28,7 @@ fn bearer() -> Option<String> {
 // ── OTVI app-level auth ──────────────────────────────────────────────────────
 
 /// Outcome of the single boot-check request (`GET /api/auth/me`).
+#[derive(Clone)]
 pub enum AppBoot {
     /// Valid JWT found – ready to use the app.
     Ready(UserInfo),
@@ -37,12 +38,63 @@ pub enum AppBoot {
     NeedsSetup,
 }
 
+#[cfg(all(feature = "ui-test", target_arch = "wasm32"))]
+#[derive(Clone, Default)]
+pub struct UiTestMockState {
+    pub boot: Option<AppBoot>,
+    pub providers: Option<Result<Vec<ProviderInfo>, String>>,
+    pub provider: Option<Result<ProviderInfo, String>>,
+    pub admin_users: Option<Result<Vec<UserInfo>, String>>,
+    pub settings: Option<Result<ServerSettings, String>>,
+    pub provider_session_valid: Option<bool>,
+    pub channels: Option<Result<ChannelListResponse, String>>,
+    pub categories: Option<Result<CategoryListResponse, String>>,
+    pub stream: Option<Result<StreamInfo, String>>,
+}
+
+#[cfg(all(feature = "ui-test", target_arch = "wasm32"))]
+mod ui_test_mock {
+    use super::UiTestMockState;
+    use std::cell::RefCell;
+
+    thread_local! {
+        static MOCK_STATE: RefCell<Option<UiTestMockState>> = const { RefCell::new(None) };
+    }
+
+    pub fn set(state: UiTestMockState) {
+        MOCK_STATE.with(|cell| *cell.borrow_mut() = Some(state));
+    }
+
+    pub fn clear() {
+        MOCK_STATE.with(|cell| *cell.borrow_mut() = None);
+    }
+
+    pub fn read<T>(f: impl FnOnce(&UiTestMockState) -> Option<T>) -> Option<T> {
+        MOCK_STATE.with(|cell| cell.borrow().as_ref().and_then(f))
+    }
+}
+
+#[cfg(all(feature = "ui-test", target_arch = "wasm32"))]
+pub fn set_ui_test_mock_state(state: UiTestMockState) {
+    ui_test_mock::set(state);
+}
+
+#[cfg(all(feature = "ui-test", target_arch = "wasm32"))]
+pub fn clear_ui_test_mock_state() {
+    ui_test_mock::clear();
+}
+
 /// Called once on app startup.  Calls `GET /api/auth/me` with whatever token
 /// is in localStorage.  Maps the three possible outcomes:
 /// • 200 OK           → `Ready(UserInfo)`
 /// • 401 Unauthorized → `NeedsLogin`  (token missing / expired, users exist)
 /// • 403 Forbidden    → `NeedsSetup`  (no users in DB yet)
 pub async fn boot_check() -> AppBoot {
+    #[cfg(all(feature = "ui-test", target_arch = "wasm32"))]
+    if let Some(mocked) = ui_test_mock::read(|state| state.boot.clone()) {
+        return mocked;
+    }
+
     let req = match bearer() {
         Some(b) => Request::get("/api/auth/me").header("Authorization", &b),
         None => Request::get("/api/auth/me"),
@@ -150,6 +202,11 @@ fn post_authed(url: &str) -> gloo_net::http::RequestBuilder {
 }
 
 pub async fn fetch_providers() -> Result<Vec<ProviderInfo>, String> {
+    #[cfg(all(feature = "ui-test", target_arch = "wasm32"))]
+    if let Some(mocked) = ui_test_mock::read(|state| state.providers.clone()) {
+        return mocked;
+    }
+
     let resp = get_authed("/api/providers")
         .send()
         .await
@@ -166,6 +223,11 @@ pub async fn fetch_providers() -> Result<Vec<ProviderInfo>, String> {
 }
 
 pub async fn fetch_provider(id: &str) -> Result<ProviderInfo, String> {
+    #[cfg(all(feature = "ui-test", target_arch = "wasm32"))]
+    if let Some(mocked) = ui_test_mock::read(|state| state.provider.clone()) {
+        return mocked;
+    }
+
     let resp = get_authed(&format!("/api/providers/{id}"))
         .send()
         .await
@@ -180,6 +242,11 @@ pub async fn fetch_provider(id: &str) -> Result<ProviderInfo, String> {
 
 /// Check whether the current user already has an authenticated provider session.
 pub async fn check_provider_session(provider_id: &str) -> bool {
+    #[cfg(all(feature = "ui-test", target_arch = "wasm32"))]
+    if let Some(mocked) = ui_test_mock::read(|state| state.provider_session_valid) {
+        return mocked;
+    }
+
     let Some(b) = bearer() else { return false };
     let Ok(resp) = Request::get(&format!("/api/providers/{provider_id}/auth/check"))
         .header("Authorization", &b)
@@ -252,6 +319,11 @@ fn delete_authed(url: &str) -> gloo_net::http::RequestBuilder {
 // ── Admin: users ─────────────────────────────────────────────────────────────
 
 pub async fn admin_list_users() -> Result<Vec<UserInfo>, String> {
+    #[cfg(all(feature = "ui-test", target_arch = "wasm32"))]
+    if let Some(mocked) = ui_test_mock::read(|state| state.admin_users.clone()) {
+        return mocked;
+    }
+
     let resp = get_authed("/api/admin/users")
         .send()
         .await
@@ -335,6 +407,11 @@ pub async fn admin_reset_password(user_id: &str, new_password: &str) -> Result<(
 // ── Admin: settings ───────────────────────────────────────────────────────────
 
 pub async fn admin_get_settings() -> Result<ServerSettings, String> {
+    #[cfg(all(feature = "ui-test", target_arch = "wasm32"))]
+    if let Some(mocked) = ui_test_mock::read(|state| state.settings.clone()) {
+        return mocked;
+    }
+
     let resp = get_authed("/api/admin/settings")
         .send()
         .await
@@ -370,6 +447,11 @@ pub async fn fetch_channels(
     provider_id: &str,
     params: &HashMap<String, String>,
 ) -> Result<ChannelListResponse, String> {
+    #[cfg(all(feature = "ui-test", target_arch = "wasm32"))]
+    if let Some(mocked) = ui_test_mock::read(|state| state.channels.clone()) {
+        return mocked;
+    }
+
     let Some(b) = bearer() else {
         return Err("Not logged in".into());
     };
@@ -388,6 +470,11 @@ pub async fn fetch_channels(
 }
 
 pub async fn fetch_categories(provider_id: &str) -> Result<CategoryListResponse, String> {
+    #[cfg(all(feature = "ui-test", target_arch = "wasm32"))]
+    if let Some(mocked) = ui_test_mock::read(|state| state.categories.clone()) {
+        return mocked;
+    }
+
     let Some(b) = bearer() else {
         return Err("Not logged in".into());
     };
@@ -407,6 +494,11 @@ pub async fn fetch_categories(provider_id: &str) -> Result<CategoryListResponse,
 // ── Playback endpoints ──────────────────────────────────────────────────────
 
 pub async fn fetch_stream(provider_id: &str, channel_id: &str) -> Result<StreamInfo, String> {
+    #[cfg(all(feature = "ui-test", target_arch = "wasm32"))]
+    if let Some(mocked) = ui_test_mock::read(|state| state.stream.clone()) {
+        return mocked;
+    }
+
     let Some(b) = bearer() else {
         return Err("Not logged in".into());
     };

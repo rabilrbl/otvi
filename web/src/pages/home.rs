@@ -10,9 +10,11 @@ pub fn HomePage() -> impl IntoView {
     let providers = LocalResource::new(|| async { api::fetch_providers().await });
 
     view! {
-        <div class="max-w-7xl mx-auto px-6 py-8">
+        <div class="max-w-7xl mx-auto px-6 py-8" attr:data-testid="home-page">
             <div class="mb-8">
-                <h1 class="text-3xl font-bold mb-1">"Choose Your Provider"</h1>
+                <h1 class="text-3xl font-bold mb-1" attr:data-testid="home-title">
+                    "Choose Your Provider"
+                </h1>
                 <p class="text-gray-400">"Select a TV provider to sign in and start watching"</p>
             </div>
 

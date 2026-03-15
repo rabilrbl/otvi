@@ -52,11 +52,16 @@ pub fn SetupPage(on_done: Callback<UserInfo>) -> impl IntoView {
     };
 
     view! {
-        <div class="min-h-screen flex items-center justify-center bg-gray-950 px-4">
+        <div
+            class="min-h-screen flex items-center justify-center bg-gray-950 px-4"
+            attr:data-testid="setup-page"
+        >
             <div class="w-full max-w-sm">
                 <div class="text-center mb-8">
                     <div class="text-4xl font-bold text-rose-500 mb-3">"OTVI"</div>
-                    <h1 class="text-2xl font-semibold text-white mb-1">"Welcome!"</h1>
+                    <h1 class="text-2xl font-semibold text-white mb-1" attr:data-testid="setup-title">
+                        "Welcome!"
+                    </h1>
                     <p class="text-gray-400 text-sm">
                         "This is your first time running OTVI. "
                         "Create an admin account to continue."

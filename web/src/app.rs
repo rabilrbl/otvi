@@ -111,22 +111,34 @@ pub fn App() -> impl IntoView {
         <Router>
             // ── Auth overlays (full-screen, cover the app until boot is done) ──
             <Show when=move || boot_state.get() == BootState::Loading fallback=|| ()>
-                <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-950 text-gray-400">
+                <div
+                    class="fixed inset-0 z-50 flex items-center justify-center bg-gray-950 text-gray-400"
+                    attr:data-testid="boot-loading-overlay"
+                >
                     <div class="animate-pulse text-sm">"Loading…"</div>
                 </div>
             </Show>
             <Show when=move || boot_state.get() == BootState::NeedsSetup fallback=|| ()>
-                <div class="fixed inset-0 z-50 bg-gray-950 overflow-auto">
+                <div
+                    class="fixed inset-0 z-50 bg-gray-950 overflow-auto"
+                    attr:data-testid="setup-overlay"
+                >
                     <SetupPage on_done=Callback::new(on_auth_done) />
                 </div>
             </Show>
             <Show when=move || boot_state.get() == BootState::NeedsLogin fallback=|| ()>
-                <div class="fixed inset-0 z-50 bg-gray-950 overflow-auto">
+                <div
+                    class="fixed inset-0 z-50 bg-gray-950 overflow-auto"
+                    attr:data-testid="login-overlay"
+                >
                     <AppLoginPage on_done=Callback::new(on_auth_done) />
                 </div>
             </Show>
             <Show when=move || boot_state.get() == BootState::NeedsPasswordChange fallback=|| ()>
-                <div class="fixed inset-0 z-50 bg-gray-950 overflow-auto">
+                <div
+                    class="fixed inset-0 z-50 bg-gray-950 overflow-auto"
+                    attr:data-testid="forced-password-overlay"
+                >
                     <ChangePasswordPage
                         on_done=Callback::new(on_auth_done)
                         forced=true
@@ -136,7 +148,10 @@ pub fn App() -> impl IntoView {
 
             // ── Voluntary change-password overlay ──────────────────────────
             <Show when=move || show_change_pw.get() fallback=|| ()>
-                <div class="fixed inset-0 z-40 bg-gray-950 overflow-auto">
+                <div
+                    class="fixed inset-0 z-40 bg-gray-950 overflow-auto"
+                    attr:data-testid="voluntary-password-overlay"
+                >
                     <ChangePasswordPage
                         on_done=Callback::new(on_voluntary_pw_change)
                         forced=false
@@ -153,9 +168,13 @@ pub fn App() -> impl IntoView {
                 }
                 fallback=|| ()
             >
-                <nav class="bg-gray-900 px-6 py-3 flex items-center justify-between sticky top-0 z-40 shadow-lg shadow-black/30">
+                <nav
+                    class="bg-gray-900 px-6 py-3 flex items-center justify-between sticky top-0 z-40 shadow-lg shadow-black/30"
+                    attr:data-testid="app-shell-nav"
+                >
                     <A
                         attr:class="text-xl font-bold text-rose-500 hover:text-rose-400 transition-colors"
+                        attr:data-testid="app-logo-link"
                         href="/"
                     >
                         "OTVI"
@@ -170,6 +189,7 @@ pub fn App() -> impl IntoView {
                             </span>
                             <A
                                 href="/admin"
+                                attr:data-testid="admin-dashboard-link"
                                 attr:class="px-3 py-1.5 text-sm rounded-lg bg-gray-800 text-gray-300 hover:bg-gray-700 transition-colors no-underline hidden sm:inline-block"
                             >
                                 "Dashboard"
@@ -177,6 +197,7 @@ pub fn App() -> impl IntoView {
                         </Show>
                         <Show when=move || boot_state.get() == BootState::Ready>
                             <button
+                                attr:data-testid="open-change-password-button"
                                 class="px-3 py-1.5 text-sm rounded-lg bg-gray-800 text-gray-300 hover:bg-gray-700 transition-colors cursor-pointer"
                                 on:click=move |_| show_change_pw.set(true)
                             >
@@ -184,6 +205,7 @@ pub fn App() -> impl IntoView {
                             </button>
                         </Show>
                         <button
+                            attr:data-testid="sign-out-button"
                             class="px-3 py-1.5 text-sm rounded-lg bg-gray-800 text-gray-300 hover:bg-gray-700 transition-colors cursor-pointer"
                             on:click=logout
                         >

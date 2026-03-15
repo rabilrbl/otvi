@@ -62,11 +62,16 @@ pub fn AppLoginPage(on_done: Callback<UserInfo>) -> impl IntoView {
     };
 
     view! {
-        <div class="min-h-screen flex items-center justify-center bg-gray-950 px-4">
+        <div
+            class="min-h-screen flex items-center justify-center bg-gray-950 px-4"
+            attr:data-testid="app-login-page"
+        >
             <div class="w-full max-w-sm">
                 <div class="text-center mb-8">
                     <div class="text-4xl font-bold text-rose-500 mb-3">"OTVI"</div>
-                    <p class="text-gray-400 text-sm">"Sign in to continue"</p>
+                    <p class="text-gray-400 text-sm" attr:data-testid="app-login-subtitle">
+                        "Sign in to continue"
+                    </p>
                 </div>
 
                 <div class="bg-gray-900 rounded-xl p-8 border border-white/5">

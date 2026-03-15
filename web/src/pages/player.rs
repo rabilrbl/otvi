@@ -85,12 +85,13 @@ pub fn PlayerPage() -> impl IntoView {
     });
 
     view! {
-        <div class="max-w-7xl mx-auto px-6 py-8">
+        <div class="max-w-7xl mx-auto px-6 py-8" attr:data-testid="player-page">
             <div class="max-w-[1100px] mx-auto">
 
                 // ── Back navigation ─────────────────────────────────────────
                 <A
                     href=move || format!("/providers/{}/channels", provider_id())
+                    attr:data-testid="player-back-link"
                     attr:class="inline-flex items-center gap-1.5 mb-4 text-gray-400 text-sm \
                            hover:text-gray-200 transition-colors"
                 >
@@ -124,7 +125,7 @@ pub fn PlayerPage() -> impl IntoView {
                 </div>
 
                 // ── Channel info card ───────────────────────────────────────
-                <div class="mt-4 p-4 bg-gray-900 rounded-lg flex items-center gap-4">
+                    <div class="mt-4 p-4 bg-gray-900 rounded-lg flex items-center gap-4">
                     // Logo thumbnail (if available)
                     {move || channel_logo.get().map(|url| view! {
                         <img
@@ -136,7 +137,7 @@ pub fn PlayerPage() -> impl IntoView {
                         />
                     })}
 
-                    <div class="min-w-0">
+                        <div class="min-w-0">
                         // Channel name: skeleton while resolving, then real name
                         {move || {
                             let name = channel_name.get();
@@ -146,8 +147,11 @@ pub fn PlayerPage() -> impl IntoView {
                                 }.into_any()
                             } else {
                                 view! {
-                                    <h2 class="text-xl font-semibold truncate">{name}</h2>
-                                }.into_any()
+                                    <h2 class="text-xl font-semibold truncate" attr:data-testid="player-channel-name">
+                                        {name}
+                                    </h2>
+                                }
+                                .into_any()
                             }
                         }}
                         <div class="text-gray-400 text-sm truncate">{move || provider_id()}</div>
