@@ -151,3 +151,21 @@ jobs:
         env:
           HTTPBIN_URL: http://localhost:8888
         run: cargo test -p otvi-server --test integration -- --include-ignored
+
+  frontend-ui-tests:
+    name: Frontend UI Tests
+    needs: [fmt, clippy, test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install wasm target
+        run: rustup target add wasm32-unknown-unknown
+      - name: Install wasm-pack
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+      - name: Run frontend UI tests
+        working-directory: web
+        run: wasm-pack test --headless --chrome --features ui-test

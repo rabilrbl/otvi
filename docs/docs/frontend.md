@@ -112,3 +112,28 @@ Playback is bridged through `index.html`:
 - Run `trunk serve --proxy-backend=http://localhost:3000/api` for local frontend work
 - The backend must be running separately for API calls to succeed
 - Styling lives in `web/input.css`; generated CSS is written to `web/style.css`
+
+## Frontend UI Testing
+
+The frontend has browser-driven UI tests implemented with `wasm-bindgen-test` and deterministic API mocks in `web/src/api.rs` (enabled under the `ui-test` feature).
+
+### Run locally
+
+```bash
+cd web
+wasm-pack test --headless --chrome --features ui-test
+# or
+bun run ui:test
+```
+
+### Scope
+
+- Boot-state overlays (`setup`, app login, forced password change)
+- Authenticated shell and role-based nav behavior (admin dashboard link visibility, sign out)
+- Primary route outcomes (`/`, `/admin`, `/login/:provider_id`, `*`)
+- SPA route transitions and channel-to-player navigation context
+
+### Troubleshooting
+
+- Ensure Chrome/Chromium is installed and runnable in your environment.
+- If running in locked-down CI/container environments, configure browser sandbox/capabilities explicitly via `webdriver.json` for `wasm-bindgen-test`.
