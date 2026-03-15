@@ -13,6 +13,8 @@ OTVI can be deployed from GHCR images (recommended), Docker source builds, or st
 
 Use the published GitHub Container Registry images when you want a pinned release instead of building locally.
 
+These images are now multi-architecture, supporting linux/amd64, linux/arm64, and linux/arm/v7 platforms, allowing them to run on a wide range of hardware including x86_64 servers, Apple Silicon Macs, and Raspberry Pi devices.
+
 - Full app with embedded frontend: `ghcr.io/rabilrbl/otvi:v0`
 - API-only image: `ghcr.io/rabilrbl/otvi-server:v0`
 
