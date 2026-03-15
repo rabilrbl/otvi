@@ -123,24 +123,39 @@ fn pathname() -> String {
 }
 
 fn has_testid(test_id: &str) -> bool {
-    document()
-        .query_selector(&format!("[data-testid='{test_id}']"))
+    // Leptos CSR renders `attr:data-testid` as the literal attribute name,
+    // so we query both the "correct" and the "attr:" prefixed form.
+    let doc = document();
+    doc.query_selector(&format!("[data-testid='{test_id}']"))
         .expect("query selector should succeed")
         .is_some()
+        || doc
+            .query_selector(&format!("[attr\\:data-testid='{test_id}']"))
+            .expect("query selector should succeed")
+            .is_some()
 }
 
 fn text_for_testid(test_id: &str) -> String {
-    document()
-        .query_selector(&format!("[data-testid='{test_id}']"))
+    let doc = document();
+    doc.query_selector(&format!("[data-testid='{test_id}']"))
         .expect("query selector should succeed")
+        .or_else(|| {
+            doc.query_selector(&format!("[attr\\:data-testid='{test_id}']"))
+                .expect("query selector should succeed")
+        })
         .and_then(|el| el.text_content())
         .unwrap_or_default()
 }
 
 fn click_testid(test_id: &str) {
-    let el = document()
+    let doc = document();
+    let el = doc
         .query_selector(&format!("[data-testid='{test_id}']"))
         .expect("query selector should succeed")
+        .or_else(|| {
+            doc.query_selector(&format!("[attr\\:data-testid='{test_id}']"))
+                .expect("query selector should succeed")
+        })
         .expect("element should exist");
     let target: web_sys::HtmlElement = el
         .dyn_into()
