@@ -5,9 +5,45 @@ title: Deployment
 
 # Deployment
 
-OTVI can be deployed using Docker (recommended) or as a standalone binary.
+OTVI can be deployed from GHCR images (recommended), Docker source builds, or standalone binaries.
 
 ## Docker Deployment (Recommended)
+
+### Prebuilt GHCR Images
+
+Use the published GitHub Container Registry images when you want a pinned release instead of building locally.
+
+- Full app with embedded frontend: `ghcr.io/rabilrbl/otvi:v0`
+- API-only image: `ghcr.io/rabilrbl/otvi-server:v0`
+
+The registry publishes these tags:
+
+- `dev`
+- `main`
+- `vX`
+- `vX.Y`
+- `vX.Y.Z`
+
+No `latest` tag is published.
+
+Example production compose using the current stable major line:
+
+```yaml
+services:
+  otvi:
+    image: ghcr.io/rabilrbl/otvi:v0
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./providers:/app/providers:ro
+      - ./data:/app/data
+    environment:
+      PORT: "3000"
+      PROVIDERS_DIR: "/app/providers"
+      DATABASE_URL: "sqlite:///app/data/data.db"
+      JWT_SECRET: "change_me_to_a_long_random_string"
+      CORS_ORIGINS: "https://tv.example.com"
+```
 
 ### Using Docker Compose
 
@@ -116,6 +152,20 @@ The Dockerfile uses a three-stage build:
 
 The image includes a built-in `HEALTHCHECK` directive pointing at `/healthz` so container orchestrators can monitor liveness automatically.
 
+### API-only Image
+
+If you only want the backend APIs and do not need the bundled frontend, use the API-only image:
+
+```bash
+docker run -d \
+  -p 3000:3000 \
+  -v ./providers:/app/providers:ro \
+  -v ./data:/app/data \
+  -e DATABASE_URL=sqlite:///app/data/data.db \
+  -e JWT_SECRET=$(openssl rand -hex 32) \
+  ghcr.io/rabilrbl/otvi-server:v0
+```
+
 #### Release Profile
 
 The server binary is built with:
@@ -131,6 +181,11 @@ panic         = "abort"   # eliminate unwinding code
 This typically reduces the binary size by 20–40% compared to default release settings.
 
 ## Standalone Binary
+
+Release assets publish two tarballs for each `vX.Y.Z` tag:
+
+- bundled `otvi` release artifact with the frontend embedded into the binary
+- `otvi-server` release artifact for API-only use
 
 ### Build from Source
 

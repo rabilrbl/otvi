@@ -1,6 +1,13 @@
+import {readFileSync} from 'node:fs';
+import path from 'node:path';
 import {themes as prismThemes} from 'prism-react-renderer';
 import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
+
+const releasedVersions = JSON.parse(
+  readFileSync(path.join(__dirname, 'versions.json'), 'utf8'),
+) as string[];
+const latestReleasedVersion = releasedVersions[0] ?? 'current';
 
 const config: Config = {
   title: 'OTVI',
@@ -38,10 +45,10 @@ const config: Config = {
           editUrl: 'https://github.com/rabilrbl/otvi/tree/main/docs/',
           editCurrentVersion: true,
           showLastUpdateTime: true,
-          lastVersion: 'current',
+          lastVersion: latestReleasedVersion,
           versions: {
             current: {
-              label: 'Next',
+              label: 'Unreleased',
             },
           },
         },
