@@ -154,6 +154,104 @@ pub async fn execute_request(
     })
 }
 
+/// Like [`execute_request`], but returns the [`ProviderResponse`] even when
+/// the upstream status code indicates an error (4xx / 5xx).
+///
+/// Use this when the caller needs to inspect the status code (e.g. to decide
+/// whether to trigger an automatic token refresh) rather than treating all
+/// non-2xx responses as hard errors.
+pub async fn execute_request_raw(
+    client: &Client,
+    base_url: &str,
+    default_headers: &HashMap<String, String>,
+    spec: &RequestSpec,
+    context: &TemplateContext,
+) -> anyhow::Result<ProviderResponse> {
+    let path = resolve_warn(context, &spec.path, "path");
+    let url = format!("{}{}", base_url, path);
+
+    let mut builder = match spec.method.to_uppercase().as_str() {
+        "GET" => client.get(&url),
+        "POST" => client.post(&url),
+        "PUT" => client.put(&url),
+        "DELETE" => client.delete(&url),
+        "PATCH" => client.patch(&url),
+        other => anyhow::bail!("Unsupported HTTP method: {other}"),
+    };
+
+    // Default headers
+    for (k, v) in default_headers {
+        builder = builder.header(k, resolve_warn(context, v, "default_header"));
+    }
+
+    // Per-request headers (may override defaults)
+    for (k, v) in &spec.headers {
+        builder = builder.header(k, resolve_warn(context, v, "header"));
+    }
+
+    let explicit_cookie_header = default_headers
+        .keys()
+        .chain(spec.headers.keys())
+        .any(|key| key.eq_ignore_ascii_case("cookie"));
+    if !explicit_cookie_header {
+        let cookie_pairs = context
+            .values_with_prefix(STORED_COOKIE_PREFIX)
+            .into_iter()
+            .map(|(name, value)| format!("{name}={value}"))
+            .collect::<Vec<_>>();
+        if !cookie_pairs.is_empty() {
+            builder = builder.header("Cookie", cookie_pairs.join("; "));
+        }
+    }
+
+    // Query parameters – skip any that still contain unresolved `{{…}}`
+    for (k, v) in &spec.params {
+        let resolved = resolve_warn(context, v, "param");
+        if !resolved.contains("{{") {
+            builder = builder.query(&[(k.as_str(), resolved.as_str())]);
+        }
+    }
+
+    // Body
+    if let Some(body) = &spec.body {
+        let resolved_body = resolve_warn(context, body, "body");
+        if spec.body_encoding == "form" {
+            let pairs: Vec<(String, String)> = resolved_body
+                .split('&')
+                .filter_map(|pair| {
+                    let mut parts = pair.splitn(2, '=');
+                    let key = parts.next()?.trim().to_string();
+                    let value = parts.next().unwrap_or("").trim().to_string();
+                    if key.is_empty() {
+                        None
+                    } else {
+                        Some((key, value))
+                    }
+                })
+                .collect();
+            builder = builder.form(&pairs);
+        } else {
+            builder = builder.body(resolved_body);
+        }
+    }
+
+    let response = builder.send().await?;
+    let cookies = response
+        .headers()
+        .get_all(SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .filter_map(parse_set_cookie)
+        .collect::<HashMap<_, _>>();
+    let (status_code, body) = parse_response_body(response).await?;
+
+    Ok(ProviderResponse {
+        status: status_code,
+        body,
+        cookies,
+    })
+}
+
 fn parse_set_cookie(header: &str) -> Option<(String, String)> {
     let first = header.split(';').next()?.trim();
     let mut parts = first.splitn(2, '=');

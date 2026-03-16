@@ -112,9 +112,10 @@ pub struct StreamInfo {
     pub channel_logo: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum StreamType {
+    #[default]
     Hls,
     Dash,
 }

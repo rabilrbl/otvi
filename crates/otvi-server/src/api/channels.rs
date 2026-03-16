@@ -56,7 +56,7 @@ use crate::provider_client;
 use crate::state::CacheScope;
 use crate::state::{AppState, CachedCategories, CachedChannels, ChannelCacheKey};
 
-use super::auth::build_provider_context;
+use super::auth::{build_provider_context, with_refresh_retry};
 
 // ── Query-parameter structs ────────────────────────────────────────────────
 
@@ -138,24 +138,24 @@ pub async fn list(
     };
 
     // ── Cache lookup ──────────────────────────────────────────────────────
-    let mut context = build_provider_context(&state, &uid, &provider_id).await?;
-
+    let mut extra_ctx: Vec<(&str, &str)> = Vec::new();
     if let Some(cat) = &query.category {
-        context.set("input.category", cat);
+        extra_ctx.push(("input.category", cat));
     }
     if let Some(s) = &query.search {
-        context.set("input.search", s);
+        extra_ctx.push(("input.search", s));
     }
 
     let all_channels = load_all_channels(
         &state,
         &provider_id,
+        &uid,
         &cache_key,
         &base_url,
         &default_headers,
         &list_request,
         &list_response,
-        &context,
+        &extra_ctx,
     )
     .await?;
 
@@ -277,20 +277,42 @@ pub async fn categories(
         } else {
             debug!(provider = %provider_id, "categories cache MISS — fetching from upstream");
 
-            let context = build_provider_context(&state, &uid, &provider_id).await?;
+            let base_url = base_url.clone();
+            let default_headers = default_headers.clone();
+            let cat_request = cat_endpoint.request.clone();
+            let http_client = state.http_client.clone();
 
-            let response = provider_client::execute_request_body(
-                &state.http_client,
-                &base_url,
-                &default_headers,
-                &cat_endpoint.request,
-                &context,
-            )
-            .await
-            .map_err(|e| {
-                error!(provider = %provider_id, "Upstream categories error: {e}");
-                AppError::Internal(e.to_string())
-            })?;
+            let resp = with_refresh_retry(&state, &provider_id, &uid, |ctx| {
+                let http_client = http_client.clone();
+                let base_url = base_url.clone();
+                let default_headers = default_headers.clone();
+                let cat_request = cat_request.clone();
+                async move {
+                    provider_client::execute_request_raw(
+                        &http_client,
+                        &base_url,
+                        &default_headers,
+                        &cat_request,
+                        &ctx,
+                    )
+                    .await
+                }
+            })
+            .await?;
+
+            if !(200..300).contains(&resp.status) {
+                error!(
+                    provider = %provider_id,
+                    status = resp.status,
+                    "Upstream categories error after refresh retry"
+                );
+                return Err(AppError::Internal(format!(
+                    "Upstream categories returned status {}",
+                    resp.status
+                )));
+            }
+
+            let response = resp.body;
 
             let cats = Arc::<[Category]>::from(map_categories(&response, &cat_endpoint.response)?);
 
@@ -359,51 +381,76 @@ pub async fn stream(
         otvi_core::config::AuthScope::Global => String::new(),
         otvi_core::config::AuthScope::PerUser => claims.sub.clone(),
     };
+    let http_client = state.http_client.clone();
+    let stream_base_url = base_url.clone();
+    let stream_default_headers = default_headers.clone();
+    let stream_request = stream_endpoint.request.clone();
+    let channel_id_clone = channel_id.clone();
+
+    let resp = with_refresh_retry(&state, &provider_id, &uid, |mut ctx| {
+        let http_client = http_client.clone();
+        let stream_base_url = stream_base_url.clone();
+        let stream_default_headers = stream_default_headers.clone();
+        let stream_request = stream_request.clone();
+        let channel_id_clone = channel_id_clone.clone();
+        async move {
+            ctx.set("input.channel_id", &channel_id_clone);
+            provider_client::execute_request_raw(
+                &http_client,
+                &stream_base_url,
+                &stream_default_headers,
+                &stream_request,
+                &ctx,
+            )
+            .await
+        }
+    })
+    .await?;
+
+    if !(200..300).contains(&resp.status) {
+        error!(
+            channel_id = %channel_id,
+            provider = %provider_id,
+            status = resp.status,
+            "Playback API error after refresh retry"
+        );
+        return Err(AppError::Internal(format!(
+            "Playback API returned status {}",
+            resp.status
+        )));
+    }
+
+    let response = resp.body;
+
+    // Build a template context for downstream template resolutions
+    // (DRM fields, proxy headers/cookies). This uses the latest stored values
+    // (which may have been refreshed by with_refresh_retry above).
     let mut context = build_provider_context(&state, &uid, &provider_id).await?;
     context.set("input.channel_id", &channel_id);
 
-    let response = provider_client::execute_request_body(
-        &state.http_client,
+    let cache_key = ChannelCacheKey::from_auth_scope(&provider_id, &scope, &claims.sub);
+    let channel_meta = load_all_channels(
+        &state,
+        &provider_id,
+        &uid,
+        &cache_key,
         &base_url,
         &default_headers,
-        &stream_endpoint.request,
-        &context,
+        &list_request,
+        &list_response,
+        &[],
     )
     .await
-    .map_err(|e| {
-        error!(
-            channel_id = %channel_id,
-            provider  = %provider_id,
-            "Playback API error: {e}"
-        );
-        AppError::Internal(e.to_string())
-    })?;
-
-    let cache_key = ChannelCacheKey::from_auth_scope(&provider_id, &scope, &claims.sub);
-    let channel_meta = match build_provider_context(&state, &uid, &provider_id).await {
-        Ok(meta_context) => load_all_channels(
-            &state,
-            &provider_id,
-            &cache_key,
-            &base_url,
-            &default_headers,
-            &list_request,
-            &list_response,
-            &meta_context,
-        )
-        .await
-        .ok()
-        .and_then(|channels| {
-            channels
-                .iter()
-                .find(|channel| channel.id == channel_id)
-                .cloned()
-        }),
-        Err(_) => None,
-    };
+    .ok()
+    .and_then(|channels| {
+        channels
+            .iter()
+            .find(|channel| channel.id == channel_id)
+            .cloned()
+    });
 
     // Extract stream URL
-    let stream_url =
+    let mut stream_url =
         extract_json_path(&response, &stream_endpoint.response.url).ok_or_else(|| {
             error!(
                 channel_id = %channel_id,
@@ -423,24 +470,86 @@ pub async fn stream(
         stream_type_raw.clone()
     };
 
-    let stream_type = match stream_type_str.to_lowercase().as_str() {
+    let mut stream_type = match stream_type_str.to_lowercase().as_str() {
         "dash" | "mpd" => StreamType::Dash,
         _ => StreamType::Hls,
     };
 
-    // Extract optional DRM configuration
-    let drm = if let Some(drm_cfg) = &stream_endpoint.response.drm {
-        let system = extract_json_path(&response, &drm_cfg.system).unwrap_or_default();
-        let license_url = extract_json_path(&response, &drm_cfg.license_url)
-            .unwrap_or_else(|| context.resolve_lossy(&drm_cfg.license_url));
-        let mut drm_headers = HashMap::new();
-        for (k, v) in &drm_cfg.headers {
-            drm_headers.insert(k.clone(), context.resolve_lossy(v));
+    // ── DRM detection and extraction ──────────────────────────────────────
+    //
+    // When the provider YAML defines a `drm` block with an `is_drm` JSON path,
+    // we check the upstream response for a truthy value.  If the channel is
+    // DRM-protected:
+    //   - Override the stream URL with the MPD URL if `mpd_url` resolves.
+    //   - Override the stream type to Dash.
+    //   - Collect DRM license proxy fields for ProxyContext.
+
+    let drm_cfg = stream_endpoint.response.drm.as_ref();
+
+    // Determine if this channel uses DRM.
+    let is_drm = drm_cfg
+        .and_then(|cfg| cfg.is_drm.as_ref())
+        .and_then(|path| extract_json_path(&response, path))
+        .map(|v| matches!(v.to_lowercase().as_str(), "true" | "1" | "yes"))
+        .unwrap_or(false);
+
+    // Extract DRM info and collect license-proxy fields.
+    let mut drm_license_url: Option<String> = None;
+    let mut drm_license_headers: Option<HashMap<String, String>> = None;
+    let mut drm_license_cookies: Option<Vec<String>> = None;
+    let mut drm_prefetch_url: Option<String> = None;
+
+    let drm = if let Some(cfg) = drm_cfg {
+        // Treat `system` as a literal when it doesn't look like a JSON path.
+        let system = if cfg.system.starts_with("$.") {
+            extract_json_path(&response, &cfg.system).unwrap_or_default()
+        } else {
+            cfg.system.clone()
+        };
+        let license_url = extract_json_path(&response, &cfg.license_url)
+            .unwrap_or_else(|| context.resolve_lossy(&cfg.license_url));
+        let mut headers_map = HashMap::new();
+        for (k, v) in &cfg.headers {
+            headers_map.insert(k.clone(), context.resolve_lossy(v));
         }
+
+        if is_drm {
+            // Override stream URL with MPD URL when available.
+            if let Some(mpd_path) = &cfg.mpd_url
+                && let Some(mpd) = extract_json_path(&response, mpd_path)
+            {
+                debug!(
+                    channel_id = %channel_id,
+                    mpd_url = %mpd,
+                    "DRM channel — overriding stream URL with MPD URL"
+                );
+                stream_url = mpd;
+                stream_type = StreamType::Dash;
+            }
+
+            // Store DRM license proxy fields for ProxyContext.
+            drm_license_url = Some(license_url.clone());
+            drm_license_headers = Some(headers_map.clone());
+            if !cfg.cookies.is_empty() {
+                drm_license_cookies = Some(cfg.cookies.clone());
+            }
+            if let Some(prefetch) = &cfg.prefetch_url {
+                // `prefetch_url` may be a JSON path (e.g. "$.mpd.result") or
+                // a template.  Try JSON path extraction first.
+                let resolved = if prefetch.starts_with("$.") {
+                    extract_json_path(&response, prefetch)
+                        .unwrap_or_else(|| context.resolve_lossy(prefetch))
+                } else {
+                    context.resolve_lossy(prefetch)
+                };
+                drm_prefetch_url = Some(resolved);
+            }
+        }
+
         Some(DrmInfo {
             system,
             license_url,
-            headers: drm_headers,
+            headers: headers_map,
         })
     } else {
         None
@@ -449,7 +558,7 @@ pub async fn stream(
     // Proxy the stream URL through our backend to avoid CORS issues.
     // Build a ProxyContext with resolved headers / cookie mappings, store it
     // server-side under an opaque UUID, and embed only the token in the URL.
-    let proxied_url = {
+    let (proxied_url, ctx_token) = {
         let resolved_headers: HashMap<String, String> = stream_endpoint
             .proxy_headers
             .iter()
@@ -478,14 +587,31 @@ pub async fn stream(
             append_manifest_query_to_key_uris: stream_endpoint.append_manifest_query_to_key_uris,
             key_exclude_resolved_cookies: stream_endpoint.key_exclude_resolved_cookies,
             key_uri_patterns: stream_endpoint.key_uri_patterns.clone(),
+            stream_type: stream_type.clone(),
+            drm_license_url,
+            drm_license_headers,
+            drm_license_cookies,
+            drm_prefetch_url,
         };
         let token = uuid::Uuid::new_v4().to_string();
         state.proxy_ctx.insert(token.clone(), ctx).await;
-        format!(
+        let url = format!(
             "/api/proxy?url={}&ctx={token}",
             urlencoding::encode(&stream_url)
-        )
+        );
+        (url, token)
     };
+
+    // When DRM is active, replace the raw upstream license URL in the
+    // response with our server-side DRM license proxy endpoint so that the
+    // player sends license requests through us (where we attach auth
+    // headers/cookies the browser cannot).
+    let drm = drm.map(|mut info| {
+        if is_drm {
+            info.license_url = format!("/api/proxy/drm/{ctx_token}");
+        }
+        info
+    });
 
     Ok(Json(StreamInfo {
         url: proxied_url,
@@ -557,12 +683,13 @@ fn map_categories(
 async fn load_all_channels(
     state: &Arc<AppState>,
     provider_id: &str,
+    user_id: &str,
     cache_key: &ChannelCacheKey,
     base_url: &str,
     default_headers: &HashMap<String, String>,
     list_request: &otvi_core::config::RequestSpec,
     list_response: &otvi_core::config::ResponseMapping,
-    context: &otvi_core::template::TemplateContext,
+    extra_context: &[(&str, &str)],
 ) -> Result<Arc<[Channel]>, AppError> {
     if let Some(cached) = state.channel_cache.channels.get(cache_key).await {
         debug!(provider = %provider_id, "channel list cache HIT");
@@ -571,18 +698,50 @@ async fn load_all_channels(
 
     debug!(provider = %provider_id, "channel list cache MISS — fetching from upstream");
 
-    let response = provider_client::execute_request_body(
-        &state.http_client,
-        base_url,
-        default_headers,
-        list_request,
-        context,
-    )
-    .await
-    .map_err(|e| {
-        error!(provider = %provider_id, "Upstream channel list error: {e}");
-        AppError::Internal(e.to_string())
-    })?;
+    let http_client = state.http_client.clone();
+    let base_url = base_url.to_owned();
+    let default_headers = default_headers.clone();
+    let list_request = list_request.clone();
+    let extra: Vec<(String, String)> = extra_context
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+
+    let resp = with_refresh_retry(state, provider_id, user_id, |mut ctx| {
+        let http_client = http_client.clone();
+        let base_url = base_url.clone();
+        let default_headers = default_headers.clone();
+        let list_request = list_request.clone();
+        let extra = extra.clone();
+        async move {
+            for (k, v) in &extra {
+                ctx.set(k, v);
+            }
+            provider_client::execute_request_raw(
+                &http_client,
+                &base_url,
+                &default_headers,
+                &list_request,
+                &ctx,
+            )
+            .await
+        }
+    })
+    .await?;
+
+    if !(200..300).contains(&resp.status) {
+        error!(
+            provider = %provider_id,
+            status = resp.status,
+            "Upstream channel list error after refresh retry"
+        );
+        return Err(AppError::Internal(format!(
+            "Upstream channel list returned status {}",
+            resp.status
+        )));
+    }
+
+    let response = resp.body;
 
     let channels = Arc::<[Channel]>::from(map_channels(&response, list_response)?);
 

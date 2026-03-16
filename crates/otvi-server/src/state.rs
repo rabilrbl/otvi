@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 // ── Rate limiting ──────────────────────────────────────────────────────────
@@ -114,7 +114,7 @@ impl RateLimitConfig {
 
 use moka::future::Cache;
 use otvi_core::config::ProviderConfig;
-use otvi_core::types::{Category, Channel};
+use otvi_core::types::{Category, Channel, StreamType};
 
 use crate::auth_middleware::JwtKeys;
 use crate::db::Db;
@@ -159,6 +159,23 @@ pub struct ProxyContext {
     /// when deciding whether to append the manifest query.  An empty list
     /// means "apply to all key-tag URIs".
     pub key_uri_patterns: Vec<String>,
+
+    // ── DRM fields ────────────────────────────────────────────────────────
+    /// The stream type for this session (`Hls` or `Dash`).
+    /// Used by the proxy to decide how to handle manifest rewriting.
+    pub stream_type: StreamType,
+    /// The upstream DRM license server URL.
+    /// When present, the DRM license proxy endpoint forwards the player's
+    /// license request body to this URL.
+    pub drm_license_url: Option<String>,
+    /// Extra HTTP headers to apply to the upstream DRM license request.
+    pub drm_license_headers: Option<HashMap<String, String>>,
+    /// Cookie names (from `static_cookies`) to forward on DRM license requests.
+    pub drm_license_cookies: Option<Vec<String>>,
+    /// URL to issue a HEAD request to before proxying the DRM license request.
+    /// Used by providers whose CDN rotates auth cookies and requires a
+    /// "warm-up" hit to refresh them.
+    pub drm_prefetch_url: Option<String>,
 }
 
 /// Default time-to-idle for per-stream proxy contexts.
@@ -363,6 +380,12 @@ fn build_http_client() -> reqwest::Client {
         .expect("Failed to build HTTP client")
 }
 
+/// Per-session refresh lock map.
+///
+/// Keyed by `(provider_id, user_id)`. The inner `tokio::sync::Mutex<()>`
+/// serialises concurrent refresh attempts for the same session.
+pub type RefreshLocks = Mutex<HashMap<(String, String), Arc<tokio::sync::Mutex<()>>>>;
+
 /// Shared application state injected into every Axum handler.
 ///
 /// The provider map is stored in an `RwLock` so the hot-reload watcher can
@@ -390,6 +413,13 @@ pub struct AppState {
     /// on every request, while expensive upstream HTTP calls are amortised
     /// across the TTL window.
     pub channel_cache: ChannelCache,
+    /// Per-session refresh coordination locks.
+    ///
+    /// Keyed by `(provider_id, user_id)`.  When multiple concurrent requests
+    /// detect an expired token, the first one acquires the inner
+    /// `tokio::sync::Mutex` to perform the refresh; the rest wait and then
+    /// re-read the updated stored values.
+    pub refresh_locks: RefreshLocks,
 }
 
 impl AppState {
@@ -436,6 +466,7 @@ impl AppState {
                     http_client: build_http_client(),
                     proxy_ctx: proxy_context_cache_from_env(),
                     channel_cache: ChannelCache::from_env(),
+                    refresh_locks: Mutex::new(HashMap::new()),
                 });
             }
             Err(e) => return Err(e.into()),
@@ -450,7 +481,22 @@ impl AppState {
             http_client: build_http_client(),
             proxy_ctx: proxy_context_cache_from_env(),
             channel_cache: ChannelCache::from_env(),
+            refresh_locks: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// Get or create the refresh coordination lock for a given provider session.
+    ///
+    /// Multiple concurrent upstream requests that detect expired tokens will
+    /// share this lock — the first acquirer performs the refresh, and the rest
+    /// wait then proceed with the updated tokens.
+    pub fn refresh_lock(&self, provider_id: &str, user_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+        let key = (provider_id.to_owned(), user_id.to_owned());
+        let mut locks = self.refresh_locks.lock().expect("refresh_locks poisoned");
+        locks
+            .entry(key)
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
     }
 }
 
@@ -497,13 +543,6 @@ fn load_provider_map_from_iter(
 
 fn validate_provider_config(config: &ProviderConfig) -> anyhow::Result<()> {
     use anyhow::bail;
-
-    if config.auth.refresh.is_some() {
-        bail!(
-            "provider '{}' uses unsupported auth.refresh; refresh flows are not implemented",
-            config.provider.id
-        );
-    }
 
     for flow in &config.auth.flows {
         for field in &flow.inputs {
@@ -1038,7 +1077,7 @@ playback:
     }
 
     #[tokio::test]
-    async fn load_providers_rejects_unsupported_refresh_config() {
+    async fn load_providers_accepts_refresh_config() {
         let (db, _db_dir) = test_db().await;
         let dir = tempfile::tempdir().expect("create temp dir");
         let yaml = r#"
@@ -1081,10 +1120,15 @@ playback:
 "#;
         std::fs::write(dir.path().join("refresh.yaml"), yaml).unwrap();
 
-        let err = AppState::load_providers(dir.path().to_str().unwrap(), db, test_keys())
-            .err()
-            .expect("refresh should be rejected");
-        assert!(err.to_string().contains("auth.refresh"));
+        let state =
+            AppState::load_providers(dir.path().to_str().unwrap(), db, test_keys()).unwrap();
+        let providers = state.providers_rw.read().unwrap();
+        assert!(providers.contains_key("refresh_tv"));
+        let cfg = &providers["refresh_tv"];
+        assert!(cfg.auth.refresh.is_some());
+        // Verify default on_status_codes
+        let refresh = cfg.auth.refresh.as_ref().unwrap();
+        assert_eq!(refresh.on_status_codes, vec![401]);
     }
 
     #[tokio::test]

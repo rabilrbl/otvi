@@ -162,10 +162,23 @@ pub struct ApiCall {
 }
 
 /// Configuration for automatic token refresh.
+///
+/// When an upstream API call returns one of the status codes in
+/// `on_status_codes`, the server will execute this refresh flow (HTTP
+/// request + token extraction), persist the updated tokens, and retry the
+/// original request once.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct RefreshConfig {
     pub request: RequestSpec,
     pub on_success: OnSuccess,
+    /// HTTP status codes that trigger automatic token refresh.
+    /// Defaults to `[401]`.
+    #[serde(default = "default_refresh_status_codes")]
+    pub on_status_codes: Vec<u16>,
+}
+
+fn default_refresh_status_codes() -> Vec<u16> {
+    vec![401]
 }
 
 // ── Channels ────────────────────────────────────────────────────────────────
@@ -322,6 +335,31 @@ pub struct DrmResponseConfig {
     /// Extra headers to send with DRM license requests.
     #[serde(default)]
     pub headers: HashMap<String, String>,
+    /// JSONPath to a boolean flag indicating the channel uses DRM.
+    ///
+    /// When present and the extracted value is truthy (`true`, `"true"`,
+    /// non-zero), the server treats this channel as DRM-protected and
+    /// extracts the MPD URL from `mpd_url` instead of the default `url`.
+    #[serde(default)]
+    pub is_drm: Option<String>,
+    /// JSONPath to the DASH MPD manifest URL, used when `is_drm` is truthy.
+    ///
+    /// Falls back to the standard `PlaybackResponse::url` if not set or if
+    /// the path does not resolve.
+    #[serde(default)]
+    pub mpd_url: Option<String>,
+    /// Cookie names to forward on DRM license proxy requests.
+    ///
+    /// These are resolved from the session's static cookies at request time.
+    #[serde(default)]
+    pub cookies: Vec<String>,
+    /// Optional URL to issue a HEAD request to before proxying the license
+    /// request.  Used by providers (e.g. JioTV) whose CDN rotates auth
+    /// cookies and requires a "warm-up" hit to refresh them.
+    ///
+    /// Supports template variables (`{{stored.*}}`, `{{input.*}}`).
+    #[serde(default)]
+    pub prefetch_url: Option<String>,
 }
 
 #[cfg(test)]

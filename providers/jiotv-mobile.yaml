@@ -138,6 +138,7 @@ auth:
     on_success:
       extract:
         access_token: "$.authToken"
+    on_status_codes: [401, 403]
 
 # ── Channel Browsing ────────────────────────────────────────────────────────
 
@@ -215,8 +216,51 @@ playback:
     response:
       # HLS manifest URL
       url: "$.bitrates.auto"
-      # JioTV always serves HLS (m3u8)
+      # JioTV always serves HLS (m3u8) for non-DRM channels.
+      # DRM channels override this to DASH via the `drm` block below.
       type: "hls"
+      # ── DRM configuration ──────────────────────────────────────────────
+      # Some JioTV channels are DRM-protected (Widevine).  When `isDRM` is
+      # truthy in the playback response, the server switches to the DASH
+      # MPD URL and provides a proxied DRM license endpoint.
+      drm:
+        system: "widevine"
+        license_url: "$.mpd.key"
+        is_drm: "$.isDRM"
+        mpd_url: "$.mpd.result"
+        # Cookie names (from proxy_cookies) to forward on license requests.
+        cookies:
+          - "ssotoken"
+          - "crmid"
+          - "subscriberId"
+          - "uniqueId"
+          - "accessToken"
+        # HEAD prefetch to the stream URL to refresh CDN cookies before the
+        # license request.  Uses the MPD URL which is populated into the
+        # proxy context's upstream_url.
+        # Note: the server uses the upstream_url for the prefetch when this
+        # field resolves to the same value.  Using the template variable for
+        # the playback URL.
+        prefetch_url: "$.mpd.result"
+        # Headers for the DRM license proxy request.
+        # Mirrors JioTV-Go's DRMKeyHandler headers.
+        headers:
+          accesstoken: "{{stored.access_token}}"
+          ssotoken: "{{stored.sso_token}}"
+          crmid: "{{stored.crm}}"
+          subscriberId: "{{stored.crm}}"
+          uniqueId: "{{stored.unique_id}}"
+          deviceId: "{{stored.device_id}}"
+          User-Agent: "plaYtv/7.1.7 (Linux;Android 8.1.0) ExoPlayerLib/2.11.7"
+          os: "android"
+          appName: "RJIL_JioTV"
+          x-platform: "android"
+          devicetype: "phone"
+          osVersion: "13"
+          versionCode: "389"
+          usergroup: "tvYR7NSNn7rymo3F"
+          channelid: "{{input.channel_id}}"
+          srno: "230203144000"
     # Headers forwarded by the proxy when fetching manifest segments / keys.
     # Derived from JioTV-Go: RenderHandler uses tv.Headers (okhttp UA) for the
     # master manifest, while RenderTSHandler / RenderKeyHandler use the ExoPlayer
@@ -256,7 +300,7 @@ playback:
     # Allow the resolved __hdnea__ cookie to be forwarded to key requests.
     # Empirically the key server (tv.media.jio.com) requires it even though its
     # path (/fallback/bpk-tv/…) doesn't match the CDN ACL (/bpk-tv/…).
-    key_exclude_resolved_cookies: true
+    key_exclude_resolved_cookies: false
     # key_uri_patterns is not needed here because append_manifest_query_to_key_uris
     # is false — the manifest query is never appended for JioTV.
     key_uri_patterns: [".pkey", ".key"]

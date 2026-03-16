@@ -58,6 +58,7 @@ pub use embedded_frontend::{has_embedded_frontend, serve_embedded_frontend};
         api::channels::stream,
         // proxy
         api::proxy::proxy_stream,
+        api::proxy::proxy_drm,
         // admin
         api::admin::list_users,
         api::admin::create_user,
@@ -257,7 +258,8 @@ where
             "/providers/{id}/channels/{channel_id}/stream",
             get(api::channels::stream),
         )
-        .route("/proxy", get(api::proxy::proxy_stream));
+        .route("/proxy", get(api::proxy::proxy_stream))
+        .route("/proxy/drm/{token}", post(api::proxy::proxy_drm));
 
     let admin_routes = axum::Router::new()
         .route("/users", get(api::admin::list_users))

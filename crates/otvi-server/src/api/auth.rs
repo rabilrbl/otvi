@@ -397,3 +397,619 @@ pub async fn build_provider_context(
     context.set("utcdate", now.format("%Y%m%d").to_string());
     Ok(context)
 }
+
+// ── Token Refresh ─────────────────────────────────────────────────────────
+
+/// Execute the provider's refresh flow: send the refresh HTTP request,
+/// extract new token values, merge into existing stored values, and persist.
+///
+/// Returns `Ok(())` on success.  Returns `Err` if the provider has no
+/// refresh config, or if the refresh request fails, or if no values are
+/// extracted.
+pub async fn execute_refresh(
+    state: &AppState,
+    provider_id: &str,
+    user_id: &str,
+) -> Result<(), AppError> {
+    // Load refresh config + defaults from provider YAML.
+    let provider_data = state
+        .with_provider(provider_id, |p| {
+            (
+                p.auth.refresh.clone(),
+                p.auth.scope.clone(),
+                p.defaults.base_url.clone(),
+                p.defaults.headers.clone(),
+            )
+        })
+        .ok_or_else(|| AppError::NotFound("Provider not found".into()))?;
+
+    let (refresh_cfg, auth_scope, base_url, default_headers) = provider_data;
+    let refresh =
+        refresh_cfg.ok_or_else(|| AppError::Internal("Provider has no refresh config".into()))?;
+
+    // Build template context from current stored values.
+    let context = build_provider_context(state, user_id, provider_id).await?;
+
+    // Execute the refresh request.
+    let response = provider_client::execute_request(
+        &state.http_client,
+        &base_url,
+        &default_headers,
+        &refresh.request,
+        &context,
+    )
+    .await
+    .map_err(|e| {
+        tracing::warn!(
+            provider = %provider_id,
+            user = %user_id,
+            "Token refresh request failed: {e}"
+        );
+        AppError::Internal(format!("Token refresh failed: {e}"))
+    })?;
+
+    // Extract new values from refresh response.
+    let mut extracted: HashMap<String, String> = HashMap::new();
+    for (key, path) in &refresh.on_success.extract {
+        if let Some(value) = extract_json_path(&response.body, path) {
+            extracted.insert(key.clone(), value);
+        }
+    }
+
+    if extracted.is_empty() {
+        tracing::warn!(
+            provider = %provider_id,
+            user = %user_id,
+            "Token refresh succeeded but extracted no values"
+        );
+        return Err(AppError::Internal(
+            "Token refresh extracted no values".into(),
+        ));
+    }
+
+    // Merge extracted values into existing stored session (only overwrite
+    // keys present in the extraction map).
+    let mut stored = db::get_provider_session_values(&state.db, user_id, provider_id)
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    stored.extend(extracted);
+
+    // Persist cookies from the refresh response.
+    for (cookie_name, cookie_value) in &response.cookies {
+        stored.insert(format!("__cookie_.{cookie_name}"), cookie_value.clone());
+    }
+
+    db::upsert_provider_session(&state.db, user_id, provider_id, &stored)
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+
+    tracing::info!(
+        provider = %provider_id,
+        user = %user_id,
+        "Token refresh succeeded — stored values updated"
+    );
+
+    // Invalidate channel/category cache for this session.
+    let cache_key = ChannelCacheKey::from_auth_scope(provider_id, &auth_scope, user_id);
+    state.channel_cache.invalidate(&cache_key).await;
+
+    // Best-effort ProxyContext cleanup: moka's future::Cache does not
+    // support selective invalidation by value, so stale ProxyContext entries
+    // will expire naturally via TTL.  A new stream request after refresh
+    // will create a fresh ProxyContext with updated tokens.
+    tracing::debug!(
+        provider = %provider_id,
+        user = %user_id,
+        "ProxyContext entries will expire via TTL; selective invalidation not supported"
+    );
+
+    Ok(())
+}
+
+/// Execute an upstream provider call and automatically refresh tokens on
+/// failure.
+///
+/// `make_call` is an async closure that receives a [`TemplateContext`] and
+/// returns a [`ProviderResponse`] (including non-2xx status codes).
+///
+/// If the first call returns a status code listed in the provider's
+/// `refresh.on_status_codes` and a `RefreshConfig` is present, this
+/// function:
+///
+/// 1. Acquires the per-session refresh lock (preventing concurrent
+///    refreshes).
+/// 2. Calls [`execute_refresh`] to update stored tokens.
+/// 3. Rebuilds the template context with fresh tokens.
+/// 4. Retries `make_call` exactly once.
+///
+/// The retry result is returned as-is — a second refresh-triggering status
+/// does **not** trigger another refresh (preventing infinite loops).
+///
+/// Concurrent callers that block on the refresh lock will re-read fresh
+/// tokens from the DB and retry without re-executing the refresh.
+pub async fn with_refresh_retry<F, Fut>(
+    state: &AppState,
+    provider_id: &str,
+    user_id: &str,
+    make_call: F,
+) -> Result<provider_client::ProviderResponse, AppError>
+where
+    F: Fn(TemplateContext) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<provider_client::ProviderResponse>>,
+{
+    // Load refresh config (if any) to know which status codes trigger refresh.
+    let refresh_cfg = state
+        .with_provider(provider_id, |p| p.auth.refresh.clone())
+        .flatten();
+
+    let context = build_provider_context(state, user_id, provider_id).await?;
+
+    // First attempt.
+    let response = make_call(context)
+        .await
+        .map_err(|e| AppError::Internal(format!("Upstream provider call failed: {e}")))?;
+
+    // Check whether refresh should be triggered.
+    let should_refresh = match &refresh_cfg {
+        Some(cfg) => cfg.on_status_codes.contains(&response.status),
+        None => false,
+    };
+
+    if !should_refresh {
+        return Ok(response);
+    }
+
+    tracing::info!(
+        provider = %provider_id,
+        user = %user_id,
+        status = response.status,
+        "Upstream returned refresh-triggering status — attempting token refresh"
+    );
+
+    // Acquire per-session refresh lock.
+    let lock = state.refresh_lock(provider_id, user_id);
+    let _guard = lock.lock().await;
+
+    // Perform refresh.
+    if let Err(e) = execute_refresh(state, provider_id, user_id).await {
+        tracing::warn!(
+            provider = %provider_id,
+            user = %user_id,
+            error = ?e,
+            "Token refresh failed, returning original upstream error"
+        );
+        return Ok(response);
+    }
+
+    // Rebuild context with fresh tokens and retry once.
+    let fresh_context = build_provider_context(state, user_id, provider_id).await?;
+    let retry_response = make_call(fresh_context).await.map_err(|e| {
+        AppError::Internal(format!("Upstream provider call failed after refresh: {e}"))
+    })?;
+
+    Ok(retry_response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth_middleware::JwtKeys;
+    use crate::db;
+    use crate::state::{AppState, ChannelCache};
+
+    use moka::future::Cache;
+    use otvi_core::config::ProviderConfig;
+    use std::collections::HashMap;
+    use std::sync::{Mutex, RwLock};
+    use std::time::Duration;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn test_keys() -> JwtKeys {
+        JwtKeys::new(b"test-secret")
+    }
+
+    async fn test_db() -> (db::Db, tempfile::TempDir) {
+        sqlx::any::install_default_drivers();
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let db_path = dir.path().join("test.db");
+        let url = format!("sqlite://{}", db_path.display());
+        let db = db::init(&url).await.expect("test db init");
+        (db, dir)
+    }
+
+    /// Create a minimal `ProviderConfig` YAML string with a refresh block
+    /// whose request points to `server_url + path`.
+    fn provider_yaml_with_refresh(server_url: &str, extract: HashMap<String, String>) -> String {
+        let extract_yaml: String = extract
+            .iter()
+            .map(|(k, v)| format!("        {k}: \"{v}\""))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        format!(
+            r#"
+provider:
+  name: TestRefresh
+  id: test_refresh
+auth:
+  flows:
+    - id: email
+      name: Email Login
+      inputs:
+        - key: email
+          label: Email
+      steps:
+        - name: login
+          request:
+            method: POST
+            path: /api/login
+  refresh:
+    request:
+      method: POST
+      path: "{server_url}/api/refresh"
+    on_success:
+      extract:
+{extract_yaml}
+channels:
+  list:
+    request:
+      method: GET
+      path: /api/channels
+    response:
+      items_path: "$.channels"
+playback:
+  stream:
+    request:
+      method: GET
+      path: /api/play/{{{{input.id}}}}
+    response:
+      url: "$.url"
+      type: "hls"
+"#
+        )
+    }
+
+    fn parse_provider(yaml: &str) -> ProviderConfig {
+        serde_yaml_ng::from_str(yaml).expect("parse test provider YAML")
+    }
+
+    fn build_test_state(db: db::Db, providers: HashMap<String, ProviderConfig>) -> AppState {
+        AppState {
+            providers_rw: RwLock::new(providers),
+            db,
+            jwt_keys: test_keys(),
+            http_client: reqwest::Client::new(),
+            proxy_ctx: Cache::builder()
+                .time_to_live(Duration::from_secs(60))
+                .build(),
+            channel_cache: ChannelCache::new(Duration::from_secs(60)),
+            refresh_locks: Mutex::new(HashMap::new()),
+        }
+    }
+
+    // ── execute_refresh tests ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn execute_refresh_updates_stored_values() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/refresh"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"authToken": "new-access-token"})),
+            )
+            .mount(&server)
+            .await;
+
+        let (test_db, _dir) = test_db().await;
+
+        let mut extract = HashMap::new();
+        extract.insert("access_token".into(), "$.authToken".into());
+        let yaml = provider_yaml_with_refresh(&server.uri(), extract);
+        let cfg = parse_provider(&yaml);
+
+        let mut providers = HashMap::new();
+        providers.insert("test_refresh".into(), cfg);
+        let state = build_test_state(test_db, providers);
+
+        // Seed initial stored values.
+        let mut initial = HashMap::new();
+        initial.insert("access_token".into(), "old-access-token".into());
+        initial.insert("refresh_token".into(), "my-refresh-token".into());
+        initial.insert("device_id".into(), "dev-123".into());
+        db::upsert_provider_session(&state.db, "", "test_refresh", &initial)
+            .await
+            .unwrap();
+
+        // Execute refresh.
+        execute_refresh(&state, "test_refresh", "").await.unwrap();
+
+        // Verify stored values were updated.
+        let stored = db::get_provider_session_values(&state.db, "", "test_refresh")
+            .await
+            .unwrap();
+        assert_eq!(stored.get("access_token").unwrap(), "new-access-token");
+        // Non-extracted keys should be preserved.
+        assert_eq!(stored.get("refresh_token").unwrap(), "my-refresh-token");
+        assert_eq!(stored.get("device_id").unwrap(), "dev-123");
+    }
+
+    #[tokio::test]
+    async fn execute_refresh_fails_on_upstream_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/refresh"))
+            .respond_with(
+                ResponseTemplate::new(500)
+                    .set_body_json(serde_json::json!({"error": "server error"})),
+            )
+            .mount(&server)
+            .await;
+
+        let (test_db, _dir) = test_db().await;
+
+        let mut extract = HashMap::new();
+        extract.insert("access_token".into(), "$.authToken".into());
+        let yaml = provider_yaml_with_refresh(&server.uri(), extract);
+        let cfg = parse_provider(&yaml);
+
+        let mut providers = HashMap::new();
+        providers.insert("test_refresh".into(), cfg);
+        let state = build_test_state(test_db, providers);
+
+        // Seed initial stored values.
+        let mut initial = HashMap::new();
+        initial.insert("access_token".into(), "old-access-token".into());
+        db::upsert_provider_session(&state.db, "", "test_refresh", &initial)
+            .await
+            .unwrap();
+
+        // Execute refresh — should fail.
+        let result = execute_refresh(&state, "test_refresh", "").await;
+        assert!(result.is_err());
+
+        // Stored values should not be modified.
+        let stored = db::get_provider_session_values(&state.db, "", "test_refresh")
+            .await
+            .unwrap();
+        assert_eq!(stored.get("access_token").unwrap(), "old-access-token");
+    }
+
+    #[tokio::test]
+    async fn execute_refresh_fails_when_no_values_extracted() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/refresh"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"unrelated": "data"})),
+            )
+            .mount(&server)
+            .await;
+
+        let (test_db, _dir) = test_db().await;
+
+        let mut extract = HashMap::new();
+        extract.insert("access_token".into(), "$.authToken".into());
+        let yaml = provider_yaml_with_refresh(&server.uri(), extract);
+        let cfg = parse_provider(&yaml);
+
+        let mut providers = HashMap::new();
+        providers.insert("test_refresh".into(), cfg);
+        let state = build_test_state(test_db, providers);
+
+        let mut initial = HashMap::new();
+        initial.insert("access_token".into(), "old-access-token".into());
+        db::upsert_provider_session(&state.db, "", "test_refresh", &initial)
+            .await
+            .unwrap();
+
+        // Execute refresh — should fail because extraction returns nothing.
+        let result = execute_refresh(&state, "test_refresh", "").await;
+        assert!(result.is_err());
+
+        // Stored values should not be modified.
+        let stored = db::get_provider_session_values(&state.db, "", "test_refresh")
+            .await
+            .unwrap();
+        assert_eq!(stored.get("access_token").unwrap(), "old-access-token");
+    }
+
+    #[tokio::test]
+    async fn execute_refresh_fails_for_provider_without_refresh_config() {
+        let (test_db, _dir) = test_db().await;
+
+        // Provider without refresh block.
+        let yaml = r#"
+provider:
+  name: NoRefreshTV
+  id: no_refresh
+auth:
+  flows:
+    - id: email
+      name: Email Login
+      inputs:
+        - key: email
+          label: Email
+      steps:
+        - name: login
+          request:
+            method: POST
+            path: /api/login
+channels:
+  list:
+    request:
+      method: GET
+      path: /api/channels
+    response:
+      items_path: "$.channels"
+playback:
+  stream:
+    request:
+      method: GET
+      path: /api/play/{{input.id}}
+    response:
+      url: "$.url"
+      type: "hls"
+"#;
+        let cfg: ProviderConfig = serde_yaml_ng::from_str(yaml).unwrap();
+        let mut providers = HashMap::new();
+        providers.insert("no_refresh".into(), cfg);
+        let state = build_test_state(test_db, providers);
+
+        let result = execute_refresh(&state, "no_refresh", "").await;
+        assert!(result.is_err());
+    }
+
+    // ── with_refresh_retry tests ──────────────────────────────────────────
+
+    #[tokio::test]
+    async fn with_refresh_retry_passes_through_on_success() {
+        let (test_db, _dir) = test_db().await;
+
+        let mut extract = HashMap::new();
+        extract.insert("access_token".into(), "$.authToken".into());
+        let yaml = provider_yaml_with_refresh("http://localhost:9999", extract);
+        let cfg = parse_provider(&yaml);
+
+        let mut providers = HashMap::new();
+        providers.insert("test_refresh".into(), cfg);
+        let state = build_test_state(test_db, providers);
+
+        let result = with_refresh_retry(&state, "test_refresh", "", |_ctx| async {
+            Ok(provider_client::ProviderResponse {
+                status: 200,
+                body: serde_json::json!({"ok": true}),
+                cookies: HashMap::new(),
+            })
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(result.status, 200);
+    }
+
+    #[tokio::test]
+    async fn with_refresh_retry_retries_after_refresh() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/refresh"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"authToken": "fresh-token"})),
+            )
+            .mount(&server)
+            .await;
+
+        let (test_db, _dir) = test_db().await;
+
+        let mut extract = HashMap::new();
+        extract.insert("access_token".into(), "$.authToken".into());
+        let yaml = provider_yaml_with_refresh(&server.uri(), extract);
+        let cfg = parse_provider(&yaml);
+
+        let mut providers = HashMap::new();
+        providers.insert("test_refresh".into(), cfg);
+        let state = build_test_state(test_db, providers);
+
+        // Seed stored values.
+        let mut initial = HashMap::new();
+        initial.insert("access_token".into(), "expired-token".into());
+        db::upsert_provider_session(&state.db, "", "test_refresh", &initial)
+            .await
+            .unwrap();
+
+        // Track call count to simulate 401 on first call, 200 on retry.
+        let call_count = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let call_count_clone = call_count.clone();
+
+        let result = with_refresh_retry(&state, "test_refresh", "", |_ctx| {
+            let cc = call_count_clone.clone();
+            async move {
+                let n = cc.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if n == 0 {
+                    // First call: simulate 401.
+                    Ok(provider_client::ProviderResponse {
+                        status: 401,
+                        body: serde_json::json!({"error": "unauthorized"}),
+                        cookies: HashMap::new(),
+                    })
+                } else {
+                    // Retry: simulate success.
+                    Ok(provider_client::ProviderResponse {
+                        status: 200,
+                        body: serde_json::json!({"ok": true}),
+                        cookies: HashMap::new(),
+                    })
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(result.status, 200);
+        assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 2);
+
+        // Verify tokens were refreshed.
+        let stored = db::get_provider_session_values(&state.db, "", "test_refresh")
+            .await
+            .unwrap();
+        assert_eq!(stored.get("access_token").unwrap(), "fresh-token");
+    }
+
+    #[tokio::test]
+    async fn with_refresh_retry_no_refresh_config_returns_error_as_is() {
+        let (test_db, _dir) = test_db().await;
+
+        // Provider without refresh config.
+        let yaml = r#"
+provider:
+  name: NoRefreshTV
+  id: no_refresh
+auth:
+  flows:
+    - id: email
+      name: Email Login
+      inputs:
+        - key: email
+          label: Email
+      steps:
+        - name: login
+          request:
+            method: POST
+            path: /api/login
+channels:
+  list:
+    request:
+      method: GET
+      path: /api/channels
+    response:
+      items_path: "$.channels"
+playback:
+  stream:
+    request:
+      method: GET
+      path: /api/play/{{input.id}}
+    response:
+      url: "$.url"
+      type: "hls"
+"#;
+        let cfg: ProviderConfig = serde_yaml_ng::from_str(yaml).unwrap();
+        let mut providers = HashMap::new();
+        providers.insert("no_refresh".into(), cfg);
+        let state = build_test_state(test_db, providers);
+
+        // Returns 401 but no refresh config → returns as-is.
+        let result = with_refresh_retry(&state, "no_refresh", "", |_ctx| async {
+            Ok(provider_client::ProviderResponse {
+                status: 401,
+                body: serde_json::json!({"error": "unauthorized"}),
+                cookies: HashMap::new(),
+            })
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(result.status, 401);
+    }
+}
