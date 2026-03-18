@@ -273,21 +273,23 @@ playback:
       devicetype: "phone"
       osVersion: "13"
       # Auth tokens validated by the JioTV CDN on manifest + segment requests
-      accessToken: "{{stored.access_token}}"
+      # NOTE: Header names must match DRM headers (lowercase) for tv.media.jio.com endpoints
+      accesstoken: "{{stored.access_token}}"
       ssotoken: "{{stored.sso_token}}"
       # Subscriber identity headers
       crmid: "{{stored.crm}}"
       subscriberId: "{{stored.crm}}"
       uniqueId: "{{stored.unique_id}}"
+      deviceId: "{{stored.device_id}}"
       # Additional headers copied from SetCommonJioTVHeaders in JioTV-Go
       lbcookie: "1"
       usergroup: "tvYR7NSNn7rymo3F"
       versionCode: "389"
       # srno (serial number) forwarded by JioTV-Go's RenderKeyHandler
       srno: "230203144000"
-      # channelId required by tv.media.jio.com for .pkey AES-128 key requests
-      # (JioTV-Go's RenderKeyHandler sets c.Request().Header.Set("channelId", channel_id))
-      channelId: "{{input.channel_id}}"
+      # channelid required by tv.media.jio.com for .pkey AES-128 key requests
+      # (JioTV-Go's RenderKeyHandler sets lowercase header name)
+      channelid: "{{input.channel_id}}"
     # URL query-params in the stream URL that should be forwarded as cookies.
     # JioTV's Akamai CDN embeds the token as `__hdnea__=…` in the manifest URL
     # and authenticates segment / .pkey requests via the `__hdnea__` cookie.
@@ -296,7 +298,7 @@ playback:
     # The manifest URL's query string (including __hdnea__) is NOT appended to
     # EXT-X-KEY URI lines; the resolved __hdnea__ cookie is sent via the Cookie
     # header instead (same as JioTV-Go behaviour — key server accepts it).
-    append_manifest_query_to_key_uris: true
+    append_manifest_query_to_key_uris: false
     # Allow the resolved __hdnea__ cookie to be forwarded to key requests.
     # Empirically the key server (tv.media.jio.com) requires it even though its
     # path (/fallback/bpk-tv/…) doesn't match the CDN ACL (/bpk-tv/…).

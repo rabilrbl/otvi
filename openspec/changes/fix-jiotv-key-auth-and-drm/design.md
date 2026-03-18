@@ -3,7 +3,9 @@
 OTVI is a data-driven TV streaming proxy: each provider is a YAML file (`ProviderConfig`) parsed into structs at startup. The server generically resolves templates, executes HTTP requests, rewrites HLS manifests, and proxies segments/keys — all driven by YAML config. There are no Rust traits per provider.
 
 Currently:
-- **HLS key auth is broken for JioTV**: The `key_exclude_resolved_cookies: true` setting in `providers/jiotv-mobile.yaml` prevents the `__hdnea__` cookie (extracted from the stream URL query params) from being forwarded on `.key`/`.pkey` requests. JioTV's key server requires this cookie, as confirmed by JioTV-Go's `RenderKeyHandler`.
+- **HLS key auth is broken for JioTV**: Two issues were identified:
+  1. The `key_exclude_resolved_cookies: true` setting in `providers/jiotv-mobile.yaml` prevented the `__hdnea__` cookie from being forwarded on `.key`/`.pkey` requests (now fixed to `false`)
+  2. **Header name case mismatch**: `proxy_headers` used camelCase names (`accessToken`, `channelId`) but JioTV's key server (tv.media.jio.com) expects lowercase headers (`accesstoken`, `channelid`) as used by JioTV-Go's RenderKeyHandler and confirmed by working DRM headers
 - **DRM is schema-only**: `DrmResponseConfig` exists in `config.rs` with fields `system`, `license_url`, and `headers`, and `StreamInfo` has an `Option<DrmInfo>` field. But no server handler reads them — there is no DRM license proxy endpoint and no DASH MPD manifest rewriting.
 - **Proxy only speaks HLS**: `proxy_stream` in `proxy.rs` only handles m3u8 rewriting and TS/key segment proxying. DASH MPD XML rewriting is not implemented.
 
@@ -29,12 +31,20 @@ The reference implementation is JioTV-Go, which has `DRMKeyHandler` (license pro
 
 ### 1. Fix key auth by changing YAML config, not Rust code
 
-**Decision**: Set `key_exclude_resolved_cookies: false` in `jiotv-mobile.yaml` and ensure `resolved_cookie_names` includes `__hdnea__`.
+**Decision**: 
+1. Set `key_exclude_resolved_cookies: false` in `jiotv-mobile.yaml` to forward `__hdnea__` cookie
+2. Change header names in `proxy_headers` from camelCase to lowercase to match JioTV-Go and DRM headers: `accessToken` → `accesstoken`, `channelId` → `channelid`
+3. Add `deviceId` header to `proxy_headers` to align with DRM header requirements
 
-**Rationale**: The existing cookie forwarding machinery in `ProxyContext::build_key_request` already supports forwarding resolved cookies to key requests — the YAML config simply has it disabled. No Rust code change needed for this fix.
+**Rationale**: 
+- The existing cookie forwarding machinery already supports forwarding resolved cookies — the YAML just had it disabled
+- **Critical discovery**: JioTV's key server at tv.media.jio.com expects lowercase header names, not camelCase. This was confirmed by comparing with the working DRM headers which use lowercase and explicitly mirror JioTV-Go's implementation
+- HTTP header names are case-insensitive per RFC 7230, but some CDN/proxy implementations (including JioTV's Akamai setup) are case-sensitive in practice
+- No Rust code change needed — purely configuration fix
 
 **Alternatives considered**:
-- Add a separate `key_cookies` YAML field → Unnecessary complexity; the existing `resolved_cookie_names` + `key_exclude_resolved_cookies` mechanism already handles this.
+- Add a separate `key_cookies` YAML field → Unnecessary complexity; the existing mechanism handles it
+- Use HTTP/2 pseudo-headers → Not applicable; JioTV uses HTTP/1.1
 
 ### 2. DRM license proxy as a new Axum route handler, not a proxy_stream mode
 

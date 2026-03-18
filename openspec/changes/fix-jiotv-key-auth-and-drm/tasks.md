@@ -1,7 +1,9 @@
 ## 1. Fix JioTV HLS Key Authentication
 
 - [x] 1.1 In `providers/jiotv-mobile.yaml`, set `key_exclude_resolved_cookies: false` and verify `resolved_cookie_names` includes `__hdnea__`
-- [ ] 1.2 Verify the fix by running the project and confirming `.key`/`.pkey` requests for a JioTV HLS channel return 200 instead of 403
+- [x] 1.2 Fix header name case mismatches in `proxy_headers` to match DRM headers (lowercase `accesstoken` and `channelid` instead of camelCase, matching JioTV-Go behavior)
+- [x] 1.3 Add `deviceId` header to `proxy_headers` to align with DRM headers (JioTV key server may require it)
+- [ ] 1.4 Verify the fix by running the project and confirming `.key`/`.pkey` requests for a JioTV HLS channel return 200 instead of 403
 
 ## 2. Extend Core Config Schema for DRM
 
