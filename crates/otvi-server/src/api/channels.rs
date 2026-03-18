@@ -449,14 +449,46 @@ pub async fn stream(
             .cloned()
     });
 
-    // Extract stream URL
-    let mut stream_url =
-        extract_json_path(&response, &stream_endpoint.response.url).ok_or_else(|| {
+    // ── DRM detection and extraction ──────────────────────────────────────
+    //
+    // Check for DRM FIRST before extracting stream URL, because some channels
+    // are DRM-only and don't have an HLS fallback URL.
+    //
+    // When the provider YAML defines a `drm` block with an `is_drm` JSON path,
+    // we check the upstream response for a truthy value.  If the channel is
+    // DRM-protected:
+    //   - Use the MPD URL as the primary stream URL if HLS URL is missing.
+    //   - Override the stream type to Dash.
+    //   - Collect DRM license proxy fields for ProxyContext.
+
+    let drm_cfg = stream_endpoint.response.drm.as_ref();
+
+    // Determine if this channel uses DRM.
+    let is_drm = drm_cfg
+        .and_then(|cfg| cfg.is_drm.as_ref())
+        .and_then(|path| extract_json_path(&response, path))
+        .map(|v| matches!(v.to_lowercase().as_str(), "true" | "1" | "yes"))
+        .unwrap_or(false);
+
+    // Extract stream URL - for DRM-only channels, fall back to MPD URL if HLS URL is missing
+    let mut stream_url = extract_json_path(&response, &stream_endpoint.response.url)
+        .or_else(|| {
+            if is_drm {
+                // Try to extract MPD URL as fallback for DRM-only channels
+                drm_cfg
+                    .and_then(|cfg| cfg.mpd_url.as_ref())
+                    .and_then(|mpd_path| extract_json_path(&response, mpd_path))
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| {
             error!(
                 channel_id = %channel_id,
                 provider   = %provider_id,
                 url_path   = %stream_endpoint.response.url,
-                "Stream URL not found in response"
+                is_drm     = is_drm,
+                "Stream URL not found in response (neither HLS nor MPD URL available)"
             );
             AppError::Internal("Stream URL not found in response".into())
         })?;
@@ -470,28 +502,16 @@ pub async fn stream(
         stream_type_raw.clone()
     };
 
-    let mut stream_type = match stream_type_str.to_lowercase().as_str() {
-        "dash" | "mpd" => StreamType::Dash,
-        _ => StreamType::Hls,
-    };
-
-    // ── DRM detection and extraction ──────────────────────────────────────
-    //
-    // When the provider YAML defines a `drm` block with an `is_drm` JSON path,
-    // we check the upstream response for a truthy value.  If the channel is
-    // DRM-protected:
-    //   - Override the stream URL with the MPD URL if `mpd_url` resolves.
-    //   - Override the stream type to Dash.
-    //   - Collect DRM license proxy fields for ProxyContext.
-
-    let drm_cfg = stream_endpoint.response.drm.as_ref();
-
-    // Determine if this channel uses DRM.
-    let is_drm = drm_cfg
-        .and_then(|cfg| cfg.is_drm.as_ref())
-        .and_then(|path| extract_json_path(&response, path))
-        .map(|v| matches!(v.to_lowercase().as_str(), "true" | "1" | "yes"))
-        .unwrap_or(false);
+    // For DRM-only channels where we used MPD URL as fallback, force stream type to DASH
+    let mut stream_type =
+        if is_drm && extract_json_path(&response, &stream_endpoint.response.url).is_none() {
+            StreamType::Dash
+        } else {
+            match stream_type_str.to_lowercase().as_str() {
+                "dash" | "mpd" => StreamType::Dash,
+                _ => StreamType::Hls,
+            }
+        };
 
     // Extract DRM info and collect license-proxy fields.
     let mut drm_license_url: Option<String> = None;
@@ -514,14 +534,17 @@ pub async fn stream(
         }
 
         if is_drm {
-            // Override stream URL with MPD URL when available.
+            // For hybrid channels that have both HLS and MPD URLs, prefer MPD.
+            // (DRM-only channels already used MPD URL from the fallback logic above.)
             if let Some(mpd_path) = &cfg.mpd_url
                 && let Some(mpd) = extract_json_path(&response, mpd_path)
+                && mpd != stream_url
+            // Only override if different from current URL
             {
                 debug!(
                     channel_id = %channel_id,
                     mpd_url = %mpd,
-                    "DRM channel — overriding stream URL with MPD URL"
+                    "DRM channel — preferring MPD URL over HLS URL"
                 );
                 stream_url = mpd;
                 stream_type = StreamType::Dash;

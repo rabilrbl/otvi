@@ -6,6 +6,7 @@ Currently:
 - **HLS key auth is broken for JioTV**: Two issues were identified:
   1. The `key_exclude_resolved_cookies: true` setting in `providers/jiotv-mobile.yaml` prevented the `__hdnea__` cookie from being forwarded on `.key`/`.pkey` requests (now fixed to `false`)
   2. **Header name case mismatch**: `proxy_headers` used camelCase names (`accessToken`, `channelId`) but JioTV's key server (tv.media.jio.com) expects lowercase headers (`accesstoken`, `channelid`) as used by JioTV-Go's RenderKeyHandler and confirmed by working DRM headers
+- **DRM-only channel detection fails**: The code extracted the HLS URL (`$.bitrates.auto`) before checking the DRM flag. Mandatory DRM channels that only return MPD URLs (no HLS fallback) would fail with "Stream URL not found in response" error, never reaching the DRM detection logic. Fixed by checking `is_drm` first and using MPD URL as fallback when HLS URL is missing.
 - **DRM is schema-only**: `DrmResponseConfig` exists in `config.rs` with fields `system`, `license_url`, and `headers`, and `StreamInfo` has an `Option<DrmInfo>` field. But no server handler reads them — there is no DRM license proxy endpoint and no DASH MPD manifest rewriting.
 - **Proxy only speaks HLS**: `proxy_stream` in `proxy.rs` only handles m3u8 rewriting and TS/key segment proxying. DASH MPD XML rewriting is not implemented.
 
@@ -45,6 +46,46 @@ The reference implementation is JioTV-Go, which has `DRMKeyHandler` (license pro
 **Alternatives considered**:
 - Add a separate `key_cookies` YAML field → Unnecessary complexity; the existing mechanism handles it
 - Use HTTP/2 pseudo-headers → Not applicable; JioTV uses HTTP/1.1
+
+### 1a. Check DRM flag before extracting stream URL
+
+**Decision**: Reorder the stream endpoint response processing to check the `is_drm` flag *before* attempting to extract the HLS stream URL. When a channel is DRM-only (no HLS fallback), use the MPD URL from `drm.mpd_url` as the primary stream URL and force the stream type to DASH.
+
+**Rationale**:
+- Some JioTV channels are **mandatory DRM** — they only return an MPD URL in the response, with no `$.bitrates.auto` HLS fallback
+- The original code extracted `$.bitrates.auto` first (lines 453-462), which would fail with "Stream URL not found in response" for DRM-only channels, stopping execution before the DRM detection logic could run
+- By checking `is_drm` early and falling back to MPD URL when HLS URL is missing, we handle both:
+  1. **DRM-only channels**: Use MPD URL from the start
+  2. **Hybrid channels**: Have both HLS and MPD, prefer MPD for DRM
+  3. **HLS-only channels**: Use HLS URL as before
+
+**Implementation**:
+```rust
+// Check is_drm first
+let is_drm = drm_cfg
+    .and_then(|cfg| cfg.is_drm.as_ref())
+    .and_then(|path| extract_json_path(&response, path))
+    .map(|v| matches!(v.to_lowercase().as_str(), "true" | "1" | "yes"))
+    .unwrap_or(false);
+
+// Extract stream URL with MPD fallback for DRM-only channels
+let stream_url = extract_json_path(&response, &stream_endpoint.response.url)
+    .or_else(|| {
+        if is_drm {
+            drm_cfg
+                .and_then(|cfg| cfg.mpd_url.as_ref())
+                .and_then(|mpd_path| extract_json_path(&response, mpd_path))
+        } else {
+            None
+        }
+    })
+    .ok_or_else(|| AppError::Internal("Stream URL not found in response".into()))?;
+```
+
+**Alternatives considered**:
+- Make HLS URL optional in schema → Would require broader schema changes and affect all providers
+- Add separate `drm_only` flag to config → Unnecessary; `is_drm` + missing HLS URL already indicates this
+- Keep original order and special-case the error → Less clean than fixing the root cause
 
 ### 2. DRM license proxy as a new Axum route handler, not a proxy_stream mode
 

@@ -5,7 +5,14 @@
 - [x] 1.3 Add `deviceId` header to `proxy_headers` to align with DRM headers (JioTV key server may require it)
 - [ ] 1.4 Verify the fix by running the project and confirming `.key`/`.pkey` requests for a JioTV HLS channel return 200 instead of 403
 
-## 2. Extend Core Config Schema for DRM
+## 2. Fix DRM-Only Channel Detection
+
+- [x] 2.0 Fix mandatory DRM channel detection: check `is_drm` flag before extracting stream URL, and fall back to MPD URL when HLS URL is missing
+- [x] 2.0.1 Modified stream URL extraction logic to try MPD URL as fallback for DRM-only channels
+- [x] 2.0.2 Force stream type to DASH when MPD URL fallback is used
+- [x] 2.0.3 All tests pass (144 unit, 57 integration, 1 doctest)
+
+## 3. Extend Core Config Schema for DRM
 
 - [x] 2.1 In `crates/otvi-core/src/config.rs`, add DRM response extraction fields to `DrmResponseConfig`: `is_drm` (JSON path), `mpd_url` (JSON path), `cookies` (Vec<String>), `prefetch_url` (Option<String>)
 - [x] 2.2 Existing `DrmResponseConfig` already had `system`, `license_url`, and `headers` fields
