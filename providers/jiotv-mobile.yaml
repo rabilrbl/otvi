@@ -126,6 +126,9 @@ auth:
       path: "https://auth.media.jio.com/tokenservice/apis/v1/refreshtoken?langId=6"
       headers:
         Content-Type: "application/json; charset=utf-8"
+        User-Agent: "okhttp/4.2.2"
+        devicetype: "phone"
+        os: "android"
         versionCode: "389"
         Host: "auth.media.jio.com"
         accessToken: "{{stored.access_token}}"
@@ -138,7 +141,7 @@ auth:
     on_success:
       extract:
         access_token: "$.authToken"
-    on_status_codes: [401, 403]
+    on_status_codes: [401, 403, 419]
 
 # ── Channel Browsing ────────────────────────────────────────────────────────
 
