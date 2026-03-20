@@ -202,7 +202,7 @@ jobs:
            echo "server-only=$(ls otvi-server-${VERSION}-${OS}-${ARCH}.tar.gz otvi-server-${VERSION}-${OS}-${ARCH}.tar.gz.sha256 | tr '\n' ' ')" >> $GITHUB_OUTPUT
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: binaries-${{ steps.os_string.outputs.os }}-${{ matrix.arch }}
           path: |
@@ -228,7 +228,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: release-artifacts
 
