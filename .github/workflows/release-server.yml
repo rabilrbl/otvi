@@ -179,8 +179,8 @@ jobs:
              cp target/release-server-only/${{ steps.rust_target.outputs.target }}/release/otvi-server "$API_DIR/otvi-server"
            fi
 
-           cp README.md LICENSE RELEASING.md "$FULL_DIR/"
-           cp README.md LICENSE RELEASING.md "$API_DIR/"
+           cp README.md LICENSE "$FULL_DIR/"
+           cp README.md LICENSE "$API_DIR/"
 
            # For pre-releases, add version info file with commit SHA
            if [[ "$IS_TAG_RELEASE" != "true" ]]; then
