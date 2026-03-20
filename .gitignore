@@ -4,6 +4,13 @@ dist/
 node_modules/
 .vscode/
 
+# AI tool directories
+.agent/
+.cache/
+.codex/
+.gemini/
+.opencode/
+
 # Environment / secrets – keep .env.example but not .env itself
 .env
 .env.local
