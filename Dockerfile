@@ -39,8 +39,7 @@ RUN trunk build --release
 FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
-# cargo-chef only needs Cargo.toml to understand workspace structure
-COPY web/Cargo.toml web/Cargo.toml
+COPY web web
 RUN cargo chef prepare --recipe-path recipe.json
 
 # ── Stage 4: Build server dependencies ───────────────────────────────────────
