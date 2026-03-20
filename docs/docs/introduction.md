@@ -132,4 +132,4 @@ otvi/
 
 ## License
 
-OTVI is licensed under **CC BY-NC-SA 4.0**. See [LICENSE](https://github.com/rabilrbl/otvi/blob/main/LICENSE) for details.
+OTVI is licensed under **AGPL-3.0-only**. See [LICENSE](https://github.com/rabilrbl/otvi/blob/main/LICENSE) for details.

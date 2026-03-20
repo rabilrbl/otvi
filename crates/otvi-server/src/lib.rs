@@ -36,7 +36,7 @@ pub use embedded_frontend::{has_embedded_frontend, serve_embedded_frontend};
         title = "OTVI API",
         version = "0.1.0",
         description = "OTVI REST API — provider management, user authentication, channel browsing and stream proxying.",
-        license(name = "CC-BY-NC-SA-4.0"),
+        license(name = "AGPL-3.0-only", url = "https://www.gnu.org/licenses/agpl-3.0.html"),
     ),
     paths(
         // auth

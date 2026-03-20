@@ -2,7 +2,7 @@
 name = "otvi-server"
 version = "0.1.0"
 edition = "2024"
-license = "CC-BY-NC-SA-4.0"
+license = "AGPL-3.0-only"
 
 [dependencies]
 otvi-core = { path = "../otvi-core" }

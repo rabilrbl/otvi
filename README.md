@@ -91,4 +91,4 @@ Repository files can document and enforce part of this model, but GitHub setting
 
 ## License
 
-CC BY-NC-SA 4.0. See `LICENSE`.
+AGPL-3.0-only. See `LICENSE`.
