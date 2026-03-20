@@ -7,8 +7,10 @@ WORKDIR /app
 FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
-# cargo-chef only needs Cargo.toml to understand workspace structure
+# cargo-chef only needs Cargo.toml files to prepare the dependency recipe.
+# We need to create minimal dummy source files so cargo can validate the workspace.
 COPY web/Cargo.toml web/Cargo.toml
+RUN mkdir -p web/src && echo "fn main() {}" > web/src/main.rs
 RUN cargo chef prepare --recipe-path recipe.json
 
 # ── Stage 3: Build server dependencies ───────────────────────────────────────
