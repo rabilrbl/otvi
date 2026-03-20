@@ -1,4 +1,9 @@
-# ── Stage 1: Build the WASM frontend ─────────────────────────────────────────
+# ── Stage 1: Prepare cargo-chef recipe ──────────────────────────────────────
+FROM rust:1.94-bookworm AS chef
+RUN cargo install cargo-chef --locked
+WORKDIR /app
+
+# ── Stage 2: Build the WASM frontend ─────────────────────────────────────────
 FROM rust:1.94-bookworm AS build-web
 
 ARG TRUNK_VERSION=0.21.14
@@ -30,10 +35,27 @@ WORKDIR /app/web
 RUN bun install --frozen-lockfile
 RUN trunk build --release
 
-# ── Stage 2: Build the server binary ─────────────────────────────────────────
+# ── Stage 3: Plan server dependencies ────────────────────────────────────────
+FROM chef AS planner
+COPY Cargo.toml Cargo.lock ./
+COPY crates crates
+COPY web web
+RUN cargo chef prepare --recipe-path recipe.json
+
+# ── Stage 4: Build server dependencies ───────────────────────────────────────
+FROM chef AS dependencies
+COPY --from=planner /app/recipe.json recipe.json
+# Build dependencies - this is the caching layer!
+RUN cargo chef cook --release --recipe-path recipe.json -p otvi-server
+
+# ── Stage 5: Build the server binary ─────────────────────────────────────────
 FROM rust:1.94-bookworm AS build-server
 
 WORKDIR /app
+# Copy over the cached dependencies
+COPY --from=dependencies /app/target target
+COPY --from=dependencies /usr/local/cargo /usr/local/cargo
+
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
 COPY web web
