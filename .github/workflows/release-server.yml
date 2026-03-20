@@ -35,15 +35,23 @@ jobs:
           ref: ${{ github.ref }}
           fetch-depth: 0
 
+      - name: Determine Rust target
+        id: rust_target
+        shell: bash
+        run: |
+          if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
+            echo "target=${{ matrix.arch }}-unknown-linux-gnu" >> $GITHUB_OUTPUT
+          elif [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+            echo "target=${{ matrix.arch }}-apple-darwin" >> $GITHUB_OUTPUT
+          else
+            echo "target=${{ matrix.arch }}-pc-windows-msvc" >> $GITHUB_OUTPUT
+          fi
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: |
-            x86_64-unknown-linux-gnu
-            aarch64-unknown-linux-gnu
-            x86_64-apple-darwin
-            aarch64-apple-darwin
-            x86_64-pc-windows-msvc
+          targets: ${{ steps.rust_target.outputs.target }}
+
       - name: Restore Rust cache
         uses: Swatinem/rust-cache@v2
 
@@ -116,17 +124,6 @@ jobs:
         working-directory: web
         run: trunk build --release
 
-      - name: Determine Rust target
-        id: rust_target
-        shell: bash
-        run: |
-          if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
-            echo "target=${{ matrix.arch }}-unknown-linux-gnu" >> $GITHUB_OUTPUT
-          elif [[ "${{ matrix.os }}" == "macos-latest" ]]; then
-            echo "target=${{ matrix.arch }}-apple-darwin" >> $GITHUB_OUTPUT
-          else
-            echo "target=${{ matrix.arch }}-pc-windows-msvc" >> $GITHUB_OUTPUT
-          fi
       - name: Build bundled release binary
         env:
           OTVI_EMBED_FRONTEND: "1"
