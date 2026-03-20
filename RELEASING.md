@@ -5,12 +5,27 @@ This repository uses a `dev` -> `main` release train.
 - `dev` is the integration branch for day-to-day work.
 - `main` stages the next release.
 - `vX.Y.Z` tags trigger the release workflows.
+- Pushing to `main` triggers pre-release builds with binaries.
 
 ## Release Scope
 
 - Every release tag requires matching versions in `crates/otvi-core/Cargo.toml`, `crates/otvi-server/Cargo.toml`, and `web/Cargo.toml`.
 - Release binaries include both a bundled `otvi` artifact with the frontend embedded and a server-only `otvi-server` API artifact.
 - GHCR publishes two images: `ghcr.io/rabilrbl/otvi` (bundled frontend) and `ghcr.io/rabilrbl/otvi-server` (API only).
+
+## Pre-release Builds
+
+Pushing to the `main` branch automatically triggers a pre-release build that:
+
+- Builds binaries for all supported platforms (Linux x86_64/aarch64, macOS x86_64, Windows x86_64)
+- Creates both bundled and server-only artifacts, similar to tagged releases
+- Publishes artifacts to a GitHub pre-release tagged as `pre-release`
+- Replaces the previous pre-release on each push to `main`
+- Includes build metadata (commit SHA, build timestamp) in a `VERSION.txt` file
+
+Pre-release artifacts are named `otvi-pre-release-{os}-{arch}.tar.gz` and `otvi-server-pre-release-{os}-{arch}.tar.gz`, with corresponding SHA256 checksums.
+
+**Note:** Pre-releases are intended for testing and development. For production use, always use stable tagged releases.
 
 ## Release Preparation Checklist
 

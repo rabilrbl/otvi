@@ -81,6 +81,7 @@ cargo test --workspace --all-features
 
 - `dev` is the integration branch for normal pull requests
 - `main` stages the next release and should stay closer to release-candidate quality
+- Pushes to `main` automatically create pre-release builds with binaries for all supported platforms
 - Release automation publishes binaries and containers from `vX.Y.Z` tags
 - Tagged releases require matching versions in `crates/otvi-core/Cargo.toml`, `crates/otvi-server/Cargo.toml`, and `web/Cargo.toml`
 - GHCR images are published without a floating `latest` tag; use `dev`, `main`, `v0`, `v0.1`, or a full release tag such as `v0.1.0`

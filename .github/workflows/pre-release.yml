@@ -1,0 +1,233 @@
+name: Pre-release Build
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pre-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build pre-release binaries
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        arch: [x86_64, aarch64]
+        exclude:
+          # Exclude unsupported combinations
+          - os: windows-latest
+            arch: aarch64
+          - os: macos-latest
+            arch: aarch64
+    env:
+      RELEASE_TAG: pre-release
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: |
+            x86_64-unknown-linux-gnu
+            aarch64-unknown-linux-gnu
+            x86_64-apple-darwin
+            aarch64-apple-darwin
+            x86_64-pc-windows-msvc
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install Trunk
+        uses: taiki-e/install-action@v2
+        with:
+          tool: trunk
+
+      - name: Install wasm target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Install frontend dependencies
+        working-directory: web
+        run: bun install --frozen-lockfile
+
+      - name: Build bundled frontend assets
+        working-directory: web
+        run: trunk build --release
+
+      - name: Determine Rust target
+        id: rust_target
+        shell: bash
+        run: |
+          if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
+            echo "target=${{ matrix.arch }}-unknown-linux-gnu" >> $GITHUB_OUTPUT
+          elif [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+            echo "target=${{ matrix.arch }}-apple-darwin" >> $GITHUB_OUTPUT
+          else
+            echo "target=${{ matrix.arch }}-pc-windows-msvc" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build bundled release binary
+        env:
+          OTVI_EMBED_FRONTEND: "1"
+        run: cargo build --locked --release -p otvi-server --target ${{ steps.rust_target.outputs.target }} --target-dir target/release-bundled
+
+      - name: Build server-only release binary
+        run: cargo build --locked --release -p otvi-server --target ${{ steps.rust_target.outputs.target }} --target-dir target/release-server-only
+
+      - name: Determine OS string
+        id: os_string
+        shell: bash
+        run: |
+          if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
+            echo "os=linux" >> $GITHUB_OUTPUT
+          elif [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+            echo "os=macos" >> $GITHUB_OUTPUT
+          else
+            echo "os=windows" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Get commit SHA
+        id: commit_sha
+        shell: bash
+        run: |
+          echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Package release assets
+        id: artifacts
+        shell: bash
+        run: |
+          VERSION="pre-release"
+          COMMIT_SHA="${{ steps.commit_sha.outputs.sha }}"
+          OS="${{ steps.os_string.outputs.os }}"
+          ARCH="${{ matrix.arch }}"
+
+          FULL_DIR="release/otvi-${VERSION}-${OS}-${ARCH}"
+          API_DIR="release/otvi-server-${VERSION}-${OS}-${ARCH}"
+
+          mkdir -p "$FULL_DIR" "$API_DIR"
+
+          # Copy binaries - handle Windows .exe extension
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            cp target/release-bundled/${{ steps.rust_target.outputs.target }}/release/otvi-server.exe "$FULL_DIR/otvi.exe"
+            cp target/release-server-only/${{ steps.rust_target.outputs.target }}/release/otvi-server.exe "$API_DIR/otvi-server.exe"
+          else
+            cp target/release-bundled/${{ steps.rust_target.outputs.target }}/release/otvi-server "$FULL_DIR/otvi"
+            cp target/release-server-only/${{ steps.rust_target.outputs.target }}/release/otvi-server "$API_DIR/otvi-server"
+          fi
+
+          cp README.md LICENSE RELEASING.md "$FULL_DIR/"
+          cp README.md LICENSE RELEASING.md "$API_DIR/"
+
+          # Create version info file with commit SHA
+          echo "Pre-release build from commit: ${COMMIT_SHA}" > "$FULL_DIR/VERSION.txt"
+          echo "Pre-release build from commit: ${COMMIT_SHA}" > "$API_DIR/VERSION.txt"
+          echo "Branch: main" >> "$FULL_DIR/VERSION.txt"
+          echo "Branch: main" >> "$API_DIR/VERSION.txt"
+          echo "Built: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> "$FULL_DIR/VERSION.txt"
+          echo "Built: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> "$API_DIR/VERSION.txt"
+
+          tar -C release -czf "otvi-${VERSION}-${OS}-${ARCH}.tar.gz" "otvi-${VERSION}-${OS}-${ARCH}"
+          tar -C release -czf "otvi-server-${VERSION}-${OS}-${ARCH}.tar.gz" "otvi-server-${VERSION}-${OS}-${ARCH}"
+
+          sha256sum "otvi-${VERSION}-${OS}-${ARCH}.tar.gz" > "otvi-${VERSION}-${OS}-${ARCH}.tar.gz.sha256"
+          sha256sum "otvi-server-${VERSION}-${OS}-${ARCH}.tar.gz" > "otvi-server-${VERSION}-${OS}-${ARCH}.tar.gz.sha256"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ steps.os_string.outputs.os }}-${{ matrix.arch }}
+          path: |
+            otvi-pre-release-*.tar.gz
+            otvi-pre-release-*.tar.gz.sha256
+            otvi-server-pre-release-*.tar.gz
+            otvi-server-pre-release-*.tar.gz.sha256
+          retention-days: 30
+
+  release:
+    name: Publish pre-release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Get commit SHA
+        id: commit_sha
+        run: |
+          echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Delete existing pre-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Delete the pre-release tag and release if it exists
+          gh release delete pre-release --yes || true
+          git push origin :refs/tags/pre-release || true
+
+      - name: Create pre-release tag
+        run: |
+          git tag -f pre-release
+          git push -f origin pre-release
+
+      - name: Create or update pre-release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: pre-release
+          name: "Pre-release (main branch)"
+          prerelease: true
+          body: |
+            ## Pre-release Build from main branch
+
+            **Commit:** ${{ github.sha }}
+            **Short SHA:** ${{ steps.commit_sha.outputs.sha }}
+            **Built:** ${{ github.event.head_commit.timestamp }}
+
+            This is an automated pre-release build from the main branch. It contains the latest changes and may be unstable.
+
+            ### Downloads
+
+            Choose the appropriate binary for your platform:
+
+            - **otvi-pre-release-{os}-{arch}.tar.gz**: Full binary with embedded frontend
+            - **otvi-server-pre-release-{os}-{arch}.tar.gz**: Server-only binary without frontend
+
+            Each archive includes a `VERSION.txt` file with build information.
+
+            ### Verification
+
+            Verify downloads using the provided SHA256 checksums:
+            ```bash
+            sha256sum -c otvi-pre-release-{os}-{arch}.tar.gz.sha256
+            ```
+
+            ---
+
+            **Note:** For stable releases, use the [tagged releases](https://github.com/${{ github.repository }}/releases) instead.
+          files: |
+            release-artifacts/**/*.tar.gz
+            release-artifacts/**/*.tar.gz.sha256
