@@ -65,7 +65,7 @@ COPY --from=build-web /app/dist /app/dist
 # The profile is defined in Cargo.toml [profile.release] below.
 RUN OTVI_EMBED_FRONTEND=1 cargo build --release -p otvi-server
 
-# ── Stage 3: Runtime image ───────────────────────────────────────────────────
+# ── Stage 6: Runtime image ───────────────────────────────────────────────────
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \

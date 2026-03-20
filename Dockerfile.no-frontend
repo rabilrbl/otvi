@@ -32,7 +32,7 @@ COPY web web
 # The profile is defined in Cargo.toml [profile.release] below.
 RUN cargo build --release -p otvi-server
 
-# ── Stage 2: Runtime image ───────────────────────────────────────────────────
+# ── Stage 5: Runtime image ───────────────────────────────────────────────────
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
