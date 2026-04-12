@@ -7,7 +7,7 @@ tags: [release, documentation]
 
 The OTVI documentation site now supports two publishing tracks:
 
-<!-- truncate -->
+{/* truncate */}
 
 - versioned documentation snapshots for stable releases
 - blog posts for release notes and project updates
