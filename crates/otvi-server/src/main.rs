@@ -21,7 +21,24 @@ fn redact_database_url(database_url: &str) -> String {
             }
             url.to_string()
         }
-        Err(_) => database_url.to_string(),
+        Err(_) => "[invalid DATABASE_URL]".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::redact_database_url;
+
+    #[test]
+    fn preserves_normal_urls_without_credentials() {
+        let redacted = redact_database_url("sqlite://db.sqlite");
+        assert_eq!(redacted, "sqlite://db.sqlite");
+    }
+
+    #[test]
+    fn hides_invalid_url_instead_of_echoing_it_back() {
+        let redacted = redact_database_url("postgres://alice@[invalid host");
+        assert_eq!(redacted, "[invalid DATABASE_URL]");
     }
 }
 

@@ -54,8 +54,9 @@ impl TemplateContext {
         self.values
             .iter()
             .filter_map(|(key, value)| {
-                key.strip_prefix(prefix)
-                    .map(|stripped| (stripped.to_string(), value.clone()))
+                let stripped = key.strip_prefix(prefix)?;
+                let stripped = stripped.strip_prefix('.').unwrap_or(stripped);
+                Some((stripped.to_string(), value.clone()))
             })
             .collect()
     }
@@ -150,8 +151,8 @@ pub fn select_json_path_value<'a>(json: &'a Value, path: &str) -> Option<&'a Val
 /// use serde_json::json;
 /// use otvi_core::template::extract_json_path;
 ///
-/// let data = json!({"data": {"token": "abc123"}});
-/// assert_eq!(extract_json_path(&data, "$.data.token"), Some("abc123".into()));
+/// let data = json!({"data": {"value": "demo-token"}});
+/// assert_eq!(extract_json_path(&data, "$.data.value"), Some("demo-token".into()));
 ///
 /// // Filter expression
 /// let list = json!({"items": [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]});
@@ -274,6 +275,24 @@ mod tests {
         assert_eq!(ctx.resolve_lossy("{{input.email}}"), "new@example.com");
     }
 
+    #[test]
+    fn values_with_prefix_strips_separator() {
+        let mut ctx = TemplateContext::new();
+        ctx.set("stored.access_token", "token-123");
+        ctx.set("stored.refresh_token", "token-456");
+
+        let mut values = ctx.values_with_prefix("stored");
+        values.sort();
+
+        assert_eq!(
+            values,
+            vec![
+                ("access_token".to_string(), "token-123".to_string()),
+                ("refresh_token".to_string(), "token-456".to_string()),
+            ]
+        );
+    }
+
     // ── extract_json_path – simple dot-notation ───────────────────────────
 
     #[test]
@@ -347,8 +366,8 @@ mod tests {
 
     #[test]
     fn extract_without_dollar_prefix() {
-        let data = json!({"data": {"token": "xyz"}});
-        assert_eq!(extract_json_path(&data, "data.token"), Some("xyz".into()));
+        let data = json!({"data": {"value": "demo-token"}});
+        assert_eq!(extract_json_path(&data, "data.value"), Some("demo-token".into()));
     }
 
     #[test]

@@ -180,7 +180,7 @@ pub fn LoginPage() -> impl IntoView {
                                                     }
                                                     key=|f| f.key.clone()
                                                     children=move |field| {
-                                                        render_field(field, set_inputs)
+                                                        render_field(field, inputs, set_inputs)
                                                     }
                                                 />
 
@@ -189,7 +189,7 @@ pub fn LoginPage() -> impl IntoView {
                                                     each=move || extra_fields.get()
                                                     key=|f| f.key.clone()
                                                     children=move |field| {
-                                                        render_field(field, set_inputs)
+                                                        render_field(field, inputs, set_inputs)
                                                     }
                                                 />
 
@@ -230,10 +230,12 @@ pub fn LoginPage() -> impl IntoView {
 /// Render a single form field and wire its value into the shared `inputs` map.
 fn render_field(
     field: FieldInfo,
+    inputs: ReadSignal<HashMap<String, String>>,
     set_inputs: WriteSignal<HashMap<String, String>>,
 ) -> impl IntoView {
     let key = field.key.clone();
     let key2 = field.key.clone();
+    let key3 = field.key.clone();
 
     view! {
         <div class="mb-4">
@@ -251,8 +253,8 @@ fn render_field(
                             map.insert(k, value);
                         });
                 }
-                prop:value=String::new
-                name=key2
+                prop:value=move || inputs.get().get(&key2).cloned().unwrap_or_default()
+                name=key3
             />
         </div>
     }

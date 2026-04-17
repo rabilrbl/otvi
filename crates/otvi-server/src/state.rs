@@ -533,7 +533,10 @@ fn load_provider_map_from_iter(
                 providers.insert(config.provider.id.clone(), config);
             }
             Err(e) => {
-                tracing::error!("Failed to parse {}: {e}", path.display());
+                return Err(anyhow::anyhow!(
+                    "failed to parse provider config {}: {e}",
+                    path.display()
+                ));
             }
         }
     }

@@ -333,7 +333,13 @@ fn build_cors_layer() -> CorsLayer {
     use tower_http::cors::AllowOrigin;
 
     match std::env::var("CORS_ORIGINS") {
-        Ok(origins) if origins != "*" && !origins.is_empty() => {
+        Ok(origins) if origins.trim() == "*" => {
+            tracing::warn!(
+                "CORS_ORIGINS set to '*' – using permissive CORS policy (not suitable for production)"
+            );
+            CorsLayer::permissive()
+        }
+        Ok(origins) if !origins.trim().is_empty() => {
             let allowed: Vec<HeaderValue> = origins
                 .split(',')
                 .filter_map(|o| o.trim().parse::<HeaderValue>().ok())
@@ -341,9 +347,10 @@ fn build_cors_layer() -> CorsLayer {
 
             if allowed.is_empty() {
                 tracing::warn!(
-                    "CORS_ORIGINS set but no valid origins parsed – falling back to permissive"
+                    origins = %origins,
+                    "CORS_ORIGINS set but no valid origins parsed – denying cross-origin requests"
                 );
-                CorsLayer::permissive()
+                CorsLayer::new()
             } else {
                 tracing::info!(origins = %origins, "CORS restricted to configured origins");
                 CorsLayer::new()
@@ -363,7 +370,13 @@ fn build_cors_layer() -> CorsLayer {
                     .allow_credentials(false)
             }
         }
-        _ => {
+        Ok(_) => {
+            tracing::warn!(
+                "CORS_ORIGINS set but empty – denying cross-origin requests"
+            );
+            CorsLayer::new()
+        }
+        Err(_) => {
             tracing::warn!(
                 "CORS_ORIGINS not set – using permissive CORS policy (not suitable for production)"
             );
