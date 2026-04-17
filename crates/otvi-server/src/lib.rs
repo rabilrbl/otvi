@@ -371,9 +371,7 @@ fn build_cors_layer() -> CorsLayer {
             }
         }
         Ok(_) => {
-            tracing::warn!(
-                "CORS_ORIGINS set but empty – denying cross-origin requests"
-            );
+            tracing::warn!("CORS_ORIGINS set but empty – denying cross-origin requests");
             CorsLayer::new()
         }
         Err(_) => {

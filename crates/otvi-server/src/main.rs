@@ -25,23 +25,6 @@ fn redact_database_url(database_url: &str) -> String {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::redact_database_url;
-
-    #[test]
-    fn preserves_normal_urls_without_credentials() {
-        let redacted = redact_database_url("sqlite://db.sqlite");
-        assert_eq!(redacted, "sqlite://db.sqlite");
-    }
-
-    #[test]
-    fn hides_invalid_url_instead_of_echoing_it_back() {
-        let redacted = redact_database_url("postgres://alice@[invalid host");
-        assert_eq!(redacted, "[invalid DATABASE_URL]");
-    }
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Load .env file if present (silently ignored when absent).
@@ -133,4 +116,21 @@ async fn main() -> anyhow::Result<()> {
     .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::redact_database_url;
+
+    #[test]
+    fn preserves_normal_urls_without_credentials() {
+        let redacted = redact_database_url("sqlite://db.sqlite");
+        assert_eq!(redacted, "sqlite://db.sqlite");
+    }
+
+    #[test]
+    fn hides_invalid_url_instead_of_echoing_it_back() {
+        let redacted = redact_database_url("postgres://alice@[invalid host");
+        assert_eq!(redacted, "[invalid DATABASE_URL]");
+    }
 }
