@@ -1,0 +1,12 @@
+# Security advisory exceptions for cargo audit.
+# Each entry documents why an unfixed advisory is accepted.
+
+[advisories]
+
+# RUSTSEC-2023-0071: RSA timing side-channel vulnerability
+# Pulled in by sqlx-mysql for MySQL's caching_sha2_password authentication protocol.
+# No upstream fix is available as of investigation date (2026-04-18).
+# Risk: timing oracle on RSA key operations during MySQL auth handshake.
+# Mitigation: MySQL connection is local/trusted-network only per deployment docs.
+# Action: revisit when sqlx-mysql publishes a fix or replaces RSA auth.
+ignore = ["RUSTSEC-2023-0071"]
