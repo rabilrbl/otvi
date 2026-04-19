@@ -19,6 +19,7 @@ use tower::Layer;
 use tower_governor::GovernorLayer;
 use tower_governor::governor::GovernorConfigBuilder;
 use tower_http::cors::CorsLayer;
+use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::timeout::TimeoutLayer;
 
@@ -284,6 +285,7 @@ where
         .layer(general_layer);
 
     let cors = build_cors_layer();
+    let x_request_id = axum::http::header::HeaderName::from_static("x-request-id");
 
     let stateful = axum::Router::new()
         .nest("/api", api_routes)
@@ -316,6 +318,10 @@ where
             axum::http::StatusCode::REQUEST_TIMEOUT,
             request_timeout(),
         ))
+        // Correlation IDs: generates a UUID x-request-id if the client didn't
+        // send one, and propagates it to the response for traceability.
+        .layer(PropagateRequestIdLayer::new(x_request_id.clone()))
+        .layer(SetRequestIdLayer::new(x_request_id, MakeRequestUuid))
         .with_state(state);
 
     stateful.merge(SwaggerUi::new("/api/docs").url("/api/docs/openapi.json", ApiDoc::openapi()))
@@ -669,5 +675,47 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
         // Restore env for other tests.
         unsafe { std::env::remove_var("REQUEST_BODY_LIMIT_BYTES") };
+    }
+
+    #[tokio::test]
+    async fn request_id_header_present_in_response() {
+        let (app, _dir) = build_test_app().await;
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/healthz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            resp.headers().contains_key("x-request-id"),
+            "x-request-id header should be present in every response"
+        );
+    }
+
+    #[tokio::test]
+    async fn client_supplied_request_id_echoed_back() {
+        let (app, _dir) = build_test_app().await;
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/healthz")
+                    .header("x-request-id", "test-correlation-id-123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let echoed = resp
+            .headers()
+            .get("x-request-id")
+            .and_then(|v| v.to_str().ok());
+        assert_eq!(
+            echoed,
+            Some("test-correlation-id-123"),
+            "client-supplied x-request-id should be echoed back unchanged"
+        );
     }
 }
