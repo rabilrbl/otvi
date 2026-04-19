@@ -131,10 +131,11 @@ async fn main() -> anyhow::Result<()> {
     });
 
     tokio::select! {
+        // Branch 1: all connections drained cleanly — normal exit.
         result = server => { result?; }
+        // Branch 2: drain deadline exceeded — force exit.
         _ = async move {
-            // Wait until shutdown signal fires, then enforce the drain deadline.
-            drain_rx.await.ok();
+            drain_rx.await.ok(); // wait for shutdown signal
             tokio::time::sleep(Duration::from_secs(drain_secs)).await;
             tracing::warn!(
                 drain_secs,

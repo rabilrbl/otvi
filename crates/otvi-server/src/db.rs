@@ -85,11 +85,14 @@ pub async fn init(database_url: &str) -> anyhow::Result<Db> {
         .await
         .with_context(|| format!("Failed to connect to database: {database_url}"))?;
 
-    // Enable WAL mode for SQLite to improve read throughput under concurrent
-    // access.  WAL allows readers and one writer to proceed concurrently
-    // (default journal mode serialises all writes and reads).
+    // Enable WAL mode for file-based SQLite to improve read throughput under
+    // concurrent access.  WAL allows readers and one writer to proceed
+    // concurrently (default journal mode serialises all writes and reads).
     // PRAGMA synchronous=NORMAL is safe with WAL and avoids full-sync overhead.
-    if database_url.starts_with("sqlite:") {
+    //
+    // Skipped for in-memory databases (":memory:") — WAL is not supported
+    // there and would just produce a spurious warning.
+    if database_url.starts_with("sqlite:") && !database_url.contains(":memory:") {
         // PRAGMA journal_mode returns the resulting mode in a row — use
         // fetch_one so we can verify the switch actually took effect.
         // On network filesystems WAL is unsupported; the PRAGMA succeeds but
@@ -98,12 +101,13 @@ pub async fn init(database_url: &str) -> anyhow::Result<Db> {
             .fetch_one(&pool)
             .await
             .context("Failed to enable WAL mode")?;
-        let actual_mode: String = row.try_get(0).context("Failed to read journal_mode")?;
+        let actual_mode: String = row
+            .try_get("journal_mode")
+            .context("Failed to read journal_mode")?;
         if actual_mode != "wal" {
             tracing::warn!(
                 mode = %actual_mode,
-                "SQLite WAL mode could not be enabled — running in {actual_mode} mode \
-                 (network filesystem?)"
+                "SQLite WAL mode could not be enabled (network filesystem?)"
             );
         }
         sqlx::query("PRAGMA synchronous=NORMAL")

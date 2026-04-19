@@ -51,7 +51,10 @@ use otvi_core::types::{
 ///
 /// # Rules
 /// - At least 8 characters.
-/// - At most 128 characters (prevents argon2 DoS via huge input).
+/// - At most 128 characters.  The limit is applied to Unicode scalar values
+///   (`.chars().count()`), not UTF-8 bytes.  Worst case (4-byte emoji), 128
+///   chars = 512 bytes of argon2 input — well within safe bounds for argon2's
+///   memory-hard parameters.
 /// - At least one uppercase ASCII letter.
 /// - At least one ASCII digit.
 ///
