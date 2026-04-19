@@ -511,36 +511,21 @@ fn is_private_host(host: &str) -> bool {
         .and_then(|h| h.strip_suffix(']'))
         .unwrap_or(host);
 
-    let ip: IpAddr = match stripped.parse() {
-        Ok(ip) => ip,
+    match stripped.parse() {
+        // Use stable Ipv4Addr predicates — each covers one blocked range.
+        Ok(IpAddr::V4(v4)) => {
+            v4.is_unspecified() // 0.0.0.0 (INADDR_ANY)
+                || v4.is_loopback()   // 127.0.0.0/8
+                || v4.is_private()    // 10/8, 172.16/12, 192.168/16
+                || v4.is_link_local() // 169.254.0.0/16
+        }
+        Ok(IpAddr::V6(v6)) => {
+            v6.is_unspecified() // :: (routes to ::1 on Linux)
+                || v6.is_loopback()  // ::1
+                || (v6.segments()[0] & 0xFFC0) == 0xFE80 // fe80::/10
+        }
         // Not a bare IP — treat as public hostname (e.g. "cdn.example.com").
-        Err(_) => return false,
-    };
-
-    match ip {
-        IpAddr::V4(v4) => {
-            let octets = v4.octets();
-            // 0.0.0.0 — INADDR_ANY (connects to loopback on Linux)
-            octets == [0, 0, 0, 0]
-            // 127.0.0.0/8
-            || octets[0] == 127
-            // 10.0.0.0/8
-            || octets[0] == 10
-            // 172.16.0.0/12
-            || (octets[0] == 172 && (octets[1] & 0xF0) == 16)
-            // 192.168.0.0/16
-            || (octets[0] == 192 && octets[1] == 168)
-            // 169.254.0.0/16 (link-local / AWS metadata)
-            || (octets[0] == 169 && octets[1] == 254)
-        }
-        IpAddr::V6(v6) => {
-            // :: (unspecified — routes to ::1 on Linux)
-            v6.is_unspecified()
-            // ::1 (loopback)
-            || v6.is_loopback()
-            // fe80::/10 (link-local)
-            || (v6.segments()[0] & 0xFFC0) == 0xFE80
-        }
+        Err(_) => false,
     }
 }
 
