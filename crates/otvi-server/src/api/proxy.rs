@@ -476,14 +476,26 @@ fn rewrite_uri_attributes(
     result
 }
 
-/// Returns `true` when `host` resolves to a private, loopback, or link-local
-/// address that should never be reachable via the proxy.
+/// Returns `true` when `host` is a literal IP address (or the bare string
+/// `"localhost"`) that falls into a range that must never be reachable via the
+/// proxy.
 ///
-/// Checked ranges:
-/// - Loopback:    `127.0.0.0/8`, `::1`
-/// - Private:     `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`
-/// - Link-local:  `169.254.0.0/16`, `fe80::/10`
-/// - Localhost:   the literal string `"localhost"`
+/// **Note**: only *literal* IP addresses are inspected.  Hostnames that are
+/// not numeric IPs are treated as public (DNS resolution is not performed here).
+/// A DNS-rebinding attack using a hostname that resolves to a private IP is
+/// therefore not mitigated by this function alone — callers should also enforce
+/// an explicit `allowed_hosts` list populated from the provider YAML.
+///
+/// Blocked ranges:
+/// - `0.0.0.0`       — INADDR_ANY (routes to loopback on Linux)
+/// - `127.0.0.0/8`   — IPv4 loopback
+/// - `10.0.0.0/8`    — RFC-1918 private
+/// - `172.16.0.0/12` — RFC-1918 private
+/// - `192.168.0.0/16`— RFC-1918 private
+/// - `169.254.0.0/16`— link-local / AWS instance metadata
+/// - `::1`           — IPv6 loopback
+/// - `fe80::/10`     — IPv6 link-local
+/// - `"localhost"`   — literal hostname (case-insensitive)
 fn is_private_host(host: &str) -> bool {
     use std::net::IpAddr;
 
@@ -507,8 +519,10 @@ fn is_private_host(host: &str) -> bool {
     match ip {
         IpAddr::V4(v4) => {
             let octets = v4.octets();
+            // 0.0.0.0 — INADDR_ANY (connects to loopback on Linux)
+            octets == [0, 0, 0, 0]
             // 127.0.0.0/8
-            octets[0] == 127
+            || octets[0] == 127
             // 10.0.0.0/8
             || octets[0] == 10
             // 172.16.0.0/12
@@ -531,11 +545,6 @@ fn validate_proxy_target(
     ctx: &crate::state::ProxyContext,
     parsed: &Url,
 ) -> Result<(), (StatusCode, String)> {
-    if parsed.as_str() == ctx.upstream_url {
-        // Even the exact upstream URL must not point to a private address.
-        // (A malicious provider YAML could set upstream_url to an internal host.)
-    }
-
     let Some(host) = parsed.host_str() else {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -543,7 +552,9 @@ fn validate_proxy_target(
         ));
     };
 
-    // Block SSRF to loopback / private / link-local ranges unconditionally.
+    // Block SSRF to loopback / private / link-local ranges unconditionally,
+    // even when the URL exactly matches ctx.upstream_url — a malicious
+    // provider YAML could set upstream_url to an internal host.
     if is_private_host(host) {
         return Err((
             StatusCode::FORBIDDEN,
@@ -1242,6 +1253,12 @@ mod tests {
         assert!(is_private_host("[fe80::1]"));
         assert!(is_private_host("fe80::dead:beef"));
         assert!(is_private_host("[fe80::dead:beef]"));
+    }
+
+    #[test]
+    fn private_host_unspecified_ipv4() {
+        // 0.0.0.0 (INADDR_ANY) — on Linux connecting to this routes to loopback.
+        assert!(is_private_host("0.0.0.0"));
     }
 
     #[test]
