@@ -19,6 +19,7 @@ use tower::Layer;
 use tower_governor::GovernorLayer;
 use tower_governor::governor::GovernorConfigBuilder;
 use tower_http::cors::CorsLayer;
+use tower_http::set_header::SetResponseHeaderLayer;
 
 use utoipa::OpenApi;
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
@@ -288,6 +289,20 @@ where
         .route("/healthz", get(health_check))
         .route("/readyz", get(ready_check))
         .route("/api/schema/provider", get(provider_schema))
+        // Security response headers applied to every route.
+        // `if_not_present` so individual handlers can override when needed.
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::header::HeaderName::from_static("x-frame-options"),
+            axum::http::HeaderValue::from_static("DENY"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::header::HeaderName::from_static("x-content-type-options"),
+            axum::http::HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            axum::http::header::HeaderName::from_static("referrer-policy"),
+            axum::http::HeaderValue::from_static("strict-origin-when-cross-origin"),
+        ))
         .layer(cors)
         .with_state(state);
 
@@ -319,14 +334,20 @@ fn spawn_governor_cleanup(cleanup: Box<dyn Fn() + Send + 'static>) {
 
 /// Build a `CorsLayer` that respects the `CORS_ORIGINS` environment variable.
 ///
-/// | `CORS_ORIGINS` value | Behaviour                                    |
-/// |----------------------|----------------------------------------------|
-/// | unset / `"*"`        | Permissive (allow all) – suitable for dev    |
-/// | `"http://a,https://b"` | Restricted to the listed origins           |
+/// | `CORS_ORIGINS` value    | Behaviour                                         |
+/// |-------------------------|---------------------------------------------------|
+/// | unset                   | Deny cross-origin (restrictive default)           |
+/// | `"*"`                   | Permissive (allow all) – opt-in for dev           |
+/// | `"http://a,https://b"`  | Restricted to the listed origins                  |
 ///
 /// In production, set `CORS_ORIGINS` to the exact frontend origin, e.g.:
 /// ```text
 /// CORS_ORIGINS=https://tv.example.com
+/// ```
+///
+/// To allow all origins during local development:
+/// ```text
+/// CORS_ORIGINS=*
 /// ```
 fn build_cors_layer() -> CorsLayer {
     use axum::http::HeaderValue;
@@ -375,10 +396,13 @@ fn build_cors_layer() -> CorsLayer {
             CorsLayer::new()
         }
         Err(_) => {
+            // Default: deny cross-origin requests.
+            // Set CORS_ORIGINS=* to opt in to permissive mode for local development.
             tracing::warn!(
-                "CORS_ORIGINS not set – using permissive CORS policy (not suitable for production)"
+                "CORS_ORIGINS not set – denying cross-origin requests. \
+                 Set CORS_ORIGINS=* for local development or CORS_ORIGINS=https://your-origin for production."
             );
-            CorsLayer::permissive()
+            CorsLayer::new()
         }
     }
 }
@@ -532,8 +556,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn build_cors_permissive_when_not_set() {
-        // Verify the router builds without panicking when CORS_ORIGINS is not set.
+    async fn build_cors_restrictive_when_not_set() {
+        // CORS_ORIGINS unset → CorsLayer::new() (deny cross-origin).
+        // The router must build without panicking and respond to OPTIONS.
         // SAFETY: single-threaded test environment; no other threads read this var.
         unsafe { std::env::remove_var("CORS_ORIGINS") };
         let (app, _dir) = build_test_app().await;
@@ -547,8 +572,44 @@ mod tests {
             )
             .await
             .unwrap();
-        // OPTIONS on a non-preflight-registered route still returns something
-        // (not a 500), which means the middleware didn't panic.
+        // Must not panic — server should respond (any non-500 is fine).
         assert_ne!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        // No Access-Control-Allow-Origin header should be present when CORS is unset.
+        assert!(
+            resp.headers().get("access-control-allow-origin").is_none(),
+            "CORS header should not be present when CORS_ORIGINS is not set"
+        );
+    }
+
+    #[tokio::test]
+    async fn security_headers_present_on_healthz() {
+        let (app, _dir) = build_test_app().await;
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/healthz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let headers = resp.headers();
+        assert_eq!(
+            headers
+                .get("x-content-type-options")
+                .and_then(|v| v.to_str().ok()),
+            Some("nosniff"),
+            "x-content-type-options header missing or wrong"
+        );
+        assert_eq!(
+            headers.get("x-frame-options").and_then(|v| v.to_str().ok()),
+            Some("DENY"),
+            "x-frame-options header missing or wrong"
+        );
+        assert_eq!(
+            headers.get("referrer-policy").and_then(|v| v.to_str().ok()),
+            Some("strict-origin-when-cross-origin"),
+            "referrer-policy header missing or wrong"
+        );
     }
 }
