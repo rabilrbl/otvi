@@ -1,5 +1,5 @@
 # ── Stage 1: Prepare cargo-chef recipe ──────────────────────────────────────
-FROM rust:1.94-bookworm AS chef
+FROM rust:1.95-bookworm AS chef
 RUN cargo install cargo-chef --locked
 WORKDIR /app
 
@@ -17,7 +17,7 @@ COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json -p otvi-server
 
 # ── Stage 4: Build the server binary (without frontend) ──────────────────────
-FROM rust:1.94-bookworm AS build-server
+FROM rust:1.95-bookworm AS build-server
 
 WORKDIR /app
 # Copy over the cached dependencies
