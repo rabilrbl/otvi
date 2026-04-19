@@ -28,6 +28,7 @@ RUN case "${TARGETARCH}" in \
 
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
+COPY vendor vendor
 COPY crates crates
 COPY web web
 
@@ -38,6 +39,7 @@ RUN trunk build --release
 # ── Stage 3: Plan server dependencies ────────────────────────────────────────
 FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
+COPY vendor vendor
 COPY crates crates
 COPY web web
 RUN cargo chef prepare --recipe-path recipe.json
@@ -45,6 +47,7 @@ RUN cargo chef prepare --recipe-path recipe.json
 # ── Stage 4: Build server dependencies ───────────────────────────────────────
 FROM chef AS dependencies
 COPY --from=planner /app/recipe.json recipe.json
+COPY vendor vendor
 # Build dependencies - this is the caching layer!
 RUN cargo chef cook --release --recipe-path recipe.json -p otvi-server
 
@@ -57,6 +60,7 @@ COPY --from=dependencies /app/target target
 COPY --from=dependencies /usr/local/cargo /usr/local/cargo
 
 COPY Cargo.toml Cargo.lock ./
+COPY vendor vendor
 COPY crates crates
 COPY web web
 COPY --from=build-web /app/dist /app/dist
