@@ -721,4 +721,89 @@ mod tests {
             "client-supplied x-request-id should be echoed back unchanged"
         );
     }
+
+    #[tokio::test]
+    async fn security_headers_present_on_unauthorized() {
+        // Security headers must be set on error responses too (4xx), not just 200s.
+        let (app, _dir) = build_test_app().await;
+        // Register a user so the "needs_setup" 403 path is bypassed, then
+        // hit a protected route with a bogus token → 401.
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/auth/register")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(
+                        r#"{"username":"admin","password":"Admin-Pass-1"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/api/auth/me")
+                    .header("Authorization", "Bearer invalid.token.here")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let headers = resp.headers();
+        assert_eq!(
+            headers
+                .get("x-content-type-options")
+                .and_then(|v| v.to_str().ok()),
+            Some("nosniff"),
+            "x-content-type-options missing on 401"
+        );
+        assert_eq!(
+            headers.get("x-frame-options").and_then(|v| v.to_str().ok()),
+            Some("DENY"),
+            "x-frame-options missing on 401"
+        );
+        assert_eq!(
+            headers.get("referrer-policy").and_then(|v| v.to_str().ok()),
+            Some("strict-origin-when-cross-origin"),
+            "referrer-policy missing on 401"
+        );
+    }
+
+    #[tokio::test]
+    async fn cors_explicit_origin_allow_list() {
+        // When CORS_ORIGINS=https://allowed.example.com, cross-origin requests from
+        // that origin should receive the Access-Control-Allow-Origin header.
+        // SAFETY: single-threaded test environment.
+        unsafe {
+            std::env::set_var("CORS_ORIGINS", "https://allowed.example.com");
+        }
+        let (app, _dir) = build_test_app().await;
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("OPTIONS")
+                    .uri("/healthz")
+                    .header("Origin", "https://allowed.example.com")
+                    .header("Access-Control-Request-Method", "GET")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // Clean up before assertions so other tests are not affected.
+        unsafe { std::env::remove_var("CORS_ORIGINS") };
+        let acao = resp
+            .headers()
+            .get("access-control-allow-origin")
+            .and_then(|v| v.to_str().ok());
+        assert_eq!(
+            acao,
+            Some("https://allowed.example.com"),
+            "allowed origin should be echoed back in ACAO header"
+        );
+    }
 }

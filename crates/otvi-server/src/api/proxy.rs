@@ -1234,4 +1234,26 @@ mod tests {
         let url = Url::parse("https://evil.example.com/payload").unwrap();
         assert!(validate_proxy_target(&ctx, &url).is_err());
     }
+
+    #[test]
+    fn private_host_ipv6_link_local() {
+        // fe80::/10 — bare and bracket-wrapped forms must both be detected.
+        assert!(is_private_host("fe80::1"));
+        assert!(is_private_host("[fe80::1]"));
+        assert!(is_private_host("fe80::dead:beef"));
+        assert!(is_private_host("[fe80::dead:beef]"));
+    }
+
+    #[test]
+    fn validate_proxy_exact_upstream_private_ip_denied() {
+        // The exact upstream URL matching ctx.upstream_url must still be blocked
+        // when the host is a private address (a malicious provider YAML could set
+        // upstream_url to an internal endpoint and the proxy must reject it).
+        let ctx = make_ctx("https://10.0.0.1/stream.m3u8", vec!["10.0.0.1"]);
+        let exact_upstream = Url::parse("https://10.0.0.1/stream.m3u8").unwrap();
+        assert!(
+            validate_proxy_target(&ctx, &exact_upstream).is_err(),
+            "exact upstream URL pointing to private IP must be denied"
+        );
+    }
 }
