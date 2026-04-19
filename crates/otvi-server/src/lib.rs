@@ -333,20 +333,32 @@ where
 ///
 /// Read from `REQUEST_BODY_LIMIT_BYTES` env var (default: 1 MiB = 1_048_576).
 fn request_body_limit_bytes() -> usize {
-    std::env::var("REQUEST_BODY_LIMIT_BYTES")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(1_048_576)
+    match std::env::var("REQUEST_BODY_LIMIT_BYTES") {
+        Ok(val) => val.parse().unwrap_or_else(|_| {
+            tracing::warn!(
+                val = %val,
+                "REQUEST_BODY_LIMIT_BYTES is not a valid integer — using default 1 MiB"
+            );
+            1_048_576
+        }),
+        Err(_) => 1_048_576,
+    }
 }
 
 /// Returns the per-request timeout duration.
 ///
 /// Read from `REQUEST_TIMEOUT_SECS` env var (default: 30 s).
 fn request_timeout() -> Duration {
-    let secs = std::env::var("REQUEST_TIMEOUT_SECS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(30);
+    let secs = match std::env::var("REQUEST_TIMEOUT_SECS") {
+        Ok(val) => val.parse().unwrap_or_else(|_| {
+            tracing::warn!(
+                val = %val,
+                "REQUEST_TIMEOUT_SECS is not a valid integer — using default 30 s"
+            );
+            30u64
+        }),
+        Err(_) => 30u64,
+    };
     Duration::from_secs(secs)
 }
 
