@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use tower_http::services::{ServeDir, ServeFile};
 use url::Url;
@@ -109,15 +110,58 @@ async fn main() -> anyhow::Result<()> {
     let addr = format!("0.0.0.0:{port}");
     tracing::info!("Listening on {addr}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    axum::serve(
+
+    // ── Graceful shutdown with drain timeout ────────────────────────────────
+    // When a shutdown signal arrives the server stops accepting new connections
+    // and waits for in-flight requests to complete.  A stalled long-lived
+    // connection (e.g. a hung stream proxy) would otherwise block the shutdown
+    // indefinitely.  We race the drain against SHUTDOWN_DRAIN_SECS (default 30)
+    // so deployments always complete within a bounded time.
+    let drain_secs = shutdown_drain_secs();
+    let (drain_tx, drain_rx) = tokio::sync::oneshot::channel::<()>();
+
+    let server = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_signal())
-    .await?;
+    .with_graceful_shutdown(async move {
+        shutdown_signal().await;
+        // Notify the drain-timeout future that the signal has fired.
+        let _ = drain_tx.send(());
+    });
+
+    tokio::select! {
+        result = server => { result?; }
+        _ = async move {
+            // Wait until shutdown signal fires, then enforce the drain deadline.
+            drain_rx.await.ok();
+            tokio::time::sleep(Duration::from_secs(drain_secs)).await;
+            tracing::warn!(
+                drain_secs,
+                "Graceful drain timeout exceeded — forcing shutdown"
+            );
+        } => {}
+    }
 
     tracing::info!("Server stopped");
     Ok(())
+}
+
+/// Returns the maximum number of seconds to wait for in-flight requests to
+/// drain after a shutdown signal before forcing exit.
+///
+/// Read from `SHUTDOWN_DRAIN_SECS` env var (default: 30 s).
+fn shutdown_drain_secs() -> u64 {
+    match std::env::var("SHUTDOWN_DRAIN_SECS") {
+        Ok(val) => val.parse().unwrap_or_else(|_| {
+            tracing::warn!(
+                val = %val,
+                "SHUTDOWN_DRAIN_SECS is not a valid integer — using default 30 s"
+            );
+            30
+        }),
+        Err(_) => 30,
+    }
 }
 
 /// Wait for SIGINT (Ctrl-C) or SIGTERM (Docker/Kubernetes stop).

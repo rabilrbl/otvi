@@ -36,6 +36,9 @@ services:
       # Per-request timeout in seconds (default: 30).
       # Applies to all routes including the stream proxy.
       #- REQUEST_TIMEOUT_SECS=30
+      # Seconds to wait for in-flight requests to drain after a shutdown signal
+      # before forcing exit (default: 30). Increase for long-lived streams.
+      #- SHUTDOWN_DRAIN_SECS=30
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/healthz"]
       interval: 30s
