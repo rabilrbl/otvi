@@ -352,9 +352,9 @@ fn request_timeout() -> Duration {
 
 // ── Rate-limit helpers ────────────────────────────────────────────────────
 
-/// Spawn a background thread that calls `retain_recent()` on the given
-/// governor limiter every 60 seconds, evicting entries that have fully
-/// replenished their quota and will never be read again.
+/// Spawn a Tokio task that calls `retain_recent()` on the given governor
+/// limiter every 60 seconds, evicting entries that have fully replenished
+/// their quota and will never be read again.
 ///
 /// This prevents the in-memory dashmap inside governor from growing without
 /// bound on servers with many distinct client IPs.
@@ -362,9 +362,12 @@ fn request_timeout() -> Duration {
 /// Accepts a `Box<dyn Fn() + Send>` so we never need to name any internal
 /// `governor` types directly (avoiding a direct `governor` dependency).
 fn spawn_governor_cleanup(cleanup: Box<dyn Fn() + Send + 'static>) {
-    std::thread::spawn(move || {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
+        // The first tick fires immediately; skip it so we don't prune on startup.
+        interval.tick().await;
         loop {
-            std::thread::sleep(Duration::from_secs(60));
+            interval.tick().await;
             cleanup();
             tracing::debug!("Rate-limit store pruned");
         }
