@@ -67,11 +67,32 @@ pub async fn init(database_url: &str) -> anyhow::Result<Db> {
     let opts = AnyConnectOptions::from_str(database_url)
         .with_context(|| format!("Invalid database URL: {database_url}"))?;
 
+    // DB_MAX_CONNECTIONS env var (default: 10).
+    let max_connections: u32 = std::env::var("DB_MAX_CONNECTIONS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10);
+
     let pool = AnyPoolOptions::new()
-        .max_connections(10)
+        .max_connections(max_connections)
         .connect_with(opts)
         .await
         .with_context(|| format!("Failed to connect to database: {database_url}"))?;
+
+    // Enable WAL mode for SQLite to improve read throughput under concurrent
+    // access.  WAL allows readers and one writer to proceed concurrently
+    // (default journal mode serialises all writes and reads).
+    // PRAGMA synchronous=NORMAL is safe with WAL and avoids full-sync overhead.
+    if database_url.starts_with("sqlite:") {
+        sqlx::query("PRAGMA journal_mode=WAL")
+            .execute(&pool)
+            .await
+            .context("Failed to enable WAL mode")?;
+        sqlx::query("PRAGMA synchronous=NORMAL")
+            .execute(&pool)
+            .await
+            .context("Failed to set synchronous=NORMAL")?;
+    }
 
     sqlx::migrate!("./migrations")
         .run(&pool)
@@ -84,7 +105,6 @@ pub async fn init(database_url: &str) -> anyhow::Result<Db> {
 // ── Users ─────────────────────────────────────────────────────────────────
 
 /// Row fetched from the `users` table.
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct UserRow {
     pub id: String,
@@ -93,13 +113,6 @@ pub struct UserRow {
     pub role: String,
     pub created_at: String,
     pub must_change_password: bool,
-}
-
-/// Optional provider allow-list attached to a user (empty = all providers).
-#[allow(dead_code)]
-pub struct UserWithProviders {
-    pub row: UserRow,
-    pub providers: Vec<String>,
 }
 
 pub async fn user_count(db: &Db) -> anyhow::Result<i64> {
@@ -128,7 +141,6 @@ pub async fn get_user_by_username(db: &Db, username: &str) -> anyhow::Result<Opt
     }))
 }
 
-#[allow(dead_code)]
 pub async fn get_user_by_id(db: &Db, id: &str) -> anyhow::Result<Option<UserRow>> {
     let row = sqlx::query(
         "SELECT id, username, password_hash, role, created_at, must_change_password \
@@ -305,7 +317,6 @@ pub async fn set_user_providers(
 // ── Provider sessions ──────────────────────────────────────────────────────
 
 /// Row from the `provider_sessions` table.
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct ProviderSessionRow {
     pub id: String,
@@ -318,7 +329,6 @@ pub struct ProviderSessionRow {
 
 /// For `global`-scoped providers the `user_id` is the empty string `""` so
 /// a single shared session is used regardless of which OTVI user made the request.
-#[allow(dead_code)]
 pub async fn get_provider_session(
     db: &Db,
     user_id: &str,
@@ -463,4 +473,39 @@ pub async fn is_signup_disabled(db: &Db) -> anyhow::Result<bool> {
 
 pub async fn set_signup_disabled(db: &Db, disabled: bool) -> anyhow::Result<()> {
     set_setting(db, "signup_disabled", if disabled { "1" } else { "0" }).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn test_db() -> (Db, tempfile::TempDir) {
+        sqlx::any::install_default_drivers();
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("test.db");
+        let url = format!("sqlite://{}", path.display());
+        let db = init(&url).await.expect("test db init");
+        (db, dir)
+    }
+
+    #[tokio::test]
+    async fn sqlite_wal_mode_enabled() {
+        let (db, _dir) = test_db().await;
+        let row = sqlx::query("PRAGMA journal_mode")
+            .fetch_one(&db)
+            .await
+            .expect("pragma query");
+        let mode: String = row.try_get(0).expect("get mode");
+        assert_eq!(mode, "wal", "SQLite journal mode should be WAL after init");
+    }
+
+    #[tokio::test]
+    async fn db_max_connections_default() {
+        // Without DB_MAX_CONNECTIONS env var, pool initialises without error.
+        unsafe { std::env::remove_var("DB_MAX_CONNECTIONS") };
+        let (db, _dir) = test_db().await;
+        // Pool is usable — issue a query to confirm.
+        let count = user_count(&db).await.expect("user_count");
+        assert_eq!(count, 0);
+    }
 }
