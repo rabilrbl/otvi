@@ -395,7 +395,7 @@ pub type RefreshLocks = Mutex<HashMap<(String, String), Arc<tokio::sync::Mutex<(
 pub struct AppState {
     /// Provider ID → parsed YAML configuration (hot-reloadable).
     pub providers_rw: RwLock<HashMap<String, ProviderConfig>>,
-    /// Database connection pool (SQLite / PostgreSQL / MySQL via `AnyPool`).
+    /// Database connection pool (SQLite / PostgreSQL via `AnyPool`).
     pub db: Db,
     /// JWT signing / verification keys.
     pub jwt_keys: JwtKeys,

@@ -7,11 +7,11 @@
 //! |------------|------------------------------------------|
 //! | SQLite     | `sqlite://data.db` (default)             |
 //! | PostgreSQL | `postgres://user:pass@host/dbname`       |
-//! | MySQL      | `mysql://user:pass@host/dbname`          |
 //!
 //! All queries use `?` placeholders; sqlx translates them to `$1`, `$2`, …
 //! for PostgreSQL automatically.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use anyhow::Context;
@@ -19,6 +19,7 @@ use chrono::Utc;
 use sqlx::{
     Any, AnyPool, QueryBuilder, Row,
     any::{AnyConnectOptions, AnyPoolOptions},
+    migrate::{Migration, MigrationType, Migrator},
 };
 use std::str::FromStr;
 use uuid::Uuid;
@@ -107,12 +108,38 @@ pub async fn init(database_url: &str) -> anyhow::Result<Db> {
             .context("Failed to set synchronous=NORMAL")?;
     }
 
-    sqlx::migrate!("./migrations")
-        .run(&pool)
+    run_migrations(&pool)
         .await
         .context("Database migration failed")?;
 
     Ok(pool)
+}
+
+async fn run_migrations(pool: &Db) -> anyhow::Result<()> {
+    let migrator = Migrator {
+        migrations: Cow::Owned(vec![
+            Migration::new(
+                1,
+                Cow::Borrowed("init"),
+                MigrationType::Simple,
+                Cow::Borrowed(include_str!("../migrations/0001_init.sql")),
+                false,
+            ),
+            Migration::new(
+                2,
+                Cow::Borrowed("must change password"),
+                MigrationType::Simple,
+                Cow::Borrowed(include_str!("../migrations/0002_must_change_password.sql")),
+                false,
+            ),
+        ]),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+
+    migrator.run(pool).await?;
+    Ok(())
 }
 
 // ── Users ─────────────────────────────────────────────────────────────────
@@ -459,7 +486,7 @@ pub async fn get_setting(db: &Db, key: &str) -> anyhow::Result<Option<String>> {
 }
 
 pub async fn set_setting(db: &Db, key: &str, value: &str) -> anyhow::Result<()> {
-    // Portable upsert: delete + insert works in SQLite, PostgreSQL, MySQL.
+    // Portable upsert: delete + insert works in SQLite and PostgreSQL.
     // Wrap both statements in a transaction so the setting is never transiently absent.
     let mut tx = db.begin().await?;
 

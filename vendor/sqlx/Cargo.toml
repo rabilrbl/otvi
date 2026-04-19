@@ -1,0 +1,22 @@
+[package]
+name = "sqlx"
+version = "0.8.6"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "OTVI SQLx facade with SQLite/PostgreSQL Any drivers only."
+
+[features]
+default = ["any", "migrate", "json"]
+any = ["sqlx-core/any", "sqlx-postgres/any", "sqlx-sqlite/any"]
+json = ["sqlx-core/json", "sqlx-postgres/json", "sqlx-sqlite/json"]
+migrate = ["sqlx-core/migrate", "sqlx-postgres/migrate", "sqlx-sqlite/migrate"]
+postgres = []
+sqlite = []
+runtime-tokio = ["sqlx-core/_rt-tokio"]
+tls-rustls = ["sqlx-core/_tls-rustls-ring-webpki"]
+uuid = ["sqlx-core/uuid", "sqlx-postgres/uuid", "sqlx-sqlite/uuid"]
+
+[dependencies]
+sqlx-core = { version = "=0.8.6", default-features = false }
+sqlx-postgres = { version = "=0.8.6", default-features = false }
+sqlx-sqlite = { version = "=0.8.6", default-features = false, features = ["bundled"] }

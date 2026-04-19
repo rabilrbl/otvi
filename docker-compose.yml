@@ -25,10 +25,9 @@ services:
       - JWT_SECRET=${JWT_SECRET:-}
       # Optional: override the default SQLite path.
       # For PostgreSQL: postgres://user:pass@db:5432/otvi
-      # For MySQL:      mysql://user:pass@db:3306/otvi
       - DATABASE_URL=sqlite:///app/data/data.db
       # Maximum number of database connections in the pool (default: 10).
-      # Increase for PostgreSQL/MySQL deployments under higher load.
+      # Increase for PostgreSQL deployments under higher load.
       #- DB_MAX_CONNECTIONS=10
       # Maximum request body size in bytes (default: 1 MiB = 1048576).
       # Increase if your API needs to accept larger payloads.
