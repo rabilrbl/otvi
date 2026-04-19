@@ -493,6 +493,7 @@ fn rewrite_uri_attributes(
 /// - `172.16.0.0/12` — RFC-1918 private
 /// - `192.168.0.0/16`— RFC-1918 private
 /// - `169.254.0.0/16`— link-local / AWS instance metadata
+/// - `::`            — IPv6 unspecified (routes to `::1` on Linux)
 /// - `::1`           — IPv6 loopback
 /// - `fe80::/10`     — IPv6 link-local
 /// - `"localhost"`   — literal hostname (case-insensitive)
@@ -533,8 +534,10 @@ fn is_private_host(host: &str) -> bool {
             || (octets[0] == 169 && octets[1] == 254)
         }
         IpAddr::V6(v6) => {
+            // :: (unspecified — routes to ::1 on Linux)
+            v6.is_unspecified()
             // ::1 (loopback)
-            v6.is_loopback()
+            || v6.is_loopback()
             // fe80::/10 (link-local)
             || (v6.segments()[0] & 0xFFC0) == 0xFE80
         }
@@ -1147,6 +1150,13 @@ mod tests {
     fn private_host_loopback_ipv6() {
         assert!(is_private_host("::1"));
         assert!(is_private_host("[::1]"));
+    }
+
+    #[test]
+    fn private_host_unspecified_ipv6() {
+        // :: (IPv6 unspecified / INADDR_ANY6) routes to ::1 on Linux.
+        assert!(is_private_host("::"));
+        assert!(is_private_host("[::]"));
     }
 
     #[test]
