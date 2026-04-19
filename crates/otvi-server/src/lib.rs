@@ -20,6 +20,7 @@ use tower_governor::GovernorLayer;
 use tower_governor::governor::GovernorConfigBuilder;
 use tower_http::cors::CorsLayer;
 use tower_http::set_header::SetResponseHeaderLayer;
+use tower_http::timeout::TimeoutLayer;
 
 use utoipa::OpenApi;
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
@@ -304,9 +305,43 @@ where
             axum::http::HeaderValue::from_static("strict-origin-when-cross-origin"),
         ))
         .layer(cors)
+        // Limit incoming request body size to prevent memory exhaustion.
+        // REQUEST_BODY_LIMIT_BYTES env var (default: 1 MiB).
+        .layer(axum::extract::DefaultBodyLimit::max(
+            request_body_limit_bytes(),
+        ))
+        // Per-request timeout to bound slow upstream proxy calls.
+        // REQUEST_TIMEOUT_SECS env var (default: 30s).
+        .layer(TimeoutLayer::with_status_code(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            request_timeout(),
+        ))
         .with_state(state);
 
     stateful.merge(SwaggerUi::new("/api/docs").url("/api/docs/openapi.json", ApiDoc::openapi()))
+}
+
+// ── Request body size limit ───────────────────────────────────────────────
+
+/// Returns the maximum request body size in bytes.
+///
+/// Read from `REQUEST_BODY_LIMIT_BYTES` env var (default: 1 MiB = 1_048_576).
+fn request_body_limit_bytes() -> usize {
+    std::env::var("REQUEST_BODY_LIMIT_BYTES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1_048_576)
+}
+
+/// Returns the per-request timeout duration.
+///
+/// Read from `REQUEST_TIMEOUT_SECS` env var (default: 30 s).
+fn request_timeout() -> Duration {
+    let secs = std::env::var("REQUEST_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(30);
+    Duration::from_secs(secs)
 }
 
 // ── Rate-limit helpers ────────────────────────────────────────────────────
@@ -611,5 +646,28 @@ mod tests {
             Some("strict-origin-when-cross-origin"),
             "referrer-policy header missing or wrong"
         );
+    }
+
+    #[tokio::test]
+    async fn request_body_over_limit_returns_413() {
+        // Set a tiny limit so we can test with a small payload.
+        unsafe { std::env::set_var("REQUEST_BODY_LIMIT_BYTES", "10") };
+        let (app, _dir) = build_test_app().await;
+        let oversized_body = vec![b'x'; 11]; // 11 bytes > 10-byte limit
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/auth/login")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(oversized_body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // Axum returns 413 when DefaultBodyLimit is exceeded.
+        assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        // Restore env for other tests.
+        unsafe { std::env::remove_var("REQUEST_BODY_LIMIT_BYTES") };
     }
 }
