@@ -51,6 +51,7 @@ use otvi_core::types::{
 ///
 /// # Rules
 /// - At least 8 characters.
+/// - At most 128 characters (prevents argon2 DoS via huge input).
 /// - At least one uppercase ASCII letter.
 /// - At least one ASCII digit.
 ///
@@ -60,6 +61,11 @@ pub fn validate_password(password: &str) -> Result<(), AppError> {
     if password.len() < 8 {
         return Err(AppError::BadRequest(
             "Password must be at least 8 characters".into(),
+        ));
+    }
+    if password.len() > 128 {
+        return Err(AppError::BadRequest(
+            "Password must be at most 128 characters".into(),
         ));
     }
     if !password.chars().any(|c| c.is_ascii_uppercase()) {
@@ -73,6 +79,51 @@ pub fn validate_password(password: &str) -> Result<(), AppError> {
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_password;
+
+    #[test]
+    fn password_too_short_rejected() {
+        assert!(validate_password("Short1").is_err());
+    }
+
+    #[test]
+    fn password_exactly_min_length_passes() {
+        assert!(validate_password("Abcdef1!").is_ok());
+    }
+
+    #[test]
+    fn password_exactly_max_length_passes() {
+        // 128-char password: 127 lowercase + "A1"... build one with length=128
+        let p = format!("A1{}", "a".repeat(126));
+        assert_eq!(p.len(), 128);
+        assert!(validate_password(&p).is_ok());
+    }
+
+    #[test]
+    fn password_over_max_length_rejected() {
+        let p = format!("A1{}", "a".repeat(127)); // 129 chars
+        assert_eq!(p.len(), 129);
+        assert!(validate_password(&p).is_err());
+    }
+
+    #[test]
+    fn password_missing_uppercase_rejected() {
+        assert!(validate_password("alllower1").is_err());
+    }
+
+    #[test]
+    fn password_missing_digit_rejected() {
+        assert!(validate_password("NoDigitHere").is_err());
+    }
+
+    #[test]
+    fn password_valid_passes() {
+        assert!(validate_password("ValidPass1").is_ok());
+    }
 }
 
 use crate::auth_middleware::{Claims, create_token};
