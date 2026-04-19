@@ -68,16 +68,7 @@ pub async fn init(database_url: &str) -> anyhow::Result<Db> {
         .with_context(|| format!("Invalid database URL: {database_url}"))?;
 
     // DB_MAX_CONNECTIONS env var (default: 10).
-    let max_connections: u32 = match std::env::var("DB_MAX_CONNECTIONS") {
-        Ok(val) => val.parse().unwrap_or_else(|_| {
-            tracing::warn!(
-                val = %val,
-                "DB_MAX_CONNECTIONS is not a valid integer — using default 10"
-            );
-            10
-        }),
-        Err(_) => 10,
-    };
+    let max_connections: u32 = crate::parse_env_or_warn("DB_MAX_CONNECTIONS", 10, "10");
 
     let pool = AnyPoolOptions::new()
         .max_connections(max_connections)

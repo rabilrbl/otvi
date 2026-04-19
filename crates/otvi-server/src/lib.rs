@@ -327,39 +327,43 @@ where
     stateful.merge(SwaggerUi::new("/api/docs").url("/api/docs/openapi.json", ApiDoc::openapi()))
 }
 
+// ── Env-var helpers ───────────────────────────────────────────────────────
+
+/// Parse an environment variable as `T`, falling back to `default` and
+/// emitting a `tracing::warn` when the variable is set but not parseable.
+///
+/// `default_desc` is included in the warning message (e.g. `"30 s"` or
+/// `"1 MiB"`) so operators know what value was substituted.
+pub fn parse_env_or_warn<T>(var: &str, default: T, default_desc: &str) -> T
+where
+    T: std::str::FromStr + Copy,
+{
+    match std::env::var(var) {
+        Ok(val) => val.parse().unwrap_or_else(|_| {
+            tracing::warn!(
+                val = %val,
+                "{var} is not a valid integer — using default {default_desc}"
+            );
+            default
+        }),
+        Err(_) => default,
+    }
+}
+
 // ── Request body size limit ───────────────────────────────────────────────
 
 /// Returns the maximum request body size in bytes.
 ///
 /// Read from `REQUEST_BODY_LIMIT_BYTES` env var (default: 1 MiB = 1_048_576).
 fn request_body_limit_bytes() -> usize {
-    match std::env::var("REQUEST_BODY_LIMIT_BYTES") {
-        Ok(val) => val.parse().unwrap_or_else(|_| {
-            tracing::warn!(
-                val = %val,
-                "REQUEST_BODY_LIMIT_BYTES is not a valid integer — using default 1 MiB"
-            );
-            1_048_576
-        }),
-        Err(_) => 1_048_576,
-    }
+    parse_env_or_warn("REQUEST_BODY_LIMIT_BYTES", 1_048_576, "1 MiB")
 }
 
 /// Returns the per-request timeout duration.
 ///
 /// Read from `REQUEST_TIMEOUT_SECS` env var (default: 30 s).
 fn request_timeout() -> Duration {
-    let secs = match std::env::var("REQUEST_TIMEOUT_SECS") {
-        Ok(val) => val.parse().unwrap_or_else(|_| {
-            tracing::warn!(
-                val = %val,
-                "REQUEST_TIMEOUT_SECS is not a valid integer — using default 30 s"
-            );
-            30u64
-        }),
-        Err(_) => 30u64,
-    };
-    Duration::from_secs(secs)
+    Duration::from_secs(parse_env_or_warn("REQUEST_TIMEOUT_SECS", 30u64, "30 s"))
 }
 
 // ── Rate-limit helpers ────────────────────────────────────────────────────

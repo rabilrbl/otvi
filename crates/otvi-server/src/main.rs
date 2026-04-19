@@ -153,16 +153,7 @@ async fn main() -> anyhow::Result<()> {
 ///
 /// Read from `SHUTDOWN_DRAIN_SECS` env var (default: 30 s).
 fn shutdown_drain_secs() -> u64 {
-    match std::env::var("SHUTDOWN_DRAIN_SECS") {
-        Ok(val) => val.parse().unwrap_or_else(|_| {
-            tracing::warn!(
-                val = %val,
-                "SHUTDOWN_DRAIN_SECS is not a valid integer — using default 30 s"
-            );
-            30
-        }),
-        Err(_) => 30,
-    }
+    otvi_server::parse_env_or_warn("SHUTDOWN_DRAIN_SECS", 30, "30 s")
 }
 
 /// Wait for SIGINT (Ctrl-C) or SIGTERM (Docker/Kubernetes stop).
