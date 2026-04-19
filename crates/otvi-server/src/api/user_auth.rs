@@ -58,12 +58,13 @@ use otvi_core::types::{
 /// Returns `Ok(())` on success or an `AppError::BadRequest` with a descriptive
 /// message on failure.
 pub fn validate_password(password: &str) -> Result<(), AppError> {
-    if password.len() < 8 {
+    let char_count = password.chars().count();
+    if char_count < 8 {
         return Err(AppError::BadRequest(
             "Password must be at least 8 characters".into(),
         ));
     }
-    if password.len() > 128 {
+    if char_count > 128 {
         return Err(AppError::BadRequest(
             "Password must be at most 128 characters".into(),
         ));
@@ -97,16 +98,15 @@ mod tests {
 
     #[test]
     fn password_exactly_max_length_passes() {
-        // 128-char password: 127 lowercase + "A1"... build one with length=128
-        let p = format!("A1{}", "a".repeat(126));
-        assert_eq!(p.len(), 128);
+        let p = format!("A1{}", "a".repeat(126)); // 128 chars
+        assert_eq!(p.chars().count(), 128);
         assert!(validate_password(&p).is_ok());
     }
 
     #[test]
     fn password_over_max_length_rejected() {
         let p = format!("A1{}", "a".repeat(127)); // 129 chars
-        assert_eq!(p.len(), 129);
+        assert_eq!(p.chars().count(), 129);
         assert!(validate_password(&p).is_err());
     }
 
@@ -123,6 +123,28 @@ mod tests {
     #[test]
     fn password_valid_passes() {
         assert!(validate_password("ValidPass1").is_ok());
+    }
+
+    #[test]
+    fn password_max_length_is_char_count_not_bytes() {
+        // 128 multi-byte characters must pass (each 'Á' is 2 UTF-8 bytes,
+        // so 128 chars = 256 bytes — the old .len() check would reject this).
+        // Build: 'A' + '1' + 126 × 'Á' = 128 chars, 254 bytes
+        let p: String = format!("A1{}", "Á".repeat(126));
+        assert_eq!(p.chars().count(), 128);
+        assert!(p.len() > 128, "sanity: byte count exceeds 128");
+        assert!(
+            validate_password(&p).is_ok(),
+            "128 Unicode chars must pass regardless of byte count"
+        );
+
+        // 129 multi-byte characters must fail
+        let p_too_long: String = format!("A1{}", "Á".repeat(127));
+        assert_eq!(p_too_long.chars().count(), 129);
+        assert!(
+            validate_password(&p_too_long).is_err(),
+            "129 Unicode chars must be rejected"
+        );
     }
 }
 
