@@ -84,10 +84,22 @@ pub async fn init(database_url: &str) -> anyhow::Result<Db> {
     // (default journal mode serialises all writes and reads).
     // PRAGMA synchronous=NORMAL is safe with WAL and avoids full-sync overhead.
     if database_url.starts_with("sqlite:") {
-        sqlx::query("PRAGMA journal_mode=WAL")
-            .execute(&pool)
+        // PRAGMA journal_mode returns the resulting mode in a row — use
+        // fetch_one so we can verify the switch actually took effect.
+        // On network filesystems WAL is unsupported; the PRAGMA succeeds but
+        // returns the current mode unchanged.
+        let row = sqlx::query("PRAGMA journal_mode=WAL")
+            .fetch_one(&pool)
             .await
             .context("Failed to enable WAL mode")?;
+        let actual_mode: String = row.try_get(0).context("Failed to read journal_mode")?;
+        if actual_mode != "wal" {
+            tracing::warn!(
+                mode = %actual_mode,
+                "SQLite WAL mode could not be enabled — running in {actual_mode} mode \
+                 (network filesystem?)"
+            );
+        }
         sqlx::query("PRAGMA synchronous=NORMAL")
             .execute(&pool)
             .await
