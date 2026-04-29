@@ -685,6 +685,7 @@ playback:
                 .build(),
             channel_cache: ChannelCache::new(Duration::from_secs(60)),
             refresh_locks: Mutex::new(HashMap::new()),
+            allow_private_hosts: false,
         }
     }
 

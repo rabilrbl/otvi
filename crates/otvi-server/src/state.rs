@@ -420,6 +420,8 @@ pub struct AppState {
     /// `tokio::sync::Mutex` to perform the refresh; the rest wait and then
     /// re-read the updated stored values.
     pub refresh_locks: RefreshLocks,
+    /// Allow proxying to private/loopback hosts (test-only).
+    pub allow_private_hosts: bool,
 }
 
 impl AppState {
@@ -467,6 +469,7 @@ impl AppState {
                     proxy_ctx: proxy_context_cache_from_env(),
                     channel_cache: ChannelCache::from_env(),
                     refresh_locks: Mutex::new(HashMap::new()),
+                    allow_private_hosts: false,
                 });
             }
             Err(e) => return Err(e.into()),
@@ -482,6 +485,7 @@ impl AppState {
             proxy_ctx: proxy_context_cache_from_env(),
             channel_cache: ChannelCache::from_env(),
             refresh_locks: Mutex::new(HashMap::new()),
+            allow_private_hosts: false,
         })
     }
 

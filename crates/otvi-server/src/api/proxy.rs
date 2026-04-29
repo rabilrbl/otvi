@@ -72,7 +72,7 @@ pub async fn proxy_stream(
                 .get(token)
                 .await
                 .ok_or((StatusCode::BAD_REQUEST, "Invalid proxy context".to_string()))?;
-            validate_proxy_target(&ctx, &parsed)?;
+            validate_proxy_target(&ctx, &parsed, state.allow_private_hosts)?;
             ctx
         }
         None => {
@@ -532,6 +532,7 @@ fn is_private_host(host: &str) -> bool {
 fn validate_proxy_target(
     ctx: &crate::state::ProxyContext,
     parsed: &Url,
+    allow_private_hosts: bool,
 ) -> Result<(), (StatusCode, String)> {
     let Some(host) = parsed.host_str() else {
         return Err((
@@ -540,10 +541,9 @@ fn validate_proxy_target(
         ));
     };
 
-    // Block SSRF to loopback / private / link-local ranges unconditionally,
-    // even when the URL exactly matches ctx.upstream_url — a malicious
-    // provider YAML could set upstream_url to an internal host.
-    if is_private_host(host) {
+    // Block SSRF to loopback / private / link-local ranges.
+    // Skipped in test mode where httpbin runs on localhost.
+    if !allow_private_hosts && is_private_host(host) {
         return Err((
             StatusCode::FORBIDDEN,
             "Proxy target is not allowed".to_string(),
@@ -1200,7 +1200,7 @@ mod tests {
     fn validate_proxy_empty_allowed_hosts_denied() {
         let ctx = make_ctx("https://cdn.example.com/stream.m3u8", vec![]);
         let url = Url::parse("https://cdn.example.com/seg1.ts").unwrap();
-        assert!(validate_proxy_target(&ctx, &url).is_err());
+        assert!(validate_proxy_target(&ctx, &url, false).is_err());
     }
 
     #[test]
@@ -1208,7 +1208,7 @@ mod tests {
         // Even when the IP is in allowed_hosts, private addresses are blocked.
         let ctx = make_ctx("https://10.0.0.1/stream.m3u8", vec!["10.0.0.1"]);
         let url = Url::parse("https://10.0.0.1/seg1.ts").unwrap();
-        assert!(validate_proxy_target(&ctx, &url).is_err());
+        assert!(validate_proxy_target(&ctx, &url, false).is_err());
     }
 
     #[test]
@@ -1218,7 +1218,7 @@ mod tests {
             vec!["169.254.169.254"],
         );
         let url = Url::parse("http://169.254.169.254/latest/meta-data/").unwrap();
-        assert!(validate_proxy_target(&ctx, &url).is_err());
+        assert!(validate_proxy_target(&ctx, &url, false).is_err());
     }
 
     #[test]
@@ -1228,7 +1228,7 @@ mod tests {
             vec!["cdn.example.com"],
         );
         let url = Url::parse("https://cdn.example.com/seg1.ts").unwrap();
-        assert!(validate_proxy_target(&ctx, &url).is_ok());
+        assert!(validate_proxy_target(&ctx, &url, false).is_ok());
     }
 
     #[test]
@@ -1238,7 +1238,7 @@ mod tests {
             vec!["cdn.example.com"],
         );
         let url = Url::parse("https://evil.example.com/payload").unwrap();
-        assert!(validate_proxy_target(&ctx, &url).is_err());
+        assert!(validate_proxy_target(&ctx, &url, false).is_err());
     }
 
     #[test]
@@ -1264,8 +1264,18 @@ mod tests {
         let ctx = make_ctx("https://10.0.0.1/stream.m3u8", vec!["10.0.0.1"]);
         let exact_upstream = Url::parse("https://10.0.0.1/stream.m3u8").unwrap();
         assert!(
-            validate_proxy_target(&ctx, &exact_upstream).is_err(),
+            validate_proxy_target(&ctx, &exact_upstream, false).is_err(),
             "exact upstream URL pointing to private IP must be denied"
+        );
+    }
+
+    #[test]
+    fn validate_proxy_private_host_allowed_in_test_mode() {
+        let ctx = make_ctx("http://localhost:8888/stream.m3u8", vec!["localhost"]);
+        let url = Url::parse("http://localhost:8888/seg1.ts").unwrap();
+        assert!(
+            validate_proxy_target(&ctx, &url, true).is_ok(),
+            "private hosts should be allowed when allow_private_hosts is true"
         );
     }
 }
