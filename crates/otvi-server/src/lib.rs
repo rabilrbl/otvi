@@ -3,6 +3,7 @@ pub mod auth_middleware;
 pub mod db;
 pub mod embedded_frontend;
 pub mod error;
+pub mod playback;
 pub mod provider_client;
 pub mod state;
 pub mod watcher;
