@@ -9,35 +9,63 @@ OTVI is built as a Rust workspace with three main crates, each handling a distin
 
 ## System Overview
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                    YAML Provider Configs                │
-│  providers/acme.yaml   providers/streammax.yaml  …      │
-└────────────────────────┬────────────────────────────────┘
-                         │ loaded at startup + hot-reloaded
-                         ▼
-┌──────────────── otvi-server (Axum) ──────────────────────┐
-│                                                          │
-│  ┌──────────┐  ┌────────────────┐  ┌──────────────────┐  │
-│  │ REST API │──│ provider_client│──│ Provider HTTP    │  │
-│  │ /api/…   │  │  (reqwest)     │  │ APIs (external)  │  │
-│  └──────────┘  └────────────────┘  └──────────────────┘  │
-│                                                          │
-│  ┌──────────┐  ┌───────────────┐  ┌──────────────────┐   │
-│  │ Auth MW  │  │   Database    │  │  Static Files    │   │
-│  │  (JWT)   │  │   (SQLx)      │  │  (WASM frontend) │   │
-│  └──────────┘  └───────────────┘  └──────────────────┘   │
-│                                                          │
-│  ┌─────────────────────┐  ┌───────────────────────────┐  │
-│  │ watcher.rs          │  │ /healthz  /readyz         │  │
-│  │ (notify file watch) │  │ /api/schema/provider      │  │
-│  └─────────────────────┘  └───────────────────────────┘  │
-└──────────────────────────────────────────────────────────┘
-                         ▲
-                         │ fetch / JSON
-┌──────────────── otvi-web (Leptos WASM) ─────────────────┐
-│  Home   Login   Channels (search + filter)   Player     │
-└─────────────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    operator["Provider author / operator"]
+    config["providers/*.yaml\nprovider API contracts"]
+
+    subgraph server["otvi-server (Axum)"]
+        static["Static asset server\ncompiled WASM frontend"]
+        api["REST API\n/api/providers / /api/auth / /api/proxy"]
+        schema["Provider schema endpoint\n/api/schema/provider"]
+        auth["Auth middleware\nJWT + must_change_password guard"]
+        db["Database\nSQLx users, sessions, settings"]
+        cache["Channel cache\nmoka TTL + explicit invalidation"]
+        watcher["watcher.rs\nnotify hot-reload"]
+        client["provider_client\nreqwest + template resolution"]
+        proxy["Stream proxy\nHLS/DASH manifest rewriting"]
+    end
+
+    subgraph browser["Browser / otvi-web"]
+        web["Leptos WASM app\nproviders, overlays, channel grid"]
+        player["Video player\nHLS.js / Shaka Player"]
+    end
+
+    subgraph upstream["Provider platforms"]
+        providerAuth["Authentication"]
+        catalog["Channel catalog"]
+        playback["Playback URLs + DRM"]
+        cdn["CDN media segments"]
+    end
+
+    operator --> config
+    config -- "load at startup" --> api
+    config -- "file changes" --> watcher
+    watcher -- "atomic provider map swap" --> api
+    static -- "serves app shell" --> web
+    web -- "Bearer-token JSON API" --> auth
+    auth --> api
+    api --> schema
+    api --> db
+    api --> cache
+    api --> client
+    api --> proxy
+    client -- "HTTP auth" --> providerAuth
+    client -- "HTTP catalog" --> catalog
+    client -- "stream metadata" --> playback
+    api -- "normalized responses" --> web
+    web --> player
+    player -- "proxied media requests" --> proxy
+    proxy -- "signed headers / cookies" --> cdn
+
+    classDef source fill:#f6f8fa,stroke:#8c959f,color:#24292f
+    classDef serverNode fill:#ddf4ff,stroke:#0969da,color:#24292f
+    classDef clientNode fill:#dafbe1,stroke:#1a7f37,color:#24292f
+    classDef external fill:#fff8c5,stroke:#9a6700,color:#24292f
+    class operator,config source
+    class static,api,schema,auth,db,cache,watcher,client,proxy serverNode
+    class web,player clientNode
+    class providerAuth,catalog,playback,cdn external
 ```
 
 ## Crate Overview
@@ -216,75 +244,141 @@ The frontend uses a JavaScript bridge in `index.html` for video playback:
 
 ### Authentication Flow
 
-```
-User → Frontend overlay → POST /api/auth/login (OTVI login)
-                       → JWT token stored in LocalStorage
-                       → Route to /login/:provider_id for provider auth when needed
-                       → POST /api/providers/:id/auth/login
-                       → Session stored in database
-                       → Channel browsing enabled
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant Web as otvi-web overlay
+    participant API as otvi-server auth API
+    participant DB as SQLx database
+    participant Provider as Provider auth API
+
+    User->>Web: submit OTVI login
+    Web->>API: POST /api/auth/login
+    API->>DB: validate user + password policy state
+    API-->>Web: JWT with role + must_change_password claim
+    Web->>Web: store JWT in LocalStorage
+    alt Provider session required
+        Web->>API: POST /api/providers/:id/auth/login
+        API->>Provider: execute YAML-defined auth flow
+        Provider-->>API: session tokens / cookies
+        API->>DB: upsert provider session
+    end
+    Web-->>User: channel browsing enabled
 ```
 
 ### Channel List Flow
 
-```
-Frontend → GET /api/providers/:id/channels[?search=…&category=…&limit=…&offset=…]
-          → ChannelCache lookup by (provider_id, CacheScope)
-          → HIT:  return cached full list, apply filters + pagination server-side
-         → MISS: fetch from upstream provider API
-                 → store full unfiltered list in cache (TTL: 24 h)
-                 → apply filters + pagination, return result
+```mermaid
+flowchart TD
+    request["otvi-web requests channels\nGET /api/providers/:id/channels?search&category&limit&offset"]
+    guard["ActiveClaims guard\nvalid JWT + password-change complete"]
+    scope["Build CacheScope\nGlobal or PerUser(user_id)"]
+    cache{"ChannelCache hit?"}
+    cached["Use cached full channel list"]
+    upstream["Fetch upstream provider catalog\nvia provider_client"]
+    store["Store full unfiltered list\nTTL: 24 hours"]
+    filter["Apply search, category, limit, offset\nserver-side"]
+    response["Return normalized channels + total"]
+
+    request --> guard --> scope --> cache
+    cache -- "HIT" --> cached --> filter
+    cache -- "MISS" --> upstream --> store --> filter
+    filter --> response
+
+    classDef client fill:#dafbe1,stroke:#1a7f37,color:#24292f
+    classDef server fill:#ddf4ff,stroke:#0969da,color:#24292f
+    classDef decision fill:#fff8c5,stroke:#9a6700,color:#24292f
+    class request client
+    class guard,scope,cached,upstream,store,filter,response server
+    class cache decision
 ```
 
 Cache entries are invalidated immediately when the provider session changes:
 
-```
-POST /api/providers/:id/auth/login  (or /logout)
-    → session written to / deleted from DB
-    → ChannelCache.invalidate(provider_id, scope) called
-    → next channel request fetches fresh data from upstream
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Web as otvi-web
+    participant API as Provider auth API
+    participant DB as SQLx database
+    participant Cache as ChannelCache
+    participant Upstream as Provider catalog API
+
+    Web->>API: POST /api/providers/:id/auth/login or /logout
+    API->>DB: write or delete provider session
+    API->>Cache: invalidate(provider_id, scope)
+    API-->>Web: auth state updated
+    Web->>API: next channel request
+    API->>Upstream: fetch fresh catalog after cache miss
 ```
 
 ### Streaming Flow
 
-```
-Frontend → GET /api/providers/:id/channels/:cid/stream
-         → Server fetches stream URL from provider API
-         → Server resolves channel metadata from cached/provider channel data
-         → Returns stream URL + DRM info + channel metadata + proxy context token
-         → Frontend initializes HLS.js or Shaka Player
-         → Video requests proxied through GET /api/proxy
-         → Server handles CDN auth, host-constrained proxying, and header/cookie injection
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Web as otvi-web player route
+    participant API as otvi-server stream API
+    participant Provider as Provider playback API
+    participant Cache as ChannelCache / provider data
+    participant Player as HLS.js / Shaka Player
+    participant Proxy as /api/proxy
+    participant CDN as Provider CDN
+
+    Web->>API: GET /api/providers/:id/channels/:cid/stream
+    API->>Provider: resolve stream URL + DRM metadata
+    API->>Cache: resolve channel name/logo/category
+    API-->>Web: stream URL, DRM, channel metadata, proxy context token
+    Web->>Player: initialize HLS.js or Shaka Player
+    Player->>Proxy: request manifest / segments with context token
+    Proxy->>CDN: forward with provider headers and cookies
+    CDN-->>Proxy: manifest or media bytes
+    Proxy-->>Player: rewritten manifest or streamed segment
 ```
 
 ### Hot-Reload Flow
 
-```
-File system event (inotify / kqueue / FSEvents)
-    → notify crate emits event in background Tokio task (watcher.rs)
-    → watcher re-scans PROVIDERS_DIR
-    → new HashMap<String, ProviderConfig> built
-    → AppState.providers_rw.write() swaps the map atomically
-    → all subsequent API requests see the updated providers (~300 ms)
+```mermaid
+flowchart LR
+    fs["Provider YAML create / modify / delete\nin PROVIDERS_DIR"]
+    notify["notify crate event\ninotify / kqueue / FSEvents"]
+    task["watcher.rs\nbackground Tokio task"]
+    scan["Re-scan *.yaml / *.yml"]
+    validate["Parse ProviderConfig map"]
+    swap["AppState.providers_rw.write()\natomic HashMap swap"]
+    api["Subsequent API requests\nuse updated providers in ~300 ms"]
+
+    fs --> notify --> task --> scan --> validate --> swap --> api
+
+    classDef source fill:#f6f8fa,stroke:#8c959f,color:#24292f
+    classDef server fill:#ddf4ff,stroke:#0969da,color:#24292f
+    class fs source
+    class notify,task,scan,validate,swap,api server
 ```
 
 ### `must_change_password` Enforcement Flow
 
-```
-Admin creates user (POST /api/admin/users)
-    → user.must_change_password = true stored in DB
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Admin
+    actor User
+    participant API as otvi-server auth/admin API
+    participant DB as SQLx database
+    participant Claims as ActiveClaims / AdminClaims extractor
 
-User logs in (POST /api/auth/login)
-    → must_change_password = true embedded in JWT payload
-    → JWT returned to client
-
-Client calls any protected endpoint (ActiveClaims / AdminClaims extractor)
-    → flag read directly from JWT claim — zero DB round-trips
-    → 403 Forbidden returned
-
-User calls POST /api/auth/change-password
-    → password validated against policy
-    → must_change_password cleared in DB
-    → fresh JWT issued with must_change_password = false embedded
-    → all protected endpoints immediately accessible with the new token
+    Admin->>API: POST /api/admin/users
+    API->>DB: create user with must_change_password = true
+    User->>API: POST /api/auth/login
+    API->>DB: validate credentials
+    API-->>User: JWT containing must_change_password = true
+    User->>API: call protected endpoint
+    API->>Claims: read flag directly from JWT claim
+    Claims-->>User: 403 Forbidden until password changes
+    User->>API: POST /api/auth/change-password
+    API->>API: validate password policy
+    API->>DB: clear must_change_password
+    API-->>User: fresh JWT with must_change_password = false
+    User->>API: protected endpoints now pass
 ```

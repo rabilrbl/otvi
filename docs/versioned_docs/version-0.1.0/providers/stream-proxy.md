@@ -26,7 +26,7 @@ playback:
     request: { ... }
     response: { ... }
 
-    # ── Proxy settings ──────────────────────────────────────────────────────
+    # Proxy settings
 
     # Headers forwarded on every upstream proxy request (manifest, segments, keys).
     # Supports the same {{stored.*}} / {{input.*}} template variables as request specs.

@@ -171,6 +171,7 @@ jobs:
       - uses: browser-actions/setup-geckodriver@latest
         with:
           geckodriver-version: latest
+          token: ${{ secrets.GITHUB_TOKEN }}
       - name: Install wasm target
         run: rustup target add wasm32-unknown-unknown
       - name: Install wasm-pack
