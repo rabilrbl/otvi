@@ -21,7 +21,7 @@ OTVI is a generic, **YAML-driven television interface** that lets any TV provide
 - **`must_change_password` enforcement** — admin-created accounts are blocked from all API calls until the user sets a personal password
 - **Per-user provider access control** — restrict which providers each user can access
 - **Channel search & pagination** — server-side text search (`?search=`) and limit/offset pagination on channel lists
-- **Database flexibility** — SQLite, PostgreSQL, or MySQL at runtime
+- **Database flexibility** — SQLite or PostgreSQL at runtime
 - **Health & readiness probes** — `/healthz` (liveness) and `/readyz` (DB check) for orchestrators
 - **Provider JSON Schema** — live `GET /api/schema/provider` endpoint for VS Code YAML auto-complete
 - **Structured logging** — human-readable text by default; set `LOG_FORMAT=json` for Loki / Datadog
@@ -66,7 +66,7 @@ OTVI is a generic, **YAML-driven television interface** that lets any TV provide
 | Frontend | Rust/WASM via [Leptos](https://leptos.dev/) + Tailwind CSS |
 | Async Runtime | [Tokio](https://tokio.rs/) |
 | HTTP Client | [Reqwest](https://docs.rs/reqwest) |
-| Database | [SQLx](https://github.com/launchbadge/sqlx) (SQLite / PostgreSQL / MySQL) |
+| Database | [SQLx](https://github.com/launchbadge/sqlx) (SQLite / PostgreSQL) |
 | JSONPath | [jsonpath-rust](https://github.com/besok/jsonpath-rust) |
 | JSON Schema | [schemars](https://graham.cool/schemars/) |
 | File Watching | [notify](https://github.com/notify-rs/notify) |

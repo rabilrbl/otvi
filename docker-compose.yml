@@ -25,8 +25,19 @@ services:
       - JWT_SECRET=${JWT_SECRET:-}
       # Optional: override the default SQLite path.
       # For PostgreSQL: postgres://user:pass@db:5432/otvi
-      # For MySQL:      mysql://user:pass@db:3306/otvi
       - DATABASE_URL=sqlite:///app/data/data.db
+      # Maximum number of database connections in the pool (default: 10).
+      # Increase for PostgreSQL deployments under higher load.
+      #- DB_MAX_CONNECTIONS=10
+      # Maximum request body size in bytes (default: 1 MiB = 1048576).
+      # Increase if your API needs to accept larger payloads.
+      #- REQUEST_BODY_LIMIT_BYTES=1048576
+      # Per-request timeout in seconds (default: 30).
+      # Applies to all routes including the stream proxy.
+      #- REQUEST_TIMEOUT_SECS=30
+      # Seconds to wait for in-flight requests to drain after a shutdown signal
+      # before forcing exit (default: 30). Increase for long-lived streams.
+      #- SHUTDOWN_DRAIN_SECS=30
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/healthz"]
       interval: 30s

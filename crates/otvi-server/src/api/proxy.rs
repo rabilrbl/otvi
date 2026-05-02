@@ -72,7 +72,7 @@ pub async fn proxy_stream(
                 .get(token)
                 .await
                 .ok_or((StatusCode::BAD_REQUEST, "Invalid proxy context".to_string()))?;
-            validate_proxy_target(&ctx, &parsed)?;
+            validate_proxy_target(&ctx, &parsed, state.allow_private_hosts)?;
             ctx
         }
         None => {
@@ -476,14 +476,64 @@ fn rewrite_uri_attributes(
     result
 }
 
+/// Returns `true` when `host` is a literal IP address (or the bare string
+/// `"localhost"`) that falls into a range that must never be reachable via the
+/// proxy.
+///
+/// **Note**: only *literal* IP addresses are inspected.  Hostnames that are
+/// not numeric IPs are treated as public (DNS resolution is not performed here).
+/// A DNS-rebinding attack using a hostname that resolves to a private IP is
+/// therefore not mitigated by this function alone — callers should also enforce
+/// an explicit `allowed_hosts` list populated from the provider YAML.
+///
+/// Blocked ranges:
+/// - `0.0.0.0`       — INADDR_ANY (routes to loopback on Linux)
+/// - `127.0.0.0/8`   — IPv4 loopback
+/// - `10.0.0.0/8`    — RFC-1918 private
+/// - `172.16.0.0/12` — RFC-1918 private
+/// - `192.168.0.0/16`— RFC-1918 private
+/// - `169.254.0.0/16`— link-local / AWS instance metadata
+/// - `::`            — IPv6 unspecified (routes to `::1` on Linux)
+/// - `::1`           — IPv6 loopback
+/// - `fe80::/10`     — IPv6 link-local
+/// - `"localhost"`   — literal hostname (case-insensitive)
+fn is_private_host(host: &str) -> bool {
+    use std::net::IpAddr;
+
+    // Bare "localhost" hostname check.
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+
+    // Strip IPv6 brackets: "[::1]" → "::1"
+    let stripped = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host);
+
+    match stripped.parse() {
+        // Use stable Ipv4Addr predicates — each covers one blocked range.
+        Ok(IpAddr::V4(v4)) => {
+            v4.is_unspecified() // 0.0.0.0 (INADDR_ANY)
+                || v4.is_loopback()   // 127.0.0.0/8
+                || v4.is_private()    // 10/8, 172.16/12, 192.168/16
+                || v4.is_link_local() // 169.254.0.0/16
+        }
+        Ok(IpAddr::V6(v6)) => {
+            v6.is_unspecified() // :: (routes to ::1 on Linux)
+                || v6.is_loopback()  // ::1
+                || (v6.segments()[0] & 0xFFC0) == 0xFE80 // fe80::/10
+        }
+        // Not a bare IP — treat as public hostname (e.g. "cdn.example.com").
+        Err(_) => false,
+    }
+}
+
 fn validate_proxy_target(
     ctx: &crate::state::ProxyContext,
     parsed: &Url,
+    allow_private_hosts: bool,
 ) -> Result<(), (StatusCode, String)> {
-    if parsed.as_str() == ctx.upstream_url {
-        return Ok(());
-    }
-
     let Some(host) = parsed.host_str() else {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -491,7 +541,25 @@ fn validate_proxy_target(
         ));
     };
 
-    if !ctx.allowed_hosts.is_empty() && !ctx.allowed_hosts.iter().any(|allowed| allowed == host) {
+    // Block SSRF to loopback / private / link-local ranges.
+    // Skipped in test mode where httpbin runs on localhost.
+    if !allow_private_hosts && is_private_host(host) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Proxy target is not allowed".to_string(),
+        ));
+    }
+
+    // An empty allowed_hosts list means the context was never populated — deny
+    // rather than allow everything (fail-closed).
+    if ctx.allowed_hosts.is_empty() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Proxy target is not allowed for this playback context".to_string(),
+        ));
+    }
+
+    if !ctx.allowed_hosts.iter().any(|allowed| allowed == host) {
         return Err((
             StatusCode::FORBIDDEN,
             "Proxy target is not allowed for this playback context".to_string(),
@@ -1053,5 +1121,161 @@ mod tests {
         assert!(!result.contains("auth%3Dsecret") && !result.contains("auth=secret"));
         // The URI is still proxied
         assert!(result.contains("/api/proxy?url="));
+    }
+
+    // ── is_private_host ───────────────────────────────────────────────────
+
+    #[test]
+    fn private_host_loopback_ipv4() {
+        assert!(is_private_host("127.0.0.1"));
+        assert!(is_private_host("127.255.255.255"));
+    }
+
+    #[test]
+    fn private_host_loopback_ipv6() {
+        assert!(is_private_host("::1"));
+        assert!(is_private_host("[::1]"));
+    }
+
+    #[test]
+    fn private_host_unspecified_ipv6() {
+        // :: (IPv6 unspecified / INADDR_ANY6) routes to ::1 on Linux.
+        assert!(is_private_host("::"));
+        assert!(is_private_host("[::]"));
+    }
+
+    #[test]
+    fn private_host_private_ranges() {
+        assert!(is_private_host("10.0.0.1"));
+        assert!(is_private_host("10.255.255.255"));
+        assert!(is_private_host("172.16.0.1"));
+        assert!(is_private_host("172.31.255.255"));
+        assert!(is_private_host("192.168.0.1"));
+        assert!(is_private_host("192.168.255.255"));
+    }
+
+    #[test]
+    fn private_host_link_local() {
+        assert!(is_private_host("169.254.169.254")); // AWS metadata
+        assert!(is_private_host("169.254.0.1"));
+    }
+
+    #[test]
+    fn private_host_localhost_string() {
+        assert!(is_private_host("localhost"));
+        assert!(is_private_host("LOCALHOST"));
+    }
+
+    #[test]
+    fn private_host_public_ips_not_blocked() {
+        assert!(!is_private_host("1.1.1.1"));
+        assert!(!is_private_host("8.8.8.8"));
+        assert!(!is_private_host("cdn.example.com"));
+    }
+
+    // ── validate_proxy_target ─────────────────────────────────────────────
+
+    fn make_ctx(upstream_url: &str, allowed_hosts: Vec<&str>) -> crate::state::ProxyContext {
+        use std::collections::HashMap;
+        crate::state::ProxyContext {
+            upstream_url: upstream_url.to_string(),
+            headers: HashMap::new(),
+            allowed_hosts: allowed_hosts.into_iter().map(str::to_string).collect(),
+            url_param_cookies: HashMap::new(),
+            resolved_cookies: HashMap::new(),
+            static_cookies: HashMap::new(),
+            manifest_query: None,
+            append_manifest_query_to_key_uris: false,
+            key_exclude_resolved_cookies: false,
+            key_uri_patterns: vec![],
+            stream_type: otvi_core::types::StreamType::Hls,
+            drm_license_url: None,
+            drm_license_headers: None,
+            drm_license_cookies: None,
+            drm_prefetch_url: None,
+        }
+    }
+
+    #[test]
+    fn validate_proxy_empty_allowed_hosts_denied() {
+        let ctx = make_ctx("https://cdn.example.com/stream.m3u8", vec![]);
+        let url = Url::parse("https://cdn.example.com/seg1.ts").unwrap();
+        assert!(validate_proxy_target(&ctx, &url, false).is_err());
+    }
+
+    #[test]
+    fn validate_proxy_private_ip_always_denied() {
+        // Even when the IP is in allowed_hosts, private addresses are blocked.
+        let ctx = make_ctx("https://10.0.0.1/stream.m3u8", vec!["10.0.0.1"]);
+        let url = Url::parse("https://10.0.0.1/seg1.ts").unwrap();
+        assert!(validate_proxy_target(&ctx, &url, false).is_err());
+    }
+
+    #[test]
+    fn validate_proxy_metadata_endpoint_denied() {
+        let ctx = make_ctx(
+            "https://cdn.example.com/stream.m3u8",
+            vec!["169.254.169.254"],
+        );
+        let url = Url::parse("http://169.254.169.254/latest/meta-data/").unwrap();
+        assert!(validate_proxy_target(&ctx, &url, false).is_err());
+    }
+
+    #[test]
+    fn validate_proxy_allowed_host_passes() {
+        let ctx = make_ctx(
+            "https://cdn.example.com/stream.m3u8",
+            vec!["cdn.example.com"],
+        );
+        let url = Url::parse("https://cdn.example.com/seg1.ts").unwrap();
+        assert!(validate_proxy_target(&ctx, &url, false).is_ok());
+    }
+
+    #[test]
+    fn validate_proxy_disallowed_host_blocked() {
+        let ctx = make_ctx(
+            "https://cdn.example.com/stream.m3u8",
+            vec!["cdn.example.com"],
+        );
+        let url = Url::parse("https://evil.example.com/payload").unwrap();
+        assert!(validate_proxy_target(&ctx, &url, false).is_err());
+    }
+
+    #[test]
+    fn private_host_ipv6_link_local() {
+        // fe80::/10 — bare and bracket-wrapped forms must both be detected.
+        assert!(is_private_host("fe80::1"));
+        assert!(is_private_host("[fe80::1]"));
+        assert!(is_private_host("fe80::dead:beef"));
+        assert!(is_private_host("[fe80::dead:beef]"));
+    }
+
+    #[test]
+    fn private_host_unspecified_ipv4() {
+        // 0.0.0.0 (INADDR_ANY) — on Linux connecting to this routes to loopback.
+        assert!(is_private_host("0.0.0.0"));
+    }
+
+    #[test]
+    fn validate_proxy_exact_upstream_private_ip_denied() {
+        // The exact upstream URL matching ctx.upstream_url must still be blocked
+        // when the host is a private address (a malicious provider YAML could set
+        // upstream_url to an internal endpoint and the proxy must reject it).
+        let ctx = make_ctx("https://10.0.0.1/stream.m3u8", vec!["10.0.0.1"]);
+        let exact_upstream = Url::parse("https://10.0.0.1/stream.m3u8").unwrap();
+        assert!(
+            validate_proxy_target(&ctx, &exact_upstream, false).is_err(),
+            "exact upstream URL pointing to private IP must be denied"
+        );
+    }
+
+    #[test]
+    fn validate_proxy_private_host_allowed_in_test_mode() {
+        let ctx = make_ctx("http://localhost:8888/stream.m3u8", vec!["localhost"]);
+        let url = Url::parse("http://localhost:8888/seg1.ts").unwrap();
+        assert!(
+            validate_proxy_target(&ctx, &url, true).is_ok(),
+            "private hosts should be allowed when allow_private_hosts is true"
+        );
     }
 }

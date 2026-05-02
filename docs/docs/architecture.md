@@ -85,7 +85,7 @@ The backend REST API built on [Axum](https://github.com/tokio-rs/axum).
 
 - **`main.rs`** — Application bootstrap
   - Reads `LOG_FORMAT` to switch between human-readable text and JSON structured logging
-  - Initializes database pool (SQLite/PostgreSQL/MySQL) and runs migrations
+  - Initializes database pool (SQLite/PostgreSQL) and runs migrations
   - Creates JWT signing keys from `JWT_SECRET`
   - Loads all provider YAML files from `PROVIDERS_DIR`
   - Spawns the background **hot-reload watcher** task
@@ -113,7 +113,7 @@ The backend REST API built on [Axum](https://github.com/tokio-rs/axum).
   - Provider session management (upsert, get, delete)
   - Per-user provider access control
   - Server settings storage
-  - Supports SQLite, PostgreSQL, and MySQL through SQLx's `AnyPool`
+  - Supports SQLite and PostgreSQL through SQLx's `AnyPool`
 
 - **`auth_middleware.rs`** — JWT authentication middleware
   - Token creation and validation — tokens have a **24-hour lifetime**

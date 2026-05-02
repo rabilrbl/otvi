@@ -286,7 +286,7 @@ healthcheck:
 
 | Variable                 | Default              | Description                                                                                       |
 | ------------------------ | -------------------- | ------------------------------------------------------------------------------------------------- |
-| `DATABASE_URL`           | `sqlite://data.db`   | Database connection string — supports `sqlite://`, `postgres://`, `mysql://`                      |
+| `DATABASE_URL`           | `sqlite://data.db`   | Database connection string — supports `sqlite://` and `postgres://`                               |
 | `JWT_SECRET`             | *(random)*           | Secret for signing JWTs. **Always set a persistent value in production.**                         |
 | `PORT`                   | `3000`               | Port the server listens on                                                                        |
 | `PROVIDERS_DIR`          | `providers`          | Directory scanned for `*.yaml` / `*.yml` provider configs (hot-reloaded on change)               |
@@ -322,11 +322,6 @@ If `JWT_SECRET` is not set, a random value is generated on each restart, invalid
 
 - Recommended for production and multi-instance deployments
 - Configure with: `DATABASE_URL=postgres://user:pass@host:5432/otvi`
-
-#### MySQL / MariaDB
-
-- Alternative to PostgreSQL
-- Configure with: `DATABASE_URL=mysql://user:pass@host:3306/otvi`
 
 ### Structured Logging
 

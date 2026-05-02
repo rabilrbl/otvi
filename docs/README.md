@@ -47,15 +47,48 @@ The docs deployment workflow publishes on:
 
 ## Project Structure
 
-```text
-docs/
-|- blog/
-|- docs/
-|- versioned_docs/
-|- versioned_sidebars/
-|- versions.json
-|- src/
-|- docusaurus.config.ts
-|- sidebars.ts
-`- package.json
+```mermaid
+flowchart LR
+    subgraph authoring["Authoring inputs"]
+        current["docs/\nUnreleased docs"]
+        blog["blog/\nRelease notes"]
+        src["src/\nTheme + CSS"]
+    end
+
+    subgraph config["Docusaurus config"]
+        dconfig["docusaurus.config.ts"]
+        sidebars["sidebars.ts"]
+        package["package.json"]
+    end
+
+    subgraph releases["Versioned release snapshots"]
+        versions["versions.json"]
+        vdocs["versioned_docs/version-*"]
+        vsidebars["versioned_sidebars/version-*-sidebars.json"]
+    end
+
+    site["Published docs site\nlatest release + unreleased docs + blog"]
+
+    current -- "bun run docs:version <version>" --> vdocs
+    sidebars -- "snapshot" --> vsidebars
+    vdocs --> versions
+
+    current --> site
+    blog --> site
+    src --> site
+    dconfig --> site
+    sidebars --> site
+    package --> site
+    versions --> site
+    vdocs --> site
+    vsidebars --> site
+
+    classDef input fill:#f6f8fa,stroke:#8c959f,color:#24292f
+    classDef configNode fill:#ddf4ff,stroke:#0969da,color:#24292f
+    classDef release fill:#fff8c5,stroke:#9a6700,color:#24292f
+    classDef output fill:#dafbe1,stroke:#1a7f37,color:#24292f
+    class current,blog,src input
+    class dconfig,sidebars,package configNode
+    class versions,vdocs,vsidebars release
+    class site output
 ```

@@ -18,6 +18,8 @@ const config: Config = {
     v4: true,
   },
 
+  themes: ['@docusaurus/theme-mermaid'],
+
   url: 'https://otvi.rbls.eu.org',
   baseUrl: '/',
 
@@ -26,6 +28,7 @@ const config: Config = {
 
   onBrokenLinks: 'throw',
   markdown: {
+    mermaid: true,
     hooks: {
       onBrokenMarkdownLinks: 'throw',
     },

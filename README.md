@@ -11,25 +11,52 @@ OTVI (Open TV Interface) is a YAML-driven television streaming platform. It lets
 
 ## Architecture
 
-```text
-providers/*.yaml
-      |
-      v
-+-------------------+       HTTP       +------------------------+
-| otvi-server       | ---------------> | provider APIs          |
-| - Axum API        |                  | auth / channels / DRM  |
-| - schema endpoint |
-| - static assets   | <--------------- +------------------------+
-+---------+---------+
-          |
-          | JSON
-          v
-+-------------------+
-| otvi-web          |
-| - login           |
-| - channels        |
-| - player          |
-+-------------------+
+```mermaid
+flowchart LR
+    operator["Provider author / operator"]
+    config["providers/*.yaml"]
+
+    subgraph server["otvi-server"]
+        direction TB
+        static["Static asset server"]
+        api["Axum JSON API"]
+        schema["Provider schema endpoint"]
+        runtime["Provider runtime\ntemplates + extractors"]
+    end
+
+    subgraph browser["Browser"]
+        direction TB
+        web["otvi-web\nLeptos + WebAssembly"]
+        player["Video player\nHLS / DASH / DRM config"]
+    end
+
+    subgraph providers["Provider platforms"]
+        direction TB
+        auth["Authentication"]
+        catalog["Channel catalog"]
+        playback["Playback + DRM"]
+    end
+
+    operator --> config
+    config --> runtime
+    static -- "serves app shell" --> web
+    web -- "JSON API" --> api
+    api --> schema
+    api --> runtime
+    runtime -- "HTTP" --> auth
+    runtime -- "HTTP" --> catalog
+    runtime -- "HTTP" --> playback
+    api -- "normalized responses" --> web
+    web --> player
+
+    classDef source fill:#f6f8fa,stroke:#8c959f,color:#24292f
+    classDef serverNode fill:#ddf4ff,stroke:#0969da,color:#24292f
+    classDef client fill:#dafbe1,stroke:#1a7f37,color:#24292f
+    classDef external fill:#fff8c5,stroke:#9a6700,color:#24292f
+    class operator,config source
+    class static,api,schema,runtime serverNode
+    class web,player client
+    class auth,catalog,playback external
 ```
 
 ## Quick Start

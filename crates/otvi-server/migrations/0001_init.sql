@@ -1,9 +1,9 @@
--- Initial schema compatible with SQLite, PostgreSQL, and MySQL.
+-- Initial schema compatible with SQLite and PostgreSQL.
 -- All PKs are UUID strings stored as TEXT to avoid dialect differences
 -- with SERIAL / AUTOINCREMENT / AUTO_INCREMENT.
 --
 -- Booleans are stored as INTEGER (0 = false, 1 = true) because SQLite
--- has no native BOOLEAN type; PostgreSQL and MySQL accept INTEGER fine.
+-- has no native BOOLEAN type; PostgreSQL accepts INTEGER fine.
 --
 -- Timestamps are stored as TEXT (ISO-8601) for the same reason.
 

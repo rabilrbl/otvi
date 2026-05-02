@@ -7,11 +7,11 @@
 //! |------------|------------------------------------------|
 //! | SQLite     | `sqlite://data.db` (default)             |
 //! | PostgreSQL | `postgres://user:pass@host/dbname`       |
-//! | MySQL      | `mysql://user:pass@host/dbname`          |
 //!
 //! All queries use `?` placeholders; sqlx translates them to `$1`, `$2`, …
 //! for PostgreSQL automatically.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use anyhow::Context;
@@ -19,6 +19,7 @@ use chrono::Utc;
 use sqlx::{
     Any, AnyPool, QueryBuilder, Row,
     any::{AnyConnectOptions, AnyPoolOptions},
+    migrate::{Migration, MigrationType, Migrator},
 };
 use std::str::FromStr;
 use uuid::Uuid;
@@ -67,24 +68,83 @@ pub async fn init(database_url: &str) -> anyhow::Result<Db> {
     let opts = AnyConnectOptions::from_str(database_url)
         .with_context(|| format!("Invalid database URL: {database_url}"))?;
 
+    // DB_MAX_CONNECTIONS env var (default: 10).
+    let max_connections: u32 = crate::parse_env_or_warn("DB_MAX_CONNECTIONS", 10, "10");
+
     let pool = AnyPoolOptions::new()
-        .max_connections(10)
+        .max_connections(max_connections)
         .connect_with(opts)
         .await
         .with_context(|| format!("Failed to connect to database: {database_url}"))?;
 
-    sqlx::migrate!("./migrations")
-        .run(&pool)
+    // Enable WAL mode for file-based SQLite to improve read throughput under
+    // concurrent access.  WAL allows readers and one writer to proceed
+    // concurrently (default journal mode serialises all writes and reads).
+    // PRAGMA synchronous=NORMAL is safe with WAL and avoids full-sync overhead.
+    //
+    // Skipped for in-memory databases (":memory:") — WAL is not supported
+    // there and would just produce a spurious warning.
+    if database_url.starts_with("sqlite:") && !database_url.contains(":memory:") {
+        // PRAGMA journal_mode returns the resulting mode in a row — use
+        // fetch_one so we can verify the switch actually took effect.
+        // On network filesystems WAL is unsupported; the PRAGMA succeeds but
+        // returns the current mode unchanged.
+        let row = sqlx::query("PRAGMA journal_mode=WAL")
+            .fetch_one(&pool)
+            .await
+            .context("Failed to enable WAL mode")?;
+        let actual_mode: String = row
+            .try_get("journal_mode")
+            .context("Failed to read journal_mode")?;
+        if actual_mode != "wal" {
+            tracing::warn!(
+                mode = %actual_mode,
+                "SQLite WAL mode could not be enabled (network filesystem?)"
+            );
+        }
+        sqlx::query("PRAGMA synchronous=NORMAL")
+            .execute(&pool)
+            .await
+            .context("Failed to set synchronous=NORMAL")?;
+    }
+
+    run_migrations(&pool)
         .await
         .context("Database migration failed")?;
 
     Ok(pool)
 }
 
+async fn run_migrations(pool: &Db) -> anyhow::Result<()> {
+    let migrator = Migrator {
+        migrations: Cow::Owned(vec![
+            Migration::new(
+                1,
+                Cow::Borrowed("init"),
+                MigrationType::Simple,
+                Cow::Borrowed(include_str!("../migrations/0001_init.sql")),
+                false,
+            ),
+            Migration::new(
+                2,
+                Cow::Borrowed("must change password"),
+                MigrationType::Simple,
+                Cow::Borrowed(include_str!("../migrations/0002_must_change_password.sql")),
+                false,
+            ),
+        ]),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+
+    migrator.run(pool).await?;
+    Ok(())
+}
+
 // ── Users ─────────────────────────────────────────────────────────────────
 
 /// Row fetched from the `users` table.
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct UserRow {
     pub id: String,
@@ -93,13 +153,6 @@ pub struct UserRow {
     pub role: String,
     pub created_at: String,
     pub must_change_password: bool,
-}
-
-/// Optional provider allow-list attached to a user (empty = all providers).
-#[allow(dead_code)]
-pub struct UserWithProviders {
-    pub row: UserRow,
-    pub providers: Vec<String>,
 }
 
 pub async fn user_count(db: &Db) -> anyhow::Result<i64> {
@@ -128,7 +181,6 @@ pub async fn get_user_by_username(db: &Db, username: &str) -> anyhow::Result<Opt
     }))
 }
 
-#[allow(dead_code)]
 pub async fn get_user_by_id(db: &Db, id: &str) -> anyhow::Result<Option<UserRow>> {
     let row = sqlx::query(
         "SELECT id, username, password_hash, role, created_at, must_change_password \
@@ -305,7 +357,6 @@ pub async fn set_user_providers(
 // ── Provider sessions ──────────────────────────────────────────────────────
 
 /// Row from the `provider_sessions` table.
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct ProviderSessionRow {
     pub id: String,
@@ -318,7 +369,6 @@ pub struct ProviderSessionRow {
 
 /// For `global`-scoped providers the `user_id` is the empty string `""` so
 /// a single shared session is used regardless of which OTVI user made the request.
-#[allow(dead_code)]
 pub async fn get_provider_session(
     db: &Db,
     user_id: &str,
@@ -436,7 +486,7 @@ pub async fn get_setting(db: &Db, key: &str) -> anyhow::Result<Option<String>> {
 }
 
 pub async fn set_setting(db: &Db, key: &str, value: &str) -> anyhow::Result<()> {
-    // Portable upsert: delete + insert works in SQLite, PostgreSQL, MySQL.
+    // Portable upsert: delete + insert works in SQLite and PostgreSQL.
     // Wrap both statements in a transaction so the setting is never transiently absent.
     let mut tx = db.begin().await?;
 
@@ -463,4 +513,39 @@ pub async fn is_signup_disabled(db: &Db) -> anyhow::Result<bool> {
 
 pub async fn set_signup_disabled(db: &Db, disabled: bool) -> anyhow::Result<()> {
     set_setting(db, "signup_disabled", if disabled { "1" } else { "0" }).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn test_db() -> (Db, tempfile::TempDir) {
+        sqlx::any::install_default_drivers();
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let path = dir.path().join("test.db");
+        let url = format!("sqlite://{}", path.display());
+        let db = init(&url).await.expect("test db init");
+        (db, dir)
+    }
+
+    #[tokio::test]
+    async fn sqlite_wal_mode_enabled() {
+        let (db, _dir) = test_db().await;
+        let row = sqlx::query("PRAGMA journal_mode")
+            .fetch_one(&db)
+            .await
+            .expect("pragma query");
+        let mode: String = row.try_get(0).expect("get mode");
+        assert_eq!(mode, "wal", "SQLite journal mode should be WAL after init");
+    }
+
+    #[tokio::test]
+    async fn db_max_connections_default() {
+        // Without DB_MAX_CONNECTIONS env var, pool initialises without error.
+        unsafe { std::env::remove_var("DB_MAX_CONNECTIONS") };
+        let (db, _dir) = test_db().await;
+        // Pool is usable — issue a query to confirm.
+        let count = user_count(&db).await.expect("user_count");
+        assert_eq!(count, 0);
+    }
 }

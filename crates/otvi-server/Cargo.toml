@@ -16,7 +16,7 @@ axum-extra = { version = "0.12", features = ["typed-header"] }
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.13", features = ["json", "cookies", "query", "form"] }
 tower = { version = "0.5", features = ["util"] }
-tower-http = { version = "0.6", features = ["cors", "fs"] }
+tower-http = { version = "0.6", features = ["cors", "fs", "set-header", "timeout", "request-id"] }
 uuid = { version = "1", features = ["v4"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
@@ -35,7 +35,6 @@ sqlx = { version = "0.8", features = [
     "any",
     "sqlite",
     "postgres",
-    "mysql",
     "uuid",
     "migrate",
 ] }
@@ -47,7 +46,7 @@ dotenvy = "0.15"
 argon2 = "0.5"
 
 # JWT
-jsonwebtoken = { version = "10", features = ["rust_crypto"] }
+jsonwebtoken = { version = "10", features = ["aws_lc_rs"] }
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }

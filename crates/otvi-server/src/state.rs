@@ -395,7 +395,7 @@ pub type RefreshLocks = Mutex<HashMap<(String, String), Arc<tokio::sync::Mutex<(
 pub struct AppState {
     /// Provider ID → parsed YAML configuration (hot-reloadable).
     pub providers_rw: RwLock<HashMap<String, ProviderConfig>>,
-    /// Database connection pool (SQLite / PostgreSQL / MySQL via `AnyPool`).
+    /// Database connection pool (SQLite / PostgreSQL via `AnyPool`).
     pub db: Db,
     /// JWT signing / verification keys.
     pub jwt_keys: JwtKeys,
@@ -420,6 +420,8 @@ pub struct AppState {
     /// `tokio::sync::Mutex` to perform the refresh; the rest wait and then
     /// re-read the updated stored values.
     pub refresh_locks: RefreshLocks,
+    /// Allow proxying to private/loopback hosts (test-only).
+    pub allow_private_hosts: bool,
 }
 
 impl AppState {
@@ -467,6 +469,7 @@ impl AppState {
                     proxy_ctx: proxy_context_cache_from_env(),
                     channel_cache: ChannelCache::from_env(),
                     refresh_locks: Mutex::new(HashMap::new()),
+                    allow_private_hosts: false,
                 });
             }
             Err(e) => return Err(e.into()),
@@ -482,6 +485,7 @@ impl AppState {
             proxy_ctx: proxy_context_cache_from_env(),
             channel_cache: ChannelCache::from_env(),
             refresh_locks: Mutex::new(HashMap::new()),
+            allow_private_hosts: false,
         })
     }
 
@@ -533,7 +537,10 @@ fn load_provider_map_from_iter(
                 providers.insert(config.provider.id.clone(), config);
             }
             Err(e) => {
-                tracing::error!("Failed to parse {}: {e}", path.display());
+                return Err(anyhow::anyhow!(
+                    "failed to parse provider config {}: {e}",
+                    path.display()
+                ));
             }
         }
     }

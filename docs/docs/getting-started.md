@@ -148,7 +148,7 @@ their password via `POST /api/auth/change-password`.
 
 | Variable        | Default              | Description                                                                                     |
 | --------------- | -------------------- | ----------------------------------------------------------------------------------------------- |
-| `DATABASE_URL`  | `sqlite://data.db`   | Database connection string — supports `sqlite://`, `postgres://`, `mysql://`                    |
+| `DATABASE_URL`  | `sqlite://data.db`   | Database connection string — supports `sqlite://` and `postgres://`                             |
 | `JWT_SECRET`    | *(random)*           | Secret for signing JWTs. **Always set a persistent value in production.**                       |
 | `PORT`          | `3000`               | Port the server listens on                                                                      |
 | `PROVIDERS_DIR` | `providers`          | Directory scanned for `*.yaml` / `*.yml` provider configs (hot-reloaded on change)             |

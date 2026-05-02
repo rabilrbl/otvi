@@ -79,6 +79,7 @@ async fn build_test_app() -> (axum::Router, tempfile::TempDir) {
         proxy_ctx: otvi_server::state::new_proxy_context_cache(std::time::Duration::from_secs(300)),
         channel_cache: otvi_server::state::ChannelCache::new(std::time::Duration::from_secs(300)),
         refresh_locks: std::sync::Mutex::new(std::collections::HashMap::new()),
+        allow_private_hosts: true,
     });
 
     (otvi_server::build_router_for_tests(state), dir)
@@ -482,6 +483,51 @@ async fn change_password_no_digit_rejected() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
     assert!(body["error"].as_str().unwrap().contains("digit"));
+}
+
+#[tokio::test]
+async fn register_password_too_long_rejected() {
+    let (app, _db_dir) = build_test_app().await;
+    // 129 chars: "A1" + 127 lowercase — passes all rules except max-length.
+    let long_pw = format!("A1{}", "a".repeat(127));
+    assert_eq!(long_pw.len(), 129);
+    let (status, body) = send(
+        &app,
+        post_json(
+            "/api/auth/register",
+            &json!({"username": "user1", "password": long_pw}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
+    assert!(
+        body["error"].as_str().unwrap().contains("128"),
+        "error should mention 128: {body}"
+    );
+}
+
+#[tokio::test]
+async fn change_password_too_long_rejected() {
+    let (app, _db_dir) = build_test_app().await;
+    let (token, _) = register_admin(&app).await;
+    let long_pw = format!("A1{}", "a".repeat(127));
+    let (status, body) = send(
+        &app,
+        post_json_auth(
+            "/api/auth/change-password",
+            &json!({
+                "current_password": "Admin-Password-1",
+                "new_password": long_pw
+            }),
+            &token,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
+    assert!(
+        body["error"].as_str().unwrap().contains("128"),
+        "error should mention 128: {body}"
+    );
 }
 
 // ── must_change_password enforcement ───────────────────────────────────────
@@ -920,6 +966,7 @@ async fn global_provider_login_requires_admin() {
         proxy_ctx: otvi_server::state::new_proxy_context_cache(std::time::Duration::from_secs(300)),
         channel_cache: otvi_server::state::ChannelCache::new(std::time::Duration::from_secs(300)),
         refresh_locks: std::sync::Mutex::new(std::collections::HashMap::new()),
+        allow_private_hosts: true,
     });
     let app = otvi_server::build_router_for_tests(state);
 
@@ -1374,6 +1421,67 @@ async fn admin_reset_user_password() {
     .await;
     assert_eq!(status, StatusCode::OK, "login after reset: {body}");
     assert_eq!(body["user"]["must_change_password"], true);
+}
+
+#[tokio::test]
+async fn admin_create_user_password_too_long_rejected() {
+    let (app, _db_dir) = build_test_app().await;
+    let (token, _) = register_admin(&app).await;
+    let long_pw = format!("A1{}", "a".repeat(127));
+    let (status, body) = send(
+        &app,
+        post_json_auth(
+            "/api/admin/users",
+            &json!({
+                "username": "longpwuser",
+                "password": long_pw,
+                "role": "user"
+            }),
+            &token,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
+    assert!(
+        body["error"].as_str().unwrap().contains("128"),
+        "error should mention 128: {body}"
+    );
+}
+
+#[tokio::test]
+async fn admin_reset_password_too_long_rejected() {
+    let (app, _db_dir) = build_test_app().await;
+    let (token, _) = register_admin(&app).await;
+
+    let (_, body) = send(
+        &app,
+        post_json_auth(
+            "/api/admin/users",
+            &json!({
+                "username": "resetlong",
+                "password": "Password123",
+                "role": "user"
+            }),
+            &token,
+        ),
+    )
+    .await;
+    let user_id = body["id"].as_str().unwrap();
+    let long_pw = format!("A1{}", "a".repeat(127));
+    let (status, body) = send(
+        &app,
+        put_json_auth(
+            &format!("/api/admin/users/{user_id}/password"),
+            &json!({"new_password": long_pw}),
+            &token,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
+    assert!(
+        body["error"].as_str().unwrap().contains("128"),
+        "error should mention 128: {body}"
+    );
 }
 
 #[tokio::test]

@@ -42,15 +42,36 @@ These are not standalone routes today; they are mounted by `web/src/app.rs` base
 
 ## Boot Flow
 
-```text
-App startup
-    |
-    +-- GET /api/auth/me
-          |
-          +-- 403 -> first-run setup overlay
-          +-- 401 -> OTVI login overlay
-          +-- 200 + must_change_password=true -> forced password overlay
-          +-- 200 -> ready
+```mermaid
+flowchart TD
+    subgraph browser["Browser / otvi-web"]
+        start["App mounts"]
+        token["Read otvi_jwt\nfrom LocalStorage"]
+        setup["First-run setup overlay"]
+        login["OTVI login overlay"]
+        password["Forced password-change overlay"]
+        shell["Authenticated app shell\nrouter + nav + pages"]
+    end
+
+    subgraph server["otvi-server"]
+        auth["GET /api/auth/me"]
+        state{"Session state"}
+    end
+
+    start --> token
+    token --> auth
+    auth --> state
+    state -- "403: no admin user" --> setup
+    state -- "401: missing/invalid JWT" --> login
+    state -- "200: must_change_password" --> password
+    state -- "200: active session" --> shell
+
+    classDef client fill:#dafbe1,stroke:#1a7f37,color:#24292f
+    classDef serverNode fill:#ddf4ff,stroke:#0969da,color:#24292f
+    classDef decision fill:#fff8c5,stroke:#9a6700,color:#24292f
+    class start,token,setup,login,password,shell client
+    class auth serverNode
+    class state decision
 ```
 
 - JWTs are stored in `LocalStorage` under `otvi_jwt`
@@ -65,14 +86,25 @@ App startup
 - `?search=<term>` controls the server-side search term
 - both values are bookmarkable and restored through browser history
 
-The frontend sends the current query state to `GET /api/providers/:id/channels` and renders the backend response directly. It does not run a second client-side search pass over the returned list.
+The frontend sends the
+current query state to `GET /api/providers/:id/channels` and renders the
+backend response directly. It does not run a second client-side search pass
+over the returned list.
 
-```text
-User changes search/category
-    -> URL query updates
-    -> frontend refetches /api/providers/:id/channels
-    -> backend applies search/category/pagination
-    -> frontend renders returned channels + total
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant Route as otvi-web /channels route
+    participant URL as Browser URL query
+    participant API as otvi-server API
+
+    User->>Route: change search/category
+    Route->>URL: sync ?search=...&cat=...
+    Route->>API: GET /api/providers/:id/channels with query state
+    API->>API: apply search, category, pagination
+    API-->>Route: return normalized channels + total
+    Route-->>User: render updated channel grid
 ```
 
 ## Player Page

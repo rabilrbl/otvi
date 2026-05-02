@@ -17,9 +17,6 @@ DATABASE_URL=sqlite://data.db
 
 # PostgreSQL
 DATABASE_URL=postgres://user:password@localhost:5432/otvi
-
-# MySQL / MariaDB
-DATABASE_URL=mysql://user:password@localhost:3306/otvi
 ```
 
 OTVI uses [SQLx](https://github.com/launchbadge/sqlx) with `AnyPool`, meaning you can switch databases at runtime simply by changing the connection string. The appropriate migrations are applied automatically at startup.
@@ -28,7 +25,6 @@ OTVI uses [SQLx](https://github.com/launchbadge/sqlx) with `AnyPool`, meaning yo
 | ---------- | -------------------------------------------- |
 | SQLite     | `sqlite://path/to/file.db`                   |
 | PostgreSQL | `postgres://user:pass@host:5432/dbname`       |
-| MySQL      | `mysql://user:pass@host:3306/dbname`          |
 
 ### JWT Authentication
 
@@ -186,8 +182,6 @@ CORS_ORIGINS=https://tv.example.com
 DATABASE_URL=sqlite://data.db
 # PostgreSQL:
 # DATABASE_URL=postgres://user:password@localhost:5432/otvi
-# MySQL:
-# DATABASE_URL=mysql://user:password@localhost:3306/otvi
 
 # ── JWT ──────────────────────────────────────────────────
 # Generate with: openssl rand -hex 32
