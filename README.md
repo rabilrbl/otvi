@@ -12,27 +12,31 @@ OTVI (Open TV Interface) is a YAML-driven television streaming platform. It lets
 ## Architecture
 
 ```mermaid
-block-beta
-    columns 1
-    block:config
-        columns 1
-        yaml["providers/*.yaml"]
-    end
-    space
-    block:server
-        columns 1
-        otvi["**otvi-server**\nAxum API\nschema endpoint\nstatic assets"]
-    end
-    space
-    block:clients
-        columns 2
-        web["**otvi-web**\nlogin\nchannels\nplayer"]
-        providers["**provider APIs**\nauth / channels / DRM"]
+flowchart TD
+    config["providers/*.yaml"]
+    config --> otvi
+
+    subgraph server["otvi-server"]
+        direction LR
+        api["Axum API"]
+        schema["schema endpoint"]
+        assets["static assets"]
     end
 
-    yaml --> otvi
+    subgraph web["otvi-web"]
+        direction LR
+        login["login"]
+        channels["channels"]
+        player["player"]
+    end
+
+    subgraph ext["provider APIs"]
+        direction LR
+        auth["auth / channels / DRM"]
+    end
+
     otvi -- "JSON" --> web
-    otvi -- "HTTP" --> providers
+    otvi -- "HTTP" --> ext
 ```
 
 ## Quick Start
