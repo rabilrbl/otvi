@@ -49,7 +49,6 @@ use otvi_core::types::*;
 
 use tracing::{debug, error, instrument};
 
-use crate::api::provider_access::authorize_provider_route;
 use crate::auth_middleware::ActiveClaims;
 use crate::channel_catalog::{self, ChannelQuery};
 use crate::error::AppError;
