@@ -1,8 +1,10 @@
 //! HTTP client for communicating with the OTVI backend API from WASM.
 
-use gloo_net::http::Request;
+use gloo_net::http::{Request, RequestBuilder, Response};
 use gloo_storage::{LocalStorage, Storage};
 use otvi_core::types::*;
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 
 // ── JWT token management ─────────────────────────────────────────────────────
@@ -23,6 +25,118 @@ pub fn clear_token() {
 
 fn bearer() -> Option<String> {
     get_token().map(|t| format!("Bearer {t}"))
+}
+
+enum Method {
+    Get,
+    Post,
+    Put,
+    Delete,
+}
+
+enum FailureText {
+    Status,
+    BodyOr(&'static str),
+    BodyOrStatus,
+    UnauthorizedOrStatus,
+}
+
+impl FailureText {
+    async fn message_for(self, resp: Response) -> String {
+        let status = resp.status();
+        match self {
+            Self::Status => format!("HTTP {status}"),
+            Self::UnauthorizedOrStatus if status == 401 => "__unauthorized__".into(),
+            Self::UnauthorizedOrStatus => format!("HTTP {status}"),
+            Self::BodyOr(fallback) => resp.text().await.unwrap_or_else(|_| fallback.into()),
+            Self::BodyOrStatus => resp
+                .text()
+                .await
+                .unwrap_or_else(|_| format!("HTTP {status}")),
+        }
+    }
+}
+
+fn request(method: Method, url: &str) -> RequestBuilder {
+    match method {
+        Method::Get => Request::get(url),
+        Method::Post => Request::post(url),
+        Method::Put => Request::put(url),
+        Method::Delete => Request::delete(url),
+    }
+}
+
+fn authed(method: Method, url: &str) -> RequestBuilder {
+    let req = request(method, url);
+    match bearer() {
+        Some(b) => req.header("Authorization", &b),
+        None => req,
+    }
+}
+
+fn authed_required(method: Method, url: &str) -> Result<RequestBuilder, String> {
+    let Some(b) = bearer() else {
+        return Err("Not logged in".into());
+    };
+    Ok(request(method, url).header("Authorization", &b))
+}
+
+fn json_body<T: Serialize>(req: RequestBuilder, body: &T) -> Result<Request, String> {
+    req.json(body).map_err(|e| format!("{e:?}"))
+}
+
+async fn send(req: RequestBuilder) -> Result<Response, String> {
+    req.send().await.map_err(|e| e.to_string())
+}
+
+async fn send_request(req: Request) -> Result<Response, String> {
+    req.send().await.map_err(|e| e.to_string())
+}
+
+async fn read_json<T: DeserializeOwned>(resp: Response) -> Result<T, String> {
+    resp.json::<T>().await.map_err(|e| e.to_string())
+}
+
+async fn send_json<T: DeserializeOwned>(
+    req: RequestBuilder,
+    failure: FailureText,
+) -> Result<T, String> {
+    let resp = send(req).await?;
+    if resp.ok() {
+        read_json(resp).await
+    } else {
+        Err(failure.message_for(resp).await)
+    }
+}
+
+async fn send_request_json<T: DeserializeOwned>(
+    req: Request,
+    failure: FailureText,
+) -> Result<T, String> {
+    let resp = send_request(req).await?;
+    if resp.ok() {
+        read_json(resp).await
+    } else {
+        Err(failure.message_for(resp).await)
+    }
+}
+
+async fn send_empty(req: RequestBuilder, failure: FailureText) -> Result<(), String> {
+    let resp = send(req).await?;
+    if resp.ok() {
+        Ok(())
+    } else {
+        Err(failure.message_for(resp).await)
+    }
+}
+
+async fn send_request_empty(req: Request, failure: FailureText) -> Result<(), String> {
+    let resp = send_request(req).await?;
+    if resp.ok() {
+        Ok(())
+    } else {
+        Err(failure.message_for(resp).await)
+    }
 }
 
 // ── OTVI app-level auth ──────────────────────────────────────────────────────
@@ -95,16 +209,11 @@ pub async fn boot_check() -> AppBoot {
         return mocked;
     }
 
-    let req = match bearer() {
-        Some(b) => Request::get("/api/auth/me").header("Authorization", &b),
-        None => Request::get("/api/auth/me"),
-    };
-    let Ok(resp) = req.send().await else {
+    let Ok(resp) = send(authed(Method::Get, "/api/auth/me")).await else {
         return AppBoot::NeedsLogin;
     };
     match resp.status() {
-        200 => resp
-            .json::<UserInfo>()
+        200 => read_json::<UserInfo>(resp)
             .await
             .map(AppBoot::Ready)
             .unwrap_or(AppBoot::NeedsLogin),
@@ -114,92 +223,45 @@ pub async fn boot_check() -> AppBoot {
 }
 
 pub async fn app_login(username: &str, password: &str) -> Result<AppLoginResponse, String> {
-    let resp = Request::post("/api/auth/login")
-        .json(&AppLoginRequest {
+    let req = json_body(
+        request(Method::Post, "/api/auth/login"),
+        &AppLoginRequest {
             username: username.to_string(),
             password: password.to_string(),
-        })
-        .map_err(|e| format!("{e:?}"))?
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+        },
+    )?;
 
-    if resp.ok() {
-        resp.json::<AppLoginResponse>()
-            .await
-            .map_err(|e| e.to_string())
-    } else {
-        Err(resp.text().await.unwrap_or_else(|_| "Login failed".into()))
-    }
+    send_request_json(req, FailureText::BodyOr("Login failed")).await
 }
 
 pub async fn app_register(username: &str, password: &str) -> Result<AppLoginResponse, String> {
-    let resp = Request::post("/api/auth/register")
-        .json(&RegisterRequest {
+    let req = json_body(
+        request(Method::Post, "/api/auth/register"),
+        &RegisterRequest {
             username: username.to_string(),
             password: password.to_string(),
-        })
-        .map_err(|e| format!("{e:?}"))?
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+        },
+    )?;
 
-    if resp.ok() {
-        resp.json::<AppLoginResponse>()
-            .await
-            .map_err(|e| e.to_string())
-    } else {
-        Err(resp
-            .text()
-            .await
-            .unwrap_or_else(|_| "Registration failed".into()))
-    }
+    send_request_json(req, FailureText::BodyOr("Registration failed")).await
 }
 
 pub async fn change_password(
     current_password: &str,
     new_password: &str,
 ) -> Result<AppLoginResponse, String> {
-    let resp = post_authed("/api/auth/change-password")
-        .json(&ChangePasswordRequest {
+    let req = json_body(
+        authed(Method::Post, "/api/auth/change-password"),
+        &ChangePasswordRequest {
             current_password: current_password.to_string(),
             new_password: new_password.to_string(),
-        })
-        .map_err(|e| format!("{e:?}"))?
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+        },
+    )?;
 
-    if resp.ok() {
-        resp.json::<AppLoginResponse>()
-            .await
-            .map_err(|e| e.to_string())
-    } else {
-        Err(resp
-            .text()
-            .await
-            .unwrap_or_else(|_| "Password change failed".into()))
-    }
+    send_request_json(req, FailureText::BodyOr("Password change failed")).await
 }
 
 // ── Provider endpoints ──────────────────────────────────────────────────────
-
-/// Helper: build a GET request with Authorization header if we have a token.
-fn get_authed(url: &str) -> gloo_net::http::RequestBuilder {
-    let req = Request::get(url);
-    match bearer() {
-        Some(b) => req.header("Authorization", &b),
-        None => req,
-    }
-}
-
-fn post_authed(url: &str) -> gloo_net::http::RequestBuilder {
-    let req = Request::post(url);
-    match bearer() {
-        Some(b) => req.header("Authorization", &b),
-        None => req,
-    }
-}
 
 pub async fn fetch_providers() -> Result<Vec<ProviderInfo>, String> {
     #[cfg(all(feature = "ui-test", target_arch = "wasm32"))]
@@ -207,19 +269,11 @@ pub async fn fetch_providers() -> Result<Vec<ProviderInfo>, String> {
         return mocked;
     }
 
-    let resp = get_authed("/api/providers")
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !resp.ok() {
-        if resp.status() == 401 {
-            return Err("__unauthorized__".into());
-        }
-        return Err(format!("HTTP {}", resp.status()));
-    }
-    resp.json::<Vec<ProviderInfo>>()
-        .await
-        .map_err(|e| e.to_string())
+    send_json(
+        authed(Method::Get, "/api/providers"),
+        FailureText::UnauthorizedOrStatus,
+    )
+    .await
 }
 
 pub async fn fetch_provider(id: &str) -> Result<ProviderInfo, String> {
@@ -228,14 +282,11 @@ pub async fn fetch_provider(id: &str) -> Result<ProviderInfo, String> {
         return mocked;
     }
 
-    let resp = get_authed(&format!("/api/providers/{id}"))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !resp.ok() {
-        return Err(format!("HTTP {}", resp.status()));
-    }
-    resp.json::<ProviderInfo>().await.map_err(|e| e.to_string())
+    send_json(
+        authed(Method::Get, &format!("/api/providers/{id}")),
+        FailureText::Status,
+    )
+    .await
 }
 
 // ── Provider-level auth (TV provider sessions) ───────────────────────────────
@@ -247,12 +298,13 @@ pub async fn check_provider_session(provider_id: &str) -> bool {
         return mocked;
     }
 
-    let Some(b) = bearer() else { return false };
-    let Ok(resp) = Request::get(&format!("/api/providers/{provider_id}/auth/check"))
-        .header("Authorization", &b)
-        .send()
-        .await
-    else {
+    let Ok(req) = authed_required(
+        Method::Get,
+        &format!("/api/providers/{provider_id}/auth/check"),
+    ) else {
+        return false;
+    };
+    let Ok(resp) = send(req).await else {
         return false;
     };
     if !resp.ok() {
@@ -269,51 +321,18 @@ pub async fn check_provider_session(provider_id: &str) -> bool {
 }
 
 pub async fn login(provider_id: &str, req: &LoginRequest) -> Result<LoginResponse, String> {
-    let resp = post_authed(&format!("/api/providers/{provider_id}/auth/login"))
-        .json(req)
-        .map_err(|e| format!("{e:?}"))?
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !resp.ok() {
-        return Err(resp
-            .text()
-            .await
-            .unwrap_or_else(|_| format!("HTTP {}", resp.status())));
-    }
-    resp.json::<LoginResponse>()
-        .await
-        .map_err(|e| e.to_string())
+    let url = format!("/api/providers/{provider_id}/auth/login");
+    let req = json_body(authed(Method::Post, &url), req)?;
+    send_request_json(req, FailureText::BodyOrStatus).await
 }
 
 pub async fn provider_logout(provider_id: &str) -> Result<(), String> {
-    let Some(b) = bearer() else {
-        return Err("Not logged in".into());
-    };
-    Request::post(&format!("/api/providers/{provider_id}/auth/logout"))
-        .header("Authorization", &b)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    let req = authed_required(
+        Method::Post,
+        &format!("/api/providers/{provider_id}/auth/logout"),
+    )?;
+    send(req).await?;
     Ok(())
-}
-
-// ── Admin helpers ────────────────────────────────────────────────────────────
-
-fn put_authed(url: &str) -> gloo_net::http::RequestBuilder {
-    let req = gloo_net::http::Request::put(url);
-    match bearer() {
-        Some(b) => req.header("Authorization", &b),
-        None => req,
-    }
-}
-
-fn delete_authed(url: &str) -> gloo_net::http::RequestBuilder {
-    let req = gloo_net::http::Request::delete(url);
-    match bearer() {
-        Some(b) => req.header("Authorization", &b),
-        None => req,
-    }
 }
 
 // ── Admin: users ─────────────────────────────────────────────────────────────
@@ -324,84 +343,41 @@ pub async fn admin_list_users() -> Result<Vec<UserInfo>, String> {
         return mocked;
     }
 
-    let resp = get_authed("/api/admin/users")
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !resp.ok() {
-        return Err(format!("HTTP {}", resp.status()));
-    }
-    resp.json::<Vec<UserInfo>>()
-        .await
-        .map_err(|e| e.to_string())
+    send_json(authed(Method::Get, "/api/admin/users"), FailureText::Status).await
 }
 
 pub async fn admin_create_user(req: CreateUserRequest) -> Result<UserInfo, String> {
-    let resp = post_authed("/api/admin/users")
-        .json(&req)
-        .map_err(|e| format!("{e:?}"))?
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if resp.ok() {
-        resp.json::<UserInfo>().await.map_err(|e| e.to_string())
-    } else {
-        Err(resp
-            .text()
-            .await
-            .unwrap_or_else(|_| format!("HTTP {}", resp.status())))
-    }
+    let req = json_body(authed(Method::Post, "/api/admin/users"), &req)?;
+    send_request_json(req, FailureText::BodyOrStatus).await
 }
 
 pub async fn admin_delete_user(user_id: &str) -> Result<(), String> {
-    let resp = delete_authed(&format!("/api/admin/users/{user_id}"))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if resp.ok() {
-        Ok(())
-    } else {
-        Err(resp
-            .text()
-            .await
-            .unwrap_or_else(|_| format!("HTTP {}", resp.status())))
-    }
+    send_empty(
+        authed(Method::Delete, &format!("/api/admin/users/{user_id}")),
+        FailureText::BodyOrStatus,
+    )
+    .await
 }
 
 pub async fn admin_set_user_providers(user_id: &str, providers: Vec<String>) -> Result<(), String> {
-    let resp = put_authed(&format!("/api/admin/users/{user_id}/providers"))
-        .json(&UpdateUserProvidersRequest { providers })
-        .map_err(|e| format!("{e:?}"))?
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if resp.ok() {
-        Ok(())
-    } else {
-        Err(resp
-            .text()
-            .await
-            .unwrap_or_else(|_| format!("HTTP {}", resp.status())))
-    }
+    let req = json_body(
+        authed(
+            Method::Put,
+            &format!("/api/admin/users/{user_id}/providers"),
+        ),
+        &UpdateUserProvidersRequest { providers },
+    )?;
+    send_request_empty(req, FailureText::BodyOrStatus).await
 }
 
 pub async fn admin_reset_password(user_id: &str, new_password: &str) -> Result<(), String> {
-    let resp = put_authed(&format!("/api/admin/users/{user_id}/password"))
-        .json(&AdminResetPasswordRequest {
+    let req = json_body(
+        authed(Method::Put, &format!("/api/admin/users/{user_id}/password")),
+        &AdminResetPasswordRequest {
             new_password: new_password.to_string(),
-        })
-        .map_err(|e| format!("{e:?}"))?
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if resp.ok() {
-        Ok(())
-    } else {
-        Err(resp
-            .text()
-            .await
-            .unwrap_or_else(|_| format!("HTTP {}", resp.status())))
-    }
+        },
+    )?;
+    send_request_empty(req, FailureText::BodyOrStatus).await
 }
 
 // ── Admin: settings ───────────────────────────────────────────────────────────
@@ -412,33 +388,16 @@ pub async fn admin_get_settings() -> Result<ServerSettings, String> {
         return mocked;
     }
 
-    let resp = get_authed("/api/admin/settings")
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !resp.ok() {
-        return Err(format!("HTTP {}", resp.status()));
-    }
-    resp.json::<ServerSettings>()
-        .await
-        .map_err(|e| e.to_string())
+    send_json(
+        authed(Method::Get, "/api/admin/settings"),
+        FailureText::Status,
+    )
+    .await
 }
 
 pub async fn admin_update_settings(settings: ServerSettings) -> Result<(), String> {
-    let resp = put_authed("/api/admin/settings")
-        .json(&settings)
-        .map_err(|e| format!("{e:?}"))?
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if resp.ok() {
-        Ok(())
-    } else {
-        Err(resp
-            .text()
-            .await
-            .unwrap_or_else(|_| format!("HTTP {}", resp.status())))
-    }
+    let req = json_body(authed(Method::Put, "/api/admin/settings"), &settings)?;
+    send_request_empty(req, FailureText::BodyOrStatus).await
 }
 
 // ── Channel endpoints ───────────────────────────────────────────────────────
@@ -452,21 +411,12 @@ pub async fn fetch_channels(
         return mocked;
     }
 
-    let Some(b) = bearer() else {
-        return Err("Not logged in".into());
-    };
-    let resp = Request::get(&format!("/api/providers/{provider_id}/channels"))
-        .header("Authorization", &b)
-        .query(params.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !resp.ok() {
-        return Err(format!("HTTP {}", resp.status()));
-    }
-    resp.json::<ChannelListResponse>()
-        .await
-        .map_err(|e| e.to_string())
+    let req = authed_required(
+        Method::Get,
+        &format!("/api/providers/{provider_id}/channels"),
+    )?
+    .query(params.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+    send_json(req, FailureText::Status).await
 }
 
 pub async fn fetch_categories(provider_id: &str) -> Result<CategoryListResponse, String> {
@@ -475,20 +425,11 @@ pub async fn fetch_categories(provider_id: &str) -> Result<CategoryListResponse,
         return mocked;
     }
 
-    let Some(b) = bearer() else {
-        return Err("Not logged in".into());
-    };
-    let resp = Request::get(&format!("/api/providers/{provider_id}/channels/categories"))
-        .header("Authorization", &b)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !resp.ok() {
-        return Err(format!("HTTP {}", resp.status()));
-    }
-    resp.json::<CategoryListResponse>()
-        .await
-        .map_err(|e| e.to_string())
+    let req = authed_required(
+        Method::Get,
+        &format!("/api/providers/{provider_id}/channels/categories"),
+    )?;
+    send_json(req, FailureText::Status).await
 }
 
 // ── Playback endpoints ──────────────────────────────────────────────────────
@@ -499,18 +440,9 @@ pub async fn fetch_stream(provider_id: &str, channel_id: &str) -> Result<StreamI
         return mocked;
     }
 
-    let Some(b) = bearer() else {
-        return Err("Not logged in".into());
-    };
-    let resp = Request::get(&format!(
-        "/api/providers/{provider_id}/channels/{channel_id}/stream"
-    ))
-    .header("Authorization", &b)
-    .send()
-    .await
-    .map_err(|e| e.to_string())?;
-    if !resp.ok() {
-        return Err(format!("HTTP {}", resp.status()));
-    }
-    resp.json::<StreamInfo>().await.map_err(|e| e.to_string())
+    let req = authed_required(
+        Method::Get,
+        &format!("/api/providers/{provider_id}/channels/{channel_id}/stream"),
+    )?;
+    send_json(req, FailureText::Status).await
 }
