@@ -49,13 +49,12 @@ use otvi_core::types::*;
 
 use tracing::{debug, error, instrument};
 
-use crate::api::provider_access::authorize_provider_route;
 use crate::auth_middleware::ActiveClaims;
+use crate::channel_catalog::{self, ChannelQuery};
 use crate::error::AppError;
 use crate::playback;
 use crate::provider_client;
-use crate::state::CacheScope;
-use crate::state::{AppState, CachedCategories, CachedChannels, ChannelCacheKey};
+use crate::state::{AppState, CachedChannels, ChannelCacheKey};
 
 use super::auth::with_refresh_retry;
 
@@ -114,94 +113,15 @@ pub async fn list(
     Query(query): Query<ChannelListQuery>,
     claims: ActiveClaims,
 ) -> Result<Json<ChannelListResponse>, AppError> {
-    let scope = authorize_provider_route(&state, &claims, &provider_id, false).await?;
-
-    // Extract everything we need from the provider while holding the lock
-    // for the shortest possible time.
-    let provider_data = state
-        .with_provider(&provider_id, |p| {
-            (
-                p.defaults.base_url.clone(),
-                p.defaults.headers.clone(),
-                p.channels.list.request.clone(),
-                p.channels.list.response.clone(),
-            )
-        })
-        .ok_or_else(|| AppError::NotFound("Provider not found".into()))?;
-
-    let (base_url, default_headers, list_request, list_response) = provider_data;
-    let cache_key = ChannelCacheKey::from_auth_scope(&provider_id, &scope, &claims.sub);
-    // The session UID used to build the provider context: empty for Global scope,
-    // the OTVI user ID for PerUser scope.
-    let uid = match &cache_key.scope {
-        CacheScope::Global => String::new(),
-        CacheScope::PerUser(uid) => uid.clone(),
+    let query = ChannelQuery {
+        category: query.category,
+        search: query.search,
+        limit: query.limit,
+        offset: query.offset,
     };
-
-    // ── Cache lookup ──────────────────────────────────────────────────────
-    let mut extra_ctx: Vec<(&str, &str)> = Vec::new();
-    if let Some(cat) = &query.category {
-        extra_ctx.push(("input.category", cat));
-    }
-    if let Some(s) = &query.search {
-        extra_ctx.push(("input.search", s));
-    }
-
-    let all_channels = load_all_channels(
-        &state,
-        &provider_id,
-        &uid,
-        &cache_key,
-        &base_url,
-        &default_headers,
-        &list_request,
-        &list_response,
-        &extra_ctx,
-    )
-    .await?;
-
-    // ── Server-side filtering ─────────────────────────────────────────────
-    let mut channels: Vec<&Channel> = all_channels.iter().collect();
-
-    // ── Server-side category filter ──────────────────────────────────────
-    if let Some(cat) = &query.category
-        && !cat.is_empty()
-    {
-        channels.retain(|ch| ch.category.as_deref() == Some(cat.as_str()));
-    }
-
-    // ── Server-side text search ──────────────────────────────────────────
-    if let Some(term) = &query.search
-        && !term.is_empty()
-    {
-        let term_lower = term.to_lowercase();
-        channels.retain(|ch| ch.name.to_lowercase().contains(&term_lower));
-    }
-
-    // ── Pagination ────────────────────────────────────────────────────────
-    let total = channels.len();
-    let offset = query.offset.unwrap_or(0);
-    let channels = if let Some(limit) = query.limit {
-        channels
-            .into_iter()
-            .skip(offset)
-            .take(limit)
-            .cloned()
-            .collect::<Vec<_>>()
-    } else if offset > 0 {
-        channels
-            .into_iter()
-            .skip(offset)
-            .cloned()
-            .collect::<Vec<_>>()
-    } else {
-        channels.into_iter().cloned().collect::<Vec<_>>()
-    };
-
-    Ok(Json(ChannelListResponse {
-        channels,
-        total: Some(total),
-    }))
+    channel_catalog::list_channels(&state, &claims, &provider_id, query)
+        .await
+        .map(Json)
 }
 
 /// `GET /api/providers/:id/channels/categories`
@@ -233,107 +153,9 @@ pub async fn categories(
     Path(provider_id): Path<String>,
     claims: ActiveClaims,
 ) -> Result<Json<CategoryListResponse>, AppError> {
-    let scope = authorize_provider_route(&state, &claims, &provider_id, false).await?;
-
-    // Extract what we need under a short lock window.
-    let provider_data = state
-        .with_provider(&provider_id, |p| {
-            (
-                p.defaults.base_url.clone(),
-                p.defaults.headers.clone(),
-                p.channels.static_categories.clone(),
-                p.channels.categories.clone(),
-            )
-        })
-        .ok_or_else(|| AppError::NotFound("Provider not found".into()))?;
-
-    let (base_url, default_headers, static_cats, dynamic_endpoint) = provider_data;
-
-    // ── Static categories: return immediately, no caching needed ──────────
-    if !static_cats.is_empty() {
-        let categories = static_cats
-            .iter()
-            .map(|c| Category {
-                id: c.id.clone(),
-                name: c.name.clone(),
-            })
-            .collect();
-        return Ok(Json(CategoryListResponse { categories }));
-    }
-
-    let cat_endpoint =
-        dynamic_endpoint.ok_or_else(|| AppError::NotFound("Categories not configured".into()))?;
-
-    let cache_key = ChannelCacheKey::from_auth_scope(&provider_id, &scope, &claims.sub);
-    let uid = match &cache_key.scope {
-        CacheScope::Global => String::new(),
-        CacheScope::PerUser(uid) => uid.clone(),
-    };
-
-    // ── Cache lookup ──────────────────────────────────────────────────────
-    let categories: Arc<[Category]> =
-        if let Some(cached) = state.channel_cache.categories.get(&cache_key).await {
-            debug!(provider = %provider_id, "categories cache HIT");
-            cached.categories
-        } else {
-            debug!(provider = %provider_id, "categories cache MISS — fetching from upstream");
-
-            let base_url = base_url.clone();
-            let default_headers = default_headers.clone();
-            let cat_request = cat_endpoint.request.clone();
-            let http_client = state.http_client.clone();
-
-            let resp = with_refresh_retry(&state, &provider_id, &uid, |ctx| {
-                let http_client = http_client.clone();
-                let base_url = base_url.clone();
-                let default_headers = default_headers.clone();
-                let cat_request = cat_request.clone();
-                async move {
-                    provider_client::execute_request_raw(
-                        &http_client,
-                        &base_url,
-                        &default_headers,
-                        &cat_request,
-                        &ctx,
-                    )
-                    .await
-                }
-            })
-            .await?;
-
-            if !(200..300).contains(&resp.status) {
-                error!(
-                    provider = %provider_id,
-                    status = resp.status,
-                    "Upstream categories error after refresh retry"
-                );
-                return Err(AppError::Internal(format!(
-                    "Upstream categories returned status {}",
-                    resp.status
-                )));
-            }
-
-            let response = resp.body;
-
-            let cats = Arc::<[Category]>::from(map_categories(&response, &cat_endpoint.response)?);
-
-            state
-                .channel_cache
-                .categories
-                .insert(
-                    cache_key,
-                    CachedCategories {
-                        categories: cats.clone(),
-                    },
-                )
-                .await;
-
-            cats
-        };
-
-    Ok(Json(CategoryListResponse {
-        categories: categories.iter().cloned().collect(),
-    }))
+    channel_catalog::list_categories(&state, &claims, &provider_id)
+        .await
+        .map(Json)
 }
 
 /// `GET /api/providers/:id/channels/:channel_id/stream`
@@ -404,7 +226,7 @@ fn map_channels(
     Ok(channels)
 }
 
-fn map_categories(
+pub(crate) fn map_categories(
     response: &Value,
     mapping: &otvi_core::config::ResponseMapping,
 ) -> Result<Vec<Category>, AppError> {

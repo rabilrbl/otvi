@@ -1,5 +1,6 @@
 pub mod api;
 pub mod auth_middleware;
+pub mod channel_catalog;
 pub mod db;
 pub mod embedded_frontend;
 pub mod error;
