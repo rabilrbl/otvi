@@ -177,11 +177,9 @@ CORS_ORIGINS=https://tv.example.com
 ## Complete `.env.example`
 
 ```bash
-# ─────────────────────────────────────────────────────────
-# otvi-server  –  environment configuration
-# ─────────────────────────────────────────────────────────
+# otvi-server environment configuration
 
-# ── Database ─────────────────────────────────────────────
+# Database
 # SQLite (default):
 DATABASE_URL=sqlite://data.db
 # PostgreSQL:
@@ -189,30 +187,30 @@ DATABASE_URL=sqlite://data.db
 # MySQL:
 # DATABASE_URL=mysql://user:password@localhost:3306/otvi
 
-# ── JWT ──────────────────────────────────────────────────
+# JWT
 # Generate with: openssl rand -hex 32
 # If unset, a random value is used — tokens are invalidated on every restart.
 JWT_SECRET=change_me_to_a_long_random_string
 
-# ── Server ───────────────────────────────────────────────
+# Server
 PORT=3000
 
-# ── Paths ────────────────────────────────────────────────
+# Paths
 PROVIDERS_DIR=providers
 STATIC_DIR=dist
 
-# ── Logging ──────────────────────────────────────────────
+# Logging
 # Tracing filter (see https://docs.rs/tracing-subscriber)
 RUST_LOG=otvi_server=info
 
 # Log output format: "text" (default) or "json"
 LOG_FORMAT=text
 
-# ── CORS ─────────────────────────────────────────────────
+# CORS
 # Comma-separated allowed origins. Leave unset for permissive (dev only).
 # CORS_ORIGINS=https://tv.example.com,https://admin.example.com
 
-# ── Rate limiting ─────────────────────────────────────────
+# Rate limiting
 # Global switch for the limiter.
 # RATE_LIMIT_ENABLED=true
 
@@ -224,7 +222,7 @@ LOG_FORMAT=text
 # RATE_LIMIT_GENERAL_BURST=60
 # RATE_LIMIT_GENERAL_PERIOD_SECS=1
 
-# ── Channel cache ─────────────────────────────────────────
+# Channel cache
 # TTL for cached channel and category lists (seconds). Default: 86400 (24 h).
 # CHANNEL_CACHE_TTL_SECS=86400
 ```

@@ -31,27 +31,55 @@ OTVI is a generic, **YAML-driven television interface** that lets any TV provide
 
 ## How It Works
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                    YAML Provider Configs                │
-│  providers/acme.yaml   providers/streammax.yaml  …      │
-└────────────────────────┬────────────────────────────────┘
-                         │ loaded at startup + hot-reloaded
-                         ▼
-┌──────────────── otvi-server (Axum) ─────────────────────┐
-│  REST API   ─── provider_client ──▶  Provider HTTP APIs │
-│  /api/…           (reqwest)                             │
-│                                                         │
-│  /healthz  /readyz ── liveness & readiness probes       │
-│  /api/schema/provider ── live JSON Schema for YAML      │
-│                                                         │
-│  Static files ──▶ serves compiled WASM frontend         │
-└─────────────────────────────────────────────────────────┘
-                         ▲
-                         │ fetch / JSON
-┌──────────────── otvi-web (Leptos WASM) ─────────────────┐
-│  Home   Provider Login   Channels   Player              │
-└─────────────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    config["providers/*.yaml\nzero-code provider contracts"]
+
+    subgraph server["otvi-server (Axum)"]
+        watcher["Hot-reload watcher\n~300 ms provider refresh"]
+        api["REST API\nproviders, auth, channels, proxy"]
+        schema["Live JSON Schema\n/api/schema/provider"]
+        health["Health probes\n/healthz and /readyz"]
+        static["Static files\ncompiled Leptos/WASM app"]
+        client["provider_client\nreqwest + templates + JSONPath"]
+    end
+
+    subgraph browser["otvi-web (Leptos WASM)"]
+        shell["App shell\nhome, login overlays, admin"]
+        channels["Channel browser\nURL search + category state"]
+        player["Player\nHLS.js / Shaka + DRM"]
+    end
+
+    subgraph provider["Provider platforms"]
+        auth["Login / session APIs"]
+        catalog["Channel catalog APIs"]
+        playback["Playback + DRM endpoints"]
+    end
+
+    config -- "startup load + file watch" --> watcher
+    watcher -- "atomic provider map" --> api
+    config --> schema
+    static -- "serves app shell" --> shell
+    shell -- "JSON fetch" --> api
+    channels -- "query-state requests" --> api
+    player -- "stream metadata + proxy token" --> api
+    api --> health
+    api --> client
+    client -- "HTTP" --> auth
+    client -- "HTTP" --> catalog
+    client -- "HTTP" --> playback
+    api -- "normalized responses" --> shell
+    api -- "channels + totals" --> channels
+    api -- "stream URL + DRM + metadata" --> player
+
+    classDef source fill:#f6f8fa,stroke:#8c959f,color:#24292f
+    classDef serverNode fill:#ddf4ff,stroke:#0969da,color:#24292f
+    classDef clientNode fill:#dafbe1,stroke:#1a7f37,color:#24292f
+    classDef external fill:#fff8c5,stroke:#9a6700,color:#24292f
+    class config source
+    class watcher,api,schema,health,static,client serverNode
+    class shell,channels,player clientNode
+    class auth,catalog,playback external
 ```
 
 1. Provider YAML configs are loaded at server startup and **watched for changes** — any create, modify, or delete of a `.yaml`/`.yml` file is picked up automatically without restarting.
@@ -76,58 +104,70 @@ OTVI is a generic, **YAML-driven television interface** that lets any TV provide
 
 ## Project Structure
 
-```
-otvi/
-├── Cargo.toml                      # Workspace + [profile.release] (LTO, strip)
-├── Dockerfile                      # Multi-stage build (web → server → runtime)
-├── docker-compose.yml              # Production compose
-├── docker-compose.dev.yml          # Development compose (hot-reload, verbose logging)
-├── providers/
-│   ├── example.yaml                # Annotated example provider config
-│   └── jiotv-mobile.yaml
-├── crates/
-│   ├── otvi-core/                  # Shared types & template engine
-│   │   └── src/
-│   │       ├── config.rs           # YAML schema (+ JSON Schema via schemars)
-│   │       ├── template.rs         # Template engine + full JSONPath extraction
-│   │       └── types.rs            # API request/response types
-│   └── otvi-server/                # Axum REST API server
-│       ├── src/
-│       │   ├── main.rs             # Bootstrap (logging format, hot-reload watcher)
-│       │   ├── lib.rs              # Router, CORS, /healthz, /readyz, /api/schema/provider
-│       │   ├── state.rs            # AppState (RwLock provider map, proxy context cache)
-│       │   ├── watcher.rs          # File-system watcher for hot-reloading YAMLs
-│       │   ├── db.rs               # SQLx database layer
-│       │   ├── auth_middleware.rs  # JWT creation / validation / extractors
-│       │   ├── provider_client.rs  # HTTP client with template resolution & unresolved-placeholder warnings
-│       │   ├── error.rs            # AppError → HTTP response mapping
-│       │   └── api/
-│       │       ├── auth.rs         # Provider-level auth (login / logout / check)
-│       │       ├── channels.rs     # Channel list (search, pagination), categories, stream
-│       │       ├── providers.rs    # Provider listing + must_change_password guard
-│       │       ├── proxy.rs        # HLS/DASH stream proxy (M3U8 rewriting, CDN cookies)
-│       │       ├── user_auth.rs    # OTVI user auth + password policy + force-change guard
-│       │       └── admin.rs        # User & settings management
-│       ├── migrations/             # SQLx database migrations
-│       └── tests/
-│           └── integration.rs      # End-to-end integration tests
-└── web/                            # Leptos WASM frontend
-    ├── Trunk.toml
-    ├── index.html                  # HTML entry + HLS.js / Shaka Player bridge
-    ├── input.css / style.css       # Tailwind CSS
-    └── src/
-        ├── app.rs                  # Root component, routing, auth state machine
-        ├── api.rs                  # Backend HTTP client (token storage, typed calls)
-        └── pages/
-            ├── home.rs             # Provider listing
-            ├── login.rs            # Provider authentication flows
-            ├── setup.rs            # First-run admin setup overlay
-            ├── app_login.rs        # OTVI user login / registration overlay
-            ├── channels.rs         # Channel grid (URL-driven search/category state, skeletons)
-            ├── player.rs           # Video player (backend-supplied name/logo, loading skeleton)
-            ├── admin.rs            # User management dashboard
-            ├── change_password.rs  # Forced + voluntary password change
-            └── not_found.rs        # 404 page
+```mermaid
+flowchart TD
+    root["OTVI workspace"]
+
+    subgraph ops["Runtime and release assets"]
+        cargo["Cargo.toml\nworkspace + release profile"]
+        docker["Dockerfile\nmulti-stage web → server → runtime"]
+        compose["docker-compose*.yml\nproduction + hot-reload development"]
+        providers["providers/*.yaml\nexample provider definitions"]
+    end
+
+    subgraph core["crates/otvi-core"]
+        config["config.rs\nprovider schema + schemars JSON Schema"]
+        template["template.rs\ntemplate variables + JSONPath extraction"]
+        types["types.rs\nshared API request/response types"]
+    end
+
+    subgraph server["crates/otvi-server"]
+        bootstrap["main.rs / lib.rs\nbootstrap, router, CORS, health, schema"]
+        state["state.rs\nprovider map, DB pool, caches, proxy contexts"]
+        watcher["watcher.rs\nprovider YAML hot-reload"]
+        db["db.rs + migrations\nSQLx users, sessions, settings"]
+        auth["auth_middleware.rs\nJWT claims + password-change guard"]
+        client["provider_client.rs\nHTTP requests + template resolution"]
+        api["api/*\nproviders, auth, channels, proxy, user_auth, admin"]
+        tests["tests/integration.rs\nend-to-end server coverage"]
+    end
+
+    subgraph web["web/ Leptos WASM frontend"]
+        trunk["Trunk.toml + index.html\nWASM entry + HLS.js/Shaka bridge"]
+        styles["input.css / style.css\nTailwind styling"]
+        app["src/app.rs\nrouting + auth state machine"]
+        webapi["src/api.rs\ntyped backend client + token storage"]
+        pages["src/pages/*\nhome, login, setup, channels, player, admin"]
+    end
+
+    root --> ops
+    root --> core
+    root --> server
+    root --> web
+    providers -- "loaded by" --> watcher
+    config -- "schema contract" --> bootstrap
+    template -- "render requests" --> client
+    types -- "shared DTOs" --> api
+    api --> state
+    api --> db
+    api --> auth
+    api --> client
+    bootstrap -- "serves static app" --> trunk
+    app --> webapi
+    webapi -- "JSON API" --> api
+    pages --> app
+    pages --> webapi
+
+    classDef rootNode fill:#f6f8fa,stroke:#57606a,color:#24292f
+    classDef opsNode fill:#fff8c5,stroke:#9a6700,color:#24292f
+    classDef coreNode fill:#fbefff,stroke:#8250df,color:#24292f
+    classDef serverNode fill:#ddf4ff,stroke:#0969da,color:#24292f
+    classDef webNode fill:#dafbe1,stroke:#1a7f37,color:#24292f
+    class root rootNode
+    class cargo,docker,compose,providers opsNode
+    class config,template,types coreNode
+    class bootstrap,state,watcher,db,auth,client,api,tests serverNode
+    class trunk,styles,app,webapi,pages webNode
 ```
 
 ## License
