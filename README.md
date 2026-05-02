@@ -11,25 +11,28 @@ OTVI (Open TV Interface) is a YAML-driven television streaming platform. It lets
 
 ## Architecture
 
-```text
-providers/*.yaml
-      |
-      v
-+-------------------+       HTTP       +------------------------+
-| otvi-server       | ---------------> | provider APIs          |
-| - Axum API        |                  | auth / channels / DRM  |
-| - schema endpoint |
-| - static assets   | <--------------- +------------------------+
-+---------+---------+
-          |
-          | JSON
-          v
-+-------------------+
-| otvi-web          |
-| - login           |
-| - channels        |
-| - player          |
-+-------------------+
+```mermaid
+block-beta
+    columns 1
+    block:config
+        columns 1
+        yaml["providers/*.yaml"]
+    end
+    space
+    block:server
+        columns 1
+        otvi["**otvi-server**\nAxum API\nschema endpoint\nstatic assets"]
+    end
+    space
+    block:clients
+        columns 2
+        web["**otvi-web**\nlogin\nchannels\nplayer"]
+        providers["**provider APIs**\nauth / channels / DRM"]
+    end
+
+    yaml --> otvi
+    otvi -- "JSON" --> web
+    otvi -- "HTTP" --> providers
 ```
 
 ## Quick Start
