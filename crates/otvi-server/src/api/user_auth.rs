@@ -34,125 +34,15 @@
 
 use std::sync::Arc;
 
-use argon2::password_hash::SaltString;
-use argon2::password_hash::rand_core::OsRng;
-use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use axum::Json;
 use axum::extract::State;
 
 use otvi_core::types::{
-    AppLoginRequest, AppLoginResponse, ChangePasswordRequest, RegisterRequest, UserInfo, UserRole,
+    AppLoginRequest, AppLoginResponse, ChangePasswordRequest, RegisterRequest, UserInfo,
 };
 
-// ── Password policy ────────────────────────────────────────────────────────
-
-/// Shared password-strength validator used by registration, change-password,
-/// and admin reset.
-///
-/// # Rules
-/// - At least 8 characters.
-/// - At most 128 characters.  The limit is applied to Unicode scalar values
-///   (`.chars().count()`), not UTF-8 bytes.  Worst case (4-byte emoji), 128
-///   chars = 512 bytes of argon2 input — well within safe bounds for argon2's
-///   memory-hard parameters.
-/// - At least one uppercase ASCII letter.
-/// - At least one ASCII digit.
-///
-/// Returns `Ok(())` on success or an `AppError::BadRequest` with a descriptive
-/// message on failure.
-pub fn validate_password(password: &str) -> Result<(), AppError> {
-    let char_count = password.chars().count();
-    if char_count < 8 {
-        return Err(AppError::BadRequest(
-            "Password must be at least 8 characters".into(),
-        ));
-    }
-    if char_count > 128 {
-        return Err(AppError::BadRequest(
-            "Password must be at most 128 characters".into(),
-        ));
-    }
-    if !password.chars().any(|c| c.is_ascii_uppercase()) {
-        return Err(AppError::BadRequest(
-            "Password must contain at least one uppercase letter".into(),
-        ));
-    }
-    if !password.chars().any(|c| c.is_ascii_digit()) {
-        return Err(AppError::BadRequest(
-            "Password must contain at least one digit".into(),
-        ));
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::validate_password;
-
-    #[test]
-    fn password_too_short_rejected() {
-        assert!(validate_password("Short1").is_err());
-    }
-
-    #[test]
-    fn password_exactly_min_length_passes() {
-        assert!(validate_password("Abcdef1!").is_ok());
-    }
-
-    #[test]
-    fn password_exactly_max_length_passes() {
-        let p = format!("A1{}", "a".repeat(126)); // 128 chars
-        assert_eq!(p.chars().count(), 128);
-        assert!(validate_password(&p).is_ok());
-    }
-
-    #[test]
-    fn password_over_max_length_rejected() {
-        let p = format!("A1{}", "a".repeat(127)); // 129 chars
-        assert_eq!(p.chars().count(), 129);
-        assert!(validate_password(&p).is_err());
-    }
-
-    #[test]
-    fn password_missing_uppercase_rejected() {
-        assert!(validate_password("alllower1").is_err());
-    }
-
-    #[test]
-    fn password_missing_digit_rejected() {
-        assert!(validate_password("NoDigitHere").is_err());
-    }
-
-    #[test]
-    fn password_valid_passes() {
-        assert!(validate_password("ValidPass1").is_ok());
-    }
-
-    #[test]
-    fn password_max_length_is_char_count_not_bytes() {
-        // 128 multi-byte characters must pass (each 'Á' is 2 UTF-8 bytes,
-        // so 128 chars = 256 bytes — the old .len() check would reject this).
-        // Build: 'A' + '1' + 126 × 'Á' = 128 chars, 254 bytes
-        let p: String = format!("A1{}", "Á".repeat(126));
-        assert_eq!(p.chars().count(), 128);
-        assert!(p.len() > 128, "sanity: byte count exceeds 128");
-        assert!(
-            validate_password(&p).is_ok(),
-            "128 Unicode chars must pass regardless of byte count"
-        );
-
-        // 129 multi-byte characters must fail
-        let p_too_long: String = format!("A1{}", "Á".repeat(127));
-        assert_eq!(p_too_long.chars().count(), 129);
-        assert!(
-            validate_password(&p_too_long).is_err(),
-            "129 Unicode chars must be rejected"
-        );
-    }
-}
-
-use crate::auth_middleware::{Claims, create_token};
-use crate::db;
+use crate::account;
+use crate::auth_middleware::Claims;
 use crate::error::AppError;
 use crate::state::AppState;
 
@@ -173,72 +63,7 @@ pub async fn register(
     State(state): State<Arc<AppState>>,
     Json(req): Json<RegisterRequest>,
 ) -> Result<Json<AppLoginResponse>, AppError> {
-    // Reject if the admin has disabled public signup.
-    if db::is_signup_disabled(&state.db)
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?
-    {
-        return Err(AppError::BadRequest(
-            "Public registration is disabled. Contact your administrator.".into(),
-        ));
-    }
-
-    if req.username.trim().is_empty() || req.password.is_empty() {
-        return Err(AppError::BadRequest(
-            "Username and password are required".into(),
-        ));
-    }
-    // Enforce shared password policy on self-registration.
-    validate_password(&req.password)?;
-
-    // Check for duplicate username.
-    if db::get_user_by_username(&state.db, &req.username)
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?
-        .is_some()
-    {
-        return Err(AppError::BadRequest("Username already taken".into()));
-    }
-
-    // First ever user automatically becomes admin.
-    let count = db::user_count(&state.db)
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    let role = if count == 0 {
-        UserRole::Admin
-    } else {
-        UserRole::User
-    };
-
-    let hash = hash_password(&req.password)?;
-    // Self-registered users never have must_change_password set.
-    let must_change_password = false;
-    let user_id = db::create_user(&state.db, &req.username, &hash, &role, must_change_password)
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    let providers = db::get_user_providers(&state.db, &user_id)
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    let token = create_token(
-        &state.jwt_keys,
-        &user_id,
-        &req.username,
-        &role,
-        must_change_password,
-    );
-
-    Ok(Json(AppLoginResponse {
-        token,
-        user: UserInfo {
-            id: user_id,
-            username: req.username,
-            role,
-            providers,
-            must_change_password,
-        },
-    }))
+    account::register(&state, req).await.map(Json)
 }
 
 /// `POST /api/auth/login`
@@ -256,42 +81,7 @@ pub async fn login(
     State(state): State<Arc<AppState>>,
     Json(req): Json<AppLoginRequest>,
 ) -> Result<Json<AppLoginResponse>, AppError> {
-    let row = db::get_user_by_username(&state.db, &req.username)
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?
-        .ok_or(AppError::Unauthorized)?;
-
-    verify_password(&req.password, &row.password_hash)?;
-
-    let role = match row.role.as_str() {
-        "admin" => UserRole::Admin,
-        _ => UserRole::User,
-    };
-
-    let providers = db::get_user_providers(&state.db, &row.id)
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    // Embed must_change_password in the JWT so middleware guards need no DB
-    // query per request.
-    let token = create_token(
-        &state.jwt_keys,
-        &row.id,
-        &row.username,
-        &role,
-        row.must_change_password,
-    );
-
-    Ok(Json(AppLoginResponse {
-        token,
-        user: UserInfo {
-            id: row.id,
-            username: row.username,
-            role,
-            providers,
-            must_change_password: row.must_change_password,
-        },
-    }))
+    account::login(&state, req).await.map(Json)
 }
 
 /// `GET /api/auth/me`
@@ -312,31 +102,8 @@ pub async fn login(
 pub async fn me(
     State(state): State<Arc<AppState>>,
     claims: Claims,
-) -> Result<Json<UserInfo>, AppError> {
-    // Single query covers both must_change_password and basic user fields.
-    // We still need a separate providers query since they live in a different
-    // table, but we save one DB round-trip vs. the old pattern.
-    let row = db::get_user_by_id(&state.db, &claims.sub)
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?
-        .ok_or(AppError::Unauthorized)?;
-
-    let providers = db::get_user_providers(&state.db, &claims.sub)
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    let role = match row.role.as_str() {
-        "admin" => UserRole::Admin,
-        _ => UserRole::User,
-    };
-
-    Ok(Json(UserInfo {
-        id: row.id,
-        username: row.username,
-        role,
-        providers,
-        must_change_password: row.must_change_password,
-    }))
+) -> Result<Json<otvi_core::types::UserInfo>, AppError> {
+    account::current_user(&state, &claims).await.map(Json)
 }
 
 /// `POST /api/auth/change-password`
@@ -366,47 +133,9 @@ pub async fn change_password(
     claims: Claims,
     Json(req): Json<ChangePasswordRequest>,
 ) -> Result<Json<AppLoginResponse>, AppError> {
-    // Validate new password against the shared policy.
-    validate_password(&req.new_password)?;
-
-    let row = db::get_user_by_id(&state.db, &claims.sub)
+    account::change_password(&state, &claims, req)
         .await
-        .map_err(|e| AppError::Internal(e.to_string()))?
-        .ok_or(AppError::Unauthorized)?;
-
-    verify_password(&req.current_password, &row.password_hash)?;
-
-    let new_hash = hash_password(&req.new_password)?;
-    // update_password also clears must_change_password = 0 in the DB.
-    db::update_password(&state.db, &claims.sub, &new_hash)
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    let role = claims.role();
-    let providers = db::get_user_providers(&state.db, &claims.sub)
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    // Issue a fresh token with must_change_password = false so the client is
-    // immediately unblocked without needing to re-login.
-    let token = create_token(
-        &state.jwt_keys,
-        &claims.sub,
-        &claims.username,
-        &role,
-        false, // flag cleared
-    );
-
-    Ok(Json(AppLoginResponse {
-        token,
-        user: UserInfo {
-            id: claims.sub,
-            username: claims.username,
-            role,
-            providers,
-            must_change_password: false,
-        },
-    }))
+        .map(Json)
 }
 
 /// `POST /api/auth/logout` — JWT is stateless; the client drops its token.
@@ -425,22 +154,3 @@ pub async fn logout() -> Json<serde_json::Value> {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
-
-/// Hash `password` with Argon2id.
-pub fn hash_password(password: &str) -> Result<String, AppError> {
-    let salt = SaltString::generate(&mut OsRng);
-    Argon2::default()
-        .hash_password(password.as_bytes(), &salt)
-        .map(|h| h.to_string())
-        .map_err(|e| AppError::Internal(format!("Password hash error: {e}")))
-}
-
-/// Verify `password` against an Argon2 `hash`.  Returns `AppError::Unauthorized`
-/// when the password does not match.
-pub fn verify_password(password: &str, hash: &str) -> Result<(), AppError> {
-    let parsed =
-        PasswordHash::new(hash).map_err(|e| AppError::Internal(format!("Invalid hash: {e}")))?;
-    Argon2::default()
-        .verify_password(password.as_bytes(), &parsed)
-        .map_err(|_| AppError::Unauthorized)
-}

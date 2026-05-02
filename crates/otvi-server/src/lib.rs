@@ -1,3 +1,4 @@
+pub mod account;
 pub mod api;
 pub mod auth_middleware;
 pub mod channel_catalog;

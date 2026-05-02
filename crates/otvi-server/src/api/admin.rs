@@ -1,8 +1,7 @@
 //! Admin-only endpoints for user and server management.
 //!
-//! Password policy is enforced via the shared [`validate_password`] function
-//! from `api::user_auth`, ensuring consistency across all password-setting
-//! paths (self-registration, change-password, admin create, admin reset).
+//! Password policy is enforced via the shared account module, ensuring
+//! consistency across all password-setting paths.
 //!
 //! All routes under `/api/admin/…` require a valid JWT with `role == "admin"`.
 //!
@@ -21,10 +20,10 @@ use axum::extract::{Path, State};
 
 use otvi_core::types::{
     AdminResetPasswordRequest, CreateUserRequest, ServerSettings, UpdateUserProvidersRequest,
-    UserInfo, UserRole,
+    UserInfo,
 };
 
-use crate::api::user_auth::{hash_password, validate_password};
+use crate::account;
 use crate::auth_middleware::AdminClaims;
 use crate::db;
 use crate::error::AppError;
@@ -48,33 +47,7 @@ pub async fn list_users(
     State(state): State<Arc<AppState>>,
     _: AdminClaims,
 ) -> Result<Json<Vec<UserInfo>>, AppError> {
-    // Fetch all users and all user→provider mappings in two queries rather than
-    // N+1 (one per user).  The provider map is then looked up in-memory.
-    let (rows, mut providers_by_user) = tokio::try_join!(
-        db::list_users(&state.db),
-        db::get_all_user_providers(&state.db),
-    )
-    .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    let users = rows
-        .into_iter()
-        .map(|row| {
-            let providers = providers_by_user.remove(&row.id).unwrap_or_default();
-            let role = match row.role.as_str() {
-                "admin" => UserRole::Admin,
-                _ => UserRole::User,
-            };
-            UserInfo {
-                id: row.id,
-                username: row.username,
-                role,
-                providers,
-                must_change_password: row.must_change_password,
-            }
-        })
-        .collect();
-
-    Ok(Json(users))
+    account::list_users(&state).await.map(Json)
 }
 
 /// `POST /api/admin/users`
@@ -96,39 +69,7 @@ pub async fn create_user(
     _: AdminClaims,
     Json(req): Json<CreateUserRequest>,
 ) -> Result<Json<UserInfo>, AppError> {
-    if req.username.trim().is_empty() || req.password.is_empty() {
-        return Err(AppError::BadRequest(
-            "Username and password are required".into(),
-        ));
-    }
-    // Enforce shared password policy (min 8 chars, uppercase, digit).
-    validate_password(&req.password)?;
-
-    if db::get_user_by_username(&state.db, &req.username)
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?
-        .is_some()
-    {
-        return Err(AppError::BadRequest("Username already taken".into()));
-    }
-
-    let hash = hash_password(&req.password)?;
-    let user_id = db::create_user(&state.db, &req.username, &hash, &req.role, true)
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    // Restrict to specified providers (empty = all).
-    db::set_user_providers(&state.db, &user_id, &req.providers)
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-
-    Ok(Json(UserInfo {
-        id: user_id,
-        username: req.username,
-        role: req.role,
-        providers: req.providers,
-        must_change_password: true,
-    }))
+    account::create_user(&state, req).await.map(Json)
 }
 
 /// `DELETE /api/admin/users/:id`
@@ -225,22 +166,7 @@ pub async fn reset_user_password(
     Path(user_id): Path<String>,
     Json(req): Json<AdminResetPasswordRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    if req.new_password.is_empty() {
-        return Err(AppError::BadRequest("Password must not be empty".into()));
-    }
-    // Enforce the same password policy used everywhere else.
-    validate_password(&req.new_password)?;
-
-    let hash = hash_password(&req.new_password)?;
-    db::update_password(&state.db, &user_id, &hash)
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-    // Re-arm the must_change_password flag so the user is forced to change on
-    // next login (update_password clears it, so we set it again here).
-    db::set_must_change_password(&state.db, &user_id, true)
-        .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
-
+    account::reset_user_password(&state, &user_id, &req.new_password).await?;
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
