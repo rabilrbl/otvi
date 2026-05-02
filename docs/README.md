@@ -47,15 +47,31 @@ The docs deployment workflow publishes on:
 
 ## Project Structure
 
-```text
-docs/
-|- blog/
-|- docs/
-|- versioned_docs/
-|- versioned_sidebars/
-|- versions.json
-|- src/
-|- docusaurus.config.ts
-|- sidebars.ts
-`- package.json
+```mermaid
+block-beta
+    columns 1
+    block:docs
+        columns 1
+        docs["docs/"]
+    end
+    space
+    blog["blog/"]
+    docsDir["docs/"]
+    vd["versioned_docs/"]
+    vs["versioned_sidebars/"]
+    vj["versions.json"]
+    src["src/"]
+    dc["docusaurus.config.ts"]
+    sb["sidebars.ts"]
+    pj["package.json"]
+
+    docs --> blog
+    docs --> docsDir
+    docs --> vd
+    docs --> vs
+    docs --> vj
+    docs --> src
+    docs --> dc
+    docs --> sb
+    docs --> pj
 ```

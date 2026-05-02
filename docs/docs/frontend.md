@@ -42,15 +42,14 @@ These are not standalone routes today; they are mounted by `web/src/app.rs` base
 
 ## Boot Flow
 
-```text
-App startup
-    |
-    +-- GET /api/auth/me
-          |
-          +-- 403 -> first-run setup overlay
-          +-- 401 -> OTVI login overlay
-          +-- 200 + must_change_password=true -> forced password overlay
-          +-- 200 -> ready
+```mermaid
+flowchart TD
+    A[App startup] --> B[GET /api/auth/me]
+    B --> C{Response?}
+    C -- "403" --> D[first-run setup overlay]
+    C -- "401" --> E[OTVI login overlay]
+    C -- "200 + must_change_password" --> F[forced password overlay]
+    C -- "200" --> G[ready]
 ```
 
 - JWTs are stored in `LocalStorage` under `otvi_jwt`
@@ -65,14 +64,24 @@ App startup
 - `?search=<term>` controls the server-side search term
 - both values are bookmarkable and restored through browser history
 
-The frontend sends the current query state to `GET /api/providers/:id/channels` and renders the backend response directly. It does not run a second client-side search pass over the returned list.
+The frontend sends the
+current query state to `GET /api/providers/:id/channels` and renders the
+backend response directly. It does not run a second client-side search pass
+over the returned list.
 
-```text
-User changes search/category
-    -> URL query updates
-    -> frontend refetches /api/providers/:id/channels
-    -> backend applies search/category/pagination
-    -> frontend renders returned channels + total
+```mermaid
+sequenceDiagram
+    participant User
+    participant URL
+    participant Frontend
+    participant Backend
+
+    User->>URL: changes search/category
+    URL->>Frontend: query updates
+    Frontend->>Backend: refetch /api/providers/:id/channels
+    Backend->>Backend: apply search/category/pagination
+    Backend-->>Frontend: channels + total
+    Frontend-->>User: render results
 ```
 
 ## Player Page
