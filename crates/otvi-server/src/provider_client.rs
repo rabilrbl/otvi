@@ -53,16 +53,19 @@ async fn parse_response_body(response: reqwest::Response) -> anyhow::Result<(u16
     }
 }
 
-/// Build and send an HTTP request described by `spec`, resolving template
-/// variables from `context`.  Default headers are merged first, then
-/// per-request headers override them.
-pub async fn execute_request(
+#[derive(Debug, Clone, Copy)]
+enum StatusPolicy {
+    RequireSuccess,
+    AllowAny,
+}
+
+fn build_request(
     client: &Client,
     base_url: &str,
     default_headers: &HashMap<String, String>,
     spec: &RequestSpec,
     context: &TemplateContext,
-) -> anyhow::Result<ProviderResponse> {
+) -> anyhow::Result<reqwest::RequestBuilder> {
     let path = resolve_warn(context, &spec.path, "path");
     let url = format!("{}{}", base_url, path);
 
@@ -132,6 +135,18 @@ pub async fn execute_request(
         }
     }
 
+    Ok(builder)
+}
+
+async fn execute_with_policy(
+    client: &Client,
+    base_url: &str,
+    default_headers: &HashMap<String, String>,
+    spec: &RequestSpec,
+    context: &TemplateContext,
+    status_policy: StatusPolicy,
+) -> anyhow::Result<ProviderResponse> {
+    let builder = build_request(client, base_url, default_headers, spec, context)?;
     let response = builder.send().await?;
     let cookies = response
         .headers()
@@ -143,7 +158,7 @@ pub async fn execute_request(
     let status = response.status();
     let (status_code, body) = parse_response_body(response).await?;
 
-    if !status.is_success() {
+    if matches!(status_policy, StatusPolicy::RequireSuccess) && !status.is_success() {
         anyhow::bail!("Provider API returned non-success status {status_code}");
     }
 
@@ -152,6 +167,27 @@ pub async fn execute_request(
         body,
         cookies,
     })
+}
+
+/// Build and send an HTTP request described by `spec`, resolving template
+/// variables from `context`.  Default headers are merged first, then
+/// per-request headers override them.
+pub async fn execute_request(
+    client: &Client,
+    base_url: &str,
+    default_headers: &HashMap<String, String>,
+    spec: &RequestSpec,
+    context: &TemplateContext,
+) -> anyhow::Result<ProviderResponse> {
+    execute_with_policy(
+        client,
+        base_url,
+        default_headers,
+        spec,
+        context,
+        StatusPolicy::RequireSuccess,
+    )
+    .await
 }
 
 /// Like [`execute_request`], but returns the [`ProviderResponse`] even when
@@ -167,89 +203,15 @@ pub async fn execute_request_raw(
     spec: &RequestSpec,
     context: &TemplateContext,
 ) -> anyhow::Result<ProviderResponse> {
-    let path = resolve_warn(context, &spec.path, "path");
-    let url = format!("{}{}", base_url, path);
-
-    let mut builder = match spec.method.to_uppercase().as_str() {
-        "GET" => client.get(&url),
-        "POST" => client.post(&url),
-        "PUT" => client.put(&url),
-        "DELETE" => client.delete(&url),
-        "PATCH" => client.patch(&url),
-        other => anyhow::bail!("Unsupported HTTP method: {other}"),
-    };
-
-    // Default headers
-    for (k, v) in default_headers {
-        builder = builder.header(k, resolve_warn(context, v, "default_header"));
-    }
-
-    // Per-request headers (may override defaults)
-    for (k, v) in &spec.headers {
-        builder = builder.header(k, resolve_warn(context, v, "header"));
-    }
-
-    let explicit_cookie_header = default_headers
-        .keys()
-        .chain(spec.headers.keys())
-        .any(|key| key.eq_ignore_ascii_case("cookie"));
-    if !explicit_cookie_header {
-        let cookie_pairs = context
-            .values_with_prefix(STORED_COOKIE_PREFIX)
-            .into_iter()
-            .map(|(name, value)| format!("{name}={value}"))
-            .collect::<Vec<_>>();
-        if !cookie_pairs.is_empty() {
-            builder = builder.header("Cookie", cookie_pairs.join("; "));
-        }
-    }
-
-    // Query parameters – skip any that still contain unresolved `{{…}}`
-    for (k, v) in &spec.params {
-        let resolved = resolve_warn(context, v, "param");
-        if !resolved.contains("{{") {
-            builder = builder.query(&[(k.as_str(), resolved.as_str())]);
-        }
-    }
-
-    // Body
-    if let Some(body) = &spec.body {
-        let resolved_body = resolve_warn(context, body, "body");
-        if spec.body_encoding == "form" {
-            let pairs: Vec<(String, String)> = resolved_body
-                .split('&')
-                .filter_map(|pair| {
-                    let mut parts = pair.splitn(2, '=');
-                    let key = parts.next()?.trim().to_string();
-                    let value = parts.next().unwrap_or("").trim().to_string();
-                    if key.is_empty() {
-                        None
-                    } else {
-                        Some((key, value))
-                    }
-                })
-                .collect();
-            builder = builder.form(&pairs);
-        } else {
-            builder = builder.body(resolved_body);
-        }
-    }
-
-    let response = builder.send().await?;
-    let cookies = response
-        .headers()
-        .get_all(SET_COOKIE)
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .filter_map(parse_set_cookie)
-        .collect::<HashMap<_, _>>();
-    let (status_code, body) = parse_response_body(response).await?;
-
-    Ok(ProviderResponse {
-        status: status_code,
-        body,
-        cookies,
-    })
+    execute_with_policy(
+        client,
+        base_url,
+        default_headers,
+        spec,
+        context,
+        StatusPolicy::AllowAny,
+    )
+    .await
 }
 
 fn parse_set_cookie(header: &str) -> Option<(String, String)> {
