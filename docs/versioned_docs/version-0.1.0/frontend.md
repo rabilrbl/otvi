@@ -44,12 +44,34 @@ These are not standalone routes today; they are mounted by `web/src/app.rs` base
 
 ```mermaid
 flowchart TD
-    A[App startup] --> B[GET /api/auth/me]
-    B --> C{Response?}
-    C -- "403" --> D[first-run setup overlay]
-    C -- "401" --> E[OTVI login overlay]
-    C -- "200 + must_change_password" --> F[forced password overlay]
-    C -- "200" --> G[ready]
+    subgraph browser["Browser / otvi-web"]
+        start["App mounts"]
+        token["Read otvi_jwt\nfrom LocalStorage"]
+        setup["First-run setup overlay"]
+        login["OTVI login overlay"]
+        password["Forced password-change overlay"]
+        shell["Authenticated app shell\nrouter + nav + pages"]
+    end
+
+    subgraph server["otvi-server"]
+        auth["GET /api/auth/me"]
+        state{"Session state"}
+    end
+
+    start --> token
+    token --> auth
+    auth --> state
+    state -- "403: no admin user" --> setup
+    state -- "401: missing/invalid JWT" --> login
+    state -- "200: must_change_password" --> password
+    state -- "200: active session" --> shell
+
+    classDef client fill:#dafbe1,stroke:#1a7f37,color:#24292f
+    classDef serverNode fill:#ddf4ff,stroke:#0969da,color:#24292f
+    classDef decision fill:#fff8c5,stroke:#9a6700,color:#24292f
+    class start,token,setup,login,password,shell client
+    class auth serverNode
+    class state decision
 ```
 
 - JWTs are stored in `LocalStorage` under `otvi_jwt`
@@ -68,17 +90,18 @@ The frontend sends the current query state to `GET /api/providers/:id/channels` 
 
 ```mermaid
 sequenceDiagram
-    participant User
-    participant URL
-    participant Frontend
-    participant Backend
+    autonumber
+    actor User
+    participant Route as otvi-web /channels route
+    participant URL as Browser URL query
+    participant API as otvi-server API
 
-    User->>URL: changes search/category
-    URL->>Frontend: query updates
-    Frontend->>Backend: refetch /api/providers/:id/channels
-    Backend->>Backend: apply search/category/pagination
-    Backend-->>Frontend: channels + total
-    Frontend-->>User: render results
+    User->>Route: change search/category
+    Route->>URL: sync ?search=...&cat=...
+    Route->>API: GET /api/providers/:id/channels with query state
+    API->>API: apply search, category, pagination
+    API-->>Route: return normalized channels + total
+    Route-->>User: render updated channel grid
 ```
 
 ## Player Page
