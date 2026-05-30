@@ -23,3 +23,6 @@ data.db
 docs/node_modules/
 docs/.docusaurus/
 docs/build/
+
+# Vendored dependency build artifacts
+vendor/*/target/
