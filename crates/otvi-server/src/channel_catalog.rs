@@ -107,9 +107,15 @@ pub async fn list_categories(
 
     let categories = if let Some(cached) = state.channel_cache.categories.get(&cache_key).await {
         debug!(provider = %provider_id, "categories cache HIT");
+        crate::metrics::CHANNEL_CACHE_HITS_TOTAL
+            .with_label_values(&[provider_id, "categories"])
+            .inc();
         cached.categories
     } else {
         debug!(provider = %provider_id, "categories cache MISS - fetching from upstream");
+        crate::metrics::CHANNEL_CACHE_MISSES_TOTAL
+            .with_label_values(&[provider_id, "categories"])
+            .inc();
 
         let base_url = base_url.clone();
         let default_headers = default_headers.clone();

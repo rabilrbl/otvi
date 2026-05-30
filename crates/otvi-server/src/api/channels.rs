@@ -258,10 +258,16 @@ pub(crate) async fn load_all_channels(
 ) -> Result<Arc<[Channel]>, AppError> {
     if let Some(cached) = state.channel_cache.channels.get(cache_key).await {
         debug!(provider = %provider_id, "channel list cache HIT");
+        crate::metrics::CHANNEL_CACHE_HITS_TOTAL
+            .with_label_values(&[provider_id, "channels"])
+            .inc();
         return Ok(cached.channels);
     }
 
     debug!(provider = %provider_id, "channel list cache MISS — fetching from upstream");
+    crate::metrics::CHANNEL_CACHE_MISSES_TOTAL
+        .with_label_values(&[provider_id, "channels"])
+        .inc();
 
     let http_client = state.http_client.clone();
     let base_url = base_url.to_owned();

@@ -68,6 +68,9 @@ utoipa-swagger-ui = { version = "9", features = ["axum"] }
 # JSON Schema generation (for provider YAML schema export)
 schemars = { version = "1.2" }
 
+# Prometheus metrics
+prometheus = "0.13"
+
 [dev-dependencies]
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }

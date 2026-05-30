@@ -551,6 +551,9 @@ where
             "Upstream provider call failed: {e}"
         )))
     })?;
+    crate::metrics::UPSTREAM_REQUESTS_TOTAL
+        .with_label_values(&[provider_id, "GET", &response.status.to_string()])
+        .inc();
 
     // Check whether refresh should be triggered.
     let should_refresh = match &refresh_cfg {
@@ -591,6 +594,9 @@ where
             "Upstream provider call failed after refresh: {e}"
         )))
     })?;
+    crate::metrics::UPSTREAM_REQUESTS_TOTAL
+        .with_label_values(&[provider_id, "GET", &retry_response.status.to_string()])
+        .inc();
 
     Ok(retry_response)
 }
