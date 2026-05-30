@@ -1860,6 +1860,7 @@ async fn user_with_restricted_providers() {
 }
 
 #[tokio::test]
+#[ignore = "requires httpbin (run via ./scripts/integration-test.sh)"]
 async fn stream_response_includes_channel_metadata_when_channel_exists() {
     let (app, _db_dir) = build_test_app().await;
     let (admin_token, _) = register_admin(&app).await;
