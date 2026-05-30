@@ -1989,7 +1989,7 @@ async fn full_e2e_flow() {
             "/api/admin/users",
             &json!({
                 "username": "viewer",
-                "password": "ViewerPass1",
+                "password": "ViewerPass1!",
                 "role": "user"
             }),
             &admin_token,
