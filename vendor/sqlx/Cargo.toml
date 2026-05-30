@@ -20,3 +20,5 @@ uuid = ["sqlx-core/uuid", "sqlx-postgres/uuid", "sqlx-sqlite/uuid"]
 sqlx-core = { version = "=0.8.6", default-features = false }
 sqlx-postgres = { version = "=0.8.6", default-features = false }
 sqlx-sqlite = { version = "=0.8.6", default-features = false, features = ["bundled"] }
+
+[workspace]

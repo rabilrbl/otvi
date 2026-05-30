@@ -26,7 +26,7 @@ use otvi_core::types::{
 use crate::account;
 use crate::auth_middleware::AdminClaims;
 use crate::db;
-use crate::error::AppError;
+use crate::error::{AppError, InternalSource};
 use crate::state::AppState;
 
 // ── User management ────────────────────────────────────────────────────────
@@ -102,7 +102,7 @@ pub async fn delete_user(
 
     db::delete_user(&state.db, &user_id)
         .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(|e| AppError::Internal(InternalSource(e.to_string())))?;
 
     Ok(Json(serde_json::json!({ "success": true })))
 }
@@ -136,7 +136,7 @@ pub async fn set_user_providers(
 ) -> Result<Json<serde_json::Value>, AppError> {
     db::set_user_providers(&state.db, &user_id, &req.providers)
         .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(|e| AppError::Internal(InternalSource(e.to_string())))?;
 
     Ok(Json(serde_json::json!({ "success": true })))
 }
@@ -190,7 +190,7 @@ pub async fn get_settings(
 ) -> Result<Json<ServerSettings>, AppError> {
     let signup_disabled = db::is_signup_disabled(&state.db)
         .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(|e| AppError::Internal(InternalSource(e.to_string())))?;
 
     Ok(Json(ServerSettings { signup_disabled }))
 }
@@ -215,7 +215,7 @@ pub async fn update_settings(
 ) -> Result<Json<serde_json::Value>, AppError> {
     db::set_signup_disabled(&state.db, req.signup_disabled)
         .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(|e| AppError::Internal(InternalSource(e.to_string())))?;
 
     Ok(Json(serde_json::json!({ "success": true })))
 }
