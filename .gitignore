@@ -26,3 +26,4 @@ docs/build/
 
 # Vendored dependency build artifacts
 vendor/*/target/
+SPEC.md
