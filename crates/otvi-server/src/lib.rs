@@ -926,4 +926,137 @@ mod tests {
             "allowed origin should be echoed back in ACAO header"
         );
     }
+
+    // ── Path normalization tests ──────────────────────────────────────────
+
+    #[test]
+    fn normalize_path_static_routes_unchanged() {
+        assert_eq!(normalize_path("/api/auth/login"), "/api/auth/login");
+        assert_eq!(normalize_path("/healthz"), "/healthz");
+        assert_eq!(normalize_path("/metrics"), "/metrics");
+    }
+
+    #[test]
+    fn normalize_path_strips_query_string() {
+        assert_eq!(normalize_path("/api/providers?limit=10"), "/api/providers");
+    }
+
+    #[test]
+    fn normalize_path_replaces_uuid() {
+        let uuid = "550e8400-e29b-41d4-a716-446655440000";
+        assert_eq!(
+            normalize_path(&format!("/api/providers/{uuid}/channels")),
+            "/api/providers/:id/channels"
+        );
+    }
+
+    #[test]
+    fn normalize_path_replaces_numeric_id() {
+        assert_eq!(
+            normalize_path("/api/admin/users/42/password"),
+            "/api/admin/users/:id/password"
+        );
+    }
+
+    #[test]
+    fn normalize_path_replaces_long_hex_token() {
+        let token = "a1b2c3d4e5f6a7b8";
+        assert_eq!(
+            normalize_path(&format!("/api/proxy/drm/{token}")),
+            "/api/proxy/drm/:id"
+        );
+    }
+
+    #[test]
+    fn normalize_path_preserves_short_names() {
+        // Short non-UUID, non-numeric, non-hex segments stay as-is.
+        assert_eq!(
+            normalize_path("/api/providers/jiotv-mobile/channels"),
+            "/api/providers/jiotv-mobile/channels"
+        );
+    }
+
+    #[test]
+    fn normalize_path_root() {
+        assert_eq!(normalize_path("/"), "/");
+    }
+
+    #[test]
+    fn is_dynamic_segment_uuid() {
+        assert!(is_dynamic_segment("550e8400-e29b-41d4-a716-446655440000"));
+    }
+
+    #[test]
+    fn is_dynamic_segment_numeric() {
+        assert!(is_dynamic_segment("42"));
+        assert!(is_dynamic_segment("0"));
+    }
+
+    #[test]
+    fn is_dynamic_segment_hex_token() {
+        assert!(is_dynamic_segment("a1b2c3d4e5f6a7b8"));
+        assert!(is_dynamic_segment("deadbeef12345678"));
+    }
+
+    #[test]
+    fn is_dynamic_segment_preserves_names() {
+        assert!(!is_dynamic_segment("channels"));
+        assert!(!is_dynamic_segment("jiotv-mobile"));
+        assert!(!is_dynamic_segment("login"));
+        assert!(!is_dynamic_segment("healthz"));
+    }
+
+    // ── Metrics endpoint test ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn metrics_endpoint_returns_prometheus_text() {
+        crate::metrics::register();
+        let (app, _dir) = build_test_app().await;
+        // Make a request first so HTTP metrics have at least one label set.
+        let _ = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/healthz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let ct = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert!(
+            ct.contains("text/plain"),
+            "expected text/plain content-type, got: {ct}"
+        );
+        let body = axum::body::to_bytes(resp.into_body(), 10_000)
+            .await
+            .unwrap();
+        let text = String::from_utf8_lossy(&body);
+        assert!(
+            text.contains("otvi_http_requests_total"),
+            "metrics should contain otvi_http_requests_total"
+        );
+        assert!(
+            text.contains("otvi_proxy_contexts_active"),
+            "metrics should contain proxy contexts gauge"
+        );
+        assert!(
+            text.contains("otvi_refresh_locks_active"),
+            "metrics should contain refresh locks gauge"
+        );
+    }
 }
