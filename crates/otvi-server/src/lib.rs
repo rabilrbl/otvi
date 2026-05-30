@@ -5,6 +5,7 @@ pub mod channel_catalog;
 pub mod db;
 pub mod embedded_frontend;
 pub mod error;
+pub mod metrics;
 pub mod playback;
 pub mod provider_client;
 pub mod state;
@@ -25,6 +26,7 @@ use tower_http::cors::CorsLayer;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::timeout::TimeoutLayer;
+use tracing::Instrument;
 
 use utoipa::OpenApi;
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
@@ -288,12 +290,16 @@ where
         .layer(general_layer);
 
     let cors = build_cors_layer();
-    let x_request_id = axum::http::header::HeaderName::from_static("x-request-id");
+    let request_id_header =
+        std::env::var("REQUEST_ID_HEADER").unwrap_or_else(|_| "x-request-id".to_string());
+    let x_request_id = axum::http::header::HeaderName::from_bytes(request_id_header.as_bytes())
+        .expect("REQUEST_ID_HEADER is not a valid header name");
 
     let stateful = axum::Router::new()
         .nest("/api", api_routes)
         .route("/healthz", get(health_check))
         .route("/readyz", get(ready_check))
+        .route("/metrics", get(metrics_handler))
         .route("/api/schema/provider", get(provider_schema))
         // Security response headers applied to every route.
         // `if_not_present` so individual handlers can override when needed.
@@ -325,6 +331,10 @@ where
         // send one, and propagates it to the response for traceability.
         .layer(PropagateRequestIdLayer::new(x_request_id.clone()))
         .layer(SetRequestIdLayer::new(x_request_id, MakeRequestUuid))
+        // Propagate request ID into tracing spans so every log line is correlatable.
+        .layer(axum::middleware::from_fn(request_id_tracing_middleware))
+        // Prometheus request counting and latency histogram.
+        .layer(axum::middleware::from_fn(http_metrics_middleware))
         .with_state(state);
 
     stateful.merge(SwaggerUi::new("/api/docs").url("/api/docs/openapi.json", ApiDoc::openapi()))
@@ -479,6 +489,97 @@ fn build_cors_layer() -> CorsLayer {
 /// this responds even when the database is temporarily unavailable.
 async fn health_check() -> impl IntoResponse {
     (StatusCode::OK, Json(serde_json::json!({ "status": "ok" })))
+}
+
+/// `GET /metrics` – Prometheus metrics endpoint.
+///
+/// Returns all registered metrics in Prometheus text format.  Unauthenticated
+/// — intended for internal scrape only.
+async fn metrics_handler() -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        metrics::render(),
+    )
+}
+
+// ── HTTP metrics middleware ─────────────────────────────────────────────────
+
+async fn request_id_tracing_middleware(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let header_name =
+        std::env::var("REQUEST_ID_HEADER").unwrap_or_else(|_| "x-request-id".to_string());
+    let header_name = axum::http::HeaderName::from_bytes(header_name.as_bytes())
+        .unwrap_or_else(|_| axum::http::header::HeaderName::from_static("x-request-id"));
+    let request_id = req
+        .headers()
+        .get(&header_name)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "-".to_string());
+
+    let span = tracing::info_span!("request", request_id = %request_id);
+    next.run(req).instrument(span).await
+}
+
+async fn http_metrics_middleware(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let method = req.method().clone();
+    let path = normalize_path(req.uri().path());
+    let start = std::time::Instant::now();
+
+    let response = next.run(req).await;
+
+    let status = response.status().as_u16().to_string();
+    let elapsed = start.elapsed().as_secs_f64();
+
+    metrics::HTTP_REQUESTS_TOTAL
+        .with_label_values(&[method.as_str(), &path, &status])
+        .inc();
+    metrics::HTTP_REQUEST_DURATION_SECONDS
+        .with_label_values(&[method.as_str(), &path])
+        .observe(elapsed);
+
+    response
+}
+
+/// Collapse dynamic path segments (UUIDs, numeric IDs, long hex tokens) into
+/// `:id` to keep Prometheus label cardinality bounded.
+fn normalize_path(path: &str) -> String {
+    let path = path.split('?').next().unwrap_or(path);
+    let mut out = String::with_capacity(path.len());
+    for seg in path.split('/') {
+        if seg.is_empty() {
+            continue;
+        }
+        if is_dynamic_segment(seg) {
+            out.push_str("/:id");
+        } else {
+            out.push('/');
+            out.push_str(seg);
+        }
+    }
+    if out.is_empty() { "/".to_string() } else { out }
+}
+
+fn is_dynamic_segment(s: &str) -> bool {
+    if uuid::Uuid::parse_str(s).is_ok() {
+        return true;
+    }
+    if !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()) {
+        return true;
+    }
+    if s.len() >= 16 && s.chars().all(|c| c.is_ascii_hexdigit()) {
+        return true;
+    }
+    false
 }
 
 /// `GET /readyz` – readiness probe.
@@ -823,6 +924,139 @@ mod tests {
             acao,
             Some("https://allowed.example.com"),
             "allowed origin should be echoed back in ACAO header"
+        );
+    }
+
+    // ── Path normalization tests ──────────────────────────────────────────
+
+    #[test]
+    fn normalize_path_static_routes_unchanged() {
+        assert_eq!(normalize_path("/api/auth/login"), "/api/auth/login");
+        assert_eq!(normalize_path("/healthz"), "/healthz");
+        assert_eq!(normalize_path("/metrics"), "/metrics");
+    }
+
+    #[test]
+    fn normalize_path_strips_query_string() {
+        assert_eq!(normalize_path("/api/providers?limit=10"), "/api/providers");
+    }
+
+    #[test]
+    fn normalize_path_replaces_uuid() {
+        let uuid = "550e8400-e29b-41d4-a716-446655440000";
+        assert_eq!(
+            normalize_path(&format!("/api/providers/{uuid}/channels")),
+            "/api/providers/:id/channels"
+        );
+    }
+
+    #[test]
+    fn normalize_path_replaces_numeric_id() {
+        assert_eq!(
+            normalize_path("/api/admin/users/42/password"),
+            "/api/admin/users/:id/password"
+        );
+    }
+
+    #[test]
+    fn normalize_path_replaces_long_hex_token() {
+        let token = "a1b2c3d4e5f6a7b8";
+        assert_eq!(
+            normalize_path(&format!("/api/proxy/drm/{token}")),
+            "/api/proxy/drm/:id"
+        );
+    }
+
+    #[test]
+    fn normalize_path_preserves_short_names() {
+        // Short non-UUID, non-numeric, non-hex segments stay as-is.
+        assert_eq!(
+            normalize_path("/api/providers/jiotv-mobile/channels"),
+            "/api/providers/jiotv-mobile/channels"
+        );
+    }
+
+    #[test]
+    fn normalize_path_root() {
+        assert_eq!(normalize_path("/"), "/");
+    }
+
+    #[test]
+    fn is_dynamic_segment_uuid() {
+        assert!(is_dynamic_segment("550e8400-e29b-41d4-a716-446655440000"));
+    }
+
+    #[test]
+    fn is_dynamic_segment_numeric() {
+        assert!(is_dynamic_segment("42"));
+        assert!(is_dynamic_segment("0"));
+    }
+
+    #[test]
+    fn is_dynamic_segment_hex_token() {
+        assert!(is_dynamic_segment("a1b2c3d4e5f6a7b8"));
+        assert!(is_dynamic_segment("deadbeef12345678"));
+    }
+
+    #[test]
+    fn is_dynamic_segment_preserves_names() {
+        assert!(!is_dynamic_segment("channels"));
+        assert!(!is_dynamic_segment("jiotv-mobile"));
+        assert!(!is_dynamic_segment("login"));
+        assert!(!is_dynamic_segment("healthz"));
+    }
+
+    // ── Metrics endpoint test ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn metrics_endpoint_returns_prometheus_text() {
+        crate::metrics::register();
+        let (app, _dir) = build_test_app().await;
+        // Make a request first so HTTP metrics have at least one label set.
+        let _ = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/healthz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let ct = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert!(
+            ct.contains("text/plain"),
+            "expected text/plain content-type, got: {ct}"
+        );
+        let body = axum::body::to_bytes(resp.into_body(), 10_000)
+            .await
+            .unwrap();
+        let text = String::from_utf8_lossy(&body);
+        assert!(
+            text.contains("otvi_http_requests_total"),
+            "metrics should contain otvi_http_requests_total"
+        );
+        assert!(
+            text.contains("otvi_proxy_contexts_active"),
+            "metrics should contain proxy contexts gauge"
+        );
+        assert!(
+            text.contains("otvi_refresh_locks_active"),
+            "metrics should contain refresh locks gauge"
         );
     }
 }

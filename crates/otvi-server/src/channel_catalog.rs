@@ -7,7 +7,7 @@ use crate::api::auth::with_refresh_retry;
 use crate::api::channels::{load_all_channels, map_categories};
 use crate::api::provider_access::authorize_provider_route;
 use crate::auth_middleware::ActiveClaims;
-use crate::error::AppError;
+use crate::error::{AppError, InternalSource};
 use crate::provider_client;
 use crate::state::{AppState, CacheScope, CachedCategories, ChannelCacheKey};
 
@@ -107,9 +107,15 @@ pub async fn list_categories(
 
     let categories = if let Some(cached) = state.channel_cache.categories.get(&cache_key).await {
         debug!(provider = %provider_id, "categories cache HIT");
+        crate::metrics::CHANNEL_CACHE_HITS_TOTAL
+            .with_label_values(&[provider_id, "categories"])
+            .inc();
         cached.categories
     } else {
         debug!(provider = %provider_id, "categories cache MISS - fetching from upstream");
+        crate::metrics::CHANNEL_CACHE_MISSES_TOTAL
+            .with_label_values(&[provider_id, "categories"])
+            .inc();
 
         let base_url = base_url.clone();
         let default_headers = default_headers.clone();
@@ -140,10 +146,10 @@ pub async fn list_categories(
                 status = resp.status,
                 "Upstream categories error after refresh retry"
             );
-            return Err(AppError::Internal(format!(
+            return Err(AppError::Internal(InternalSource(format!(
                 "Upstream categories returned status {}",
                 resp.status
-            )));
+            ))));
         }
 
         let mapped = Arc::<[Category]>::from(map_categories(&resp.body, &cat_endpoint.response)?);
@@ -157,6 +163,9 @@ pub async fn list_categories(
                 },
             )
             .await;
+        crate::metrics::CHANNEL_CACHE_ENTRIES
+            .with_label_values(&[provider_id, "categories"])
+            .set(state.channel_cache.categories.entry_count() as i64);
         mapped
     };
 

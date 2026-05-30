@@ -9,7 +9,7 @@ use crate::api::auth::{build_provider_context, with_refresh_retry};
 use crate::api::channels::load_all_channels;
 use crate::api::provider_access::authorize_provider_route;
 use crate::auth_middleware::ActiveClaims;
-use crate::error::AppError;
+use crate::error::{AppError, InternalSource};
 use crate::provider_client;
 use crate::state::{AppState, ChannelCacheKey, ProxyContext};
 
@@ -77,10 +77,10 @@ pub async fn resolve_stream(
             status = resp.status,
             "Playback API error after refresh retry"
         );
-        return Err(AppError::Internal(format!(
+        return Err(AppError::Internal(InternalSource(format!(
             "Playback API returned status {}",
             resp.status
-        )));
+        ))));
     }
 
     let response = resp.body;
@@ -134,7 +134,7 @@ pub async fn resolve_stream(
                 is_drm = is_drm,
                 "Stream URL not found in response (neither HLS nor MPD URL available)"
             );
-            AppError::Internal("Stream URL not found in response".into())
+            AppError::Internal(InternalSource("Stream URL not found in response".into()))
         })?;
 
     let stream_type_raw = &stream_endpoint.response.stream_type;

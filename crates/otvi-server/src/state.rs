@@ -375,7 +375,14 @@ impl ChannelCache {
 }
 
 fn build_http_client() -> reqwest::Client {
+    use crate::parse_env_or_warn;
+
+    let connect_timeout_secs: u64 = parse_env_or_warn("HTTP_CONNECT_TIMEOUT_SECS", 10, "10 s");
+    let request_timeout_secs: u64 = parse_env_or_warn("HTTP_REQUEST_TIMEOUT_SECS", 60, "60 s");
+
     reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(connect_timeout_secs))
+        .timeout(Duration::from_secs(request_timeout_secs))
         .build()
         .expect("Failed to build HTTP client")
 }
@@ -501,6 +508,17 @@ impl AppState {
             .entry(key)
             .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
             .clone()
+    }
+
+    /// Remove refresh-lock entries that are no longer held by any task.
+    ///
+    /// An entry is stale when its `Arc` strong count is 1 — only the map itself
+    /// holds a reference, meaning no request is currently using it.
+    pub fn evict_stale_refresh_locks(&self) -> usize {
+        let mut locks = self.refresh_locks.lock().expect("refresh_locks poisoned");
+        let before = locks.len();
+        locks.retain(|_, arc| Arc::strong_count(arc) > 1);
+        before - locks.len()
     }
 }
 

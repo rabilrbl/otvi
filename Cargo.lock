@@ -2343,7 +2343,7 @@ checksum = "8c04f5d74368e4d0dfe06c45c8627c81bd7c317d52762d118fb9b3076f6420fd"
 
 [[package]]
 name = "otvi-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "jsonpath-rust",
  "schemars",
@@ -2355,7 +2355,7 @@ dependencies = [
 
 [[package]]
 name = "otvi-server"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "argon2",
@@ -2370,6 +2370,7 @@ dependencies = [
  "moka",
  "notify",
  "otvi-core",
+ "prometheus",
  "rand 0.10.1",
  "reqwest",
  "schemars",
@@ -2378,6 +2379,7 @@ dependencies = [
  "serde_yaml_ng",
  "sqlx",
  "tempfile",
+ "thiserror 2.0.18",
  "tokio",
  "tower",
  "tower-http",
@@ -2656,6 +2658,27 @@ dependencies = [
  "version_check",
  "yansi",
 ]
+
+[[package]]
+name = "prometheus"
+version = "0.13.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d33c28a30771f7f96db69893f78b857f7450d7e0237e9c8fc6427a81bae7ed1"
+dependencies = [
+ "cfg-if",
+ "fnv",
+ "lazy_static",
+ "memchr",
+ "parking_lot",
+ "protobuf",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "protobuf"
+version = "2.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "106dd99e98437432fed6519dedecfade6a06a73bb7b2a1e019fdd2bee5778d94"
 
 [[package]]
 name = "psl-types"

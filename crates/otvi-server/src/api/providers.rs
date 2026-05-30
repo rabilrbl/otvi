@@ -8,7 +8,7 @@ use otvi_core::types::*;
 
 use crate::auth_middleware::ActiveClaims;
 use crate::db;
-use crate::error::AppError;
+use crate::error::{AppError, InternalSource};
 use crate::state::AppState;
 
 /// `GET /api/providers` — list providers accessible to the authenticated user.
@@ -32,7 +32,7 @@ pub async fn list(
 ) -> Result<Json<Vec<ProviderInfo>>, AppError> {
     let allowed = db::get_user_providers(&state.db, &claims.sub)
         .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(|e| AppError::Internal(InternalSource(e.to_string())))?;
     let allowed: HashSet<String> = allowed.into_iter().collect();
 
     let providers = state.with_providers(|map| {
@@ -69,7 +69,7 @@ pub async fn get_info(
     // Check access.
     let allowed = db::get_user_providers(&state.db, &claims.sub)
         .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(|e| AppError::Internal(InternalSource(e.to_string())))?;
     let allowed: HashSet<String> = allowed.into_iter().collect();
 
     if !allowed.is_empty() && !allowed.contains(&id) {

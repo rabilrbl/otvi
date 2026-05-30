@@ -1,6 +1,6 @@
 [package]
 name = "otvi-server"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 license = "AGPL-3.0-only"
 
@@ -21,6 +21,7 @@ uuid = { version = "1", features = ["v4"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 anyhow = "1"
+thiserror = "2"
 base64 = "0.22"
 mime_guess = "2"
 rand = "0.10"
@@ -66,6 +67,9 @@ utoipa-swagger-ui = { version = "9", features = ["axum"] }
 
 # JSON Schema generation (for provider YAML schema export)
 schemars = { version = "1.2" }
+
+# Prometheus metrics
+prometheus = "0.13"
 
 [dev-dependencies]
 tempfile = "3"

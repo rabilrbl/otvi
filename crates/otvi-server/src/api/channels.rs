@@ -51,7 +51,7 @@ use tracing::{debug, error, instrument};
 
 use crate::auth_middleware::ActiveClaims;
 use crate::channel_catalog::{self, ChannelQuery};
-use crate::error::AppError;
+use crate::error::{AppError, InternalSource};
 use crate::playback;
 use crate::provider_client;
 use crate::state::{AppState, CachedChannels, ChannelCacheKey};
@@ -258,10 +258,16 @@ pub(crate) async fn load_all_channels(
 ) -> Result<Arc<[Channel]>, AppError> {
     if let Some(cached) = state.channel_cache.channels.get(cache_key).await {
         debug!(provider = %provider_id, "channel list cache HIT");
+        crate::metrics::CHANNEL_CACHE_HITS_TOTAL
+            .with_label_values(&[provider_id, "channels"])
+            .inc();
         return Ok(cached.channels);
     }
 
     debug!(provider = %provider_id, "channel list cache MISS — fetching from upstream");
+    crate::metrics::CHANNEL_CACHE_MISSES_TOTAL
+        .with_label_values(&[provider_id, "channels"])
+        .inc();
 
     let http_client = state.http_client.clone();
     let base_url = base_url.to_owned();
@@ -300,10 +306,10 @@ pub(crate) async fn load_all_channels(
             status = resp.status,
             "Upstream channel list error after refresh retry"
         );
-        return Err(AppError::Internal(format!(
+        return Err(AppError::Internal(InternalSource(format!(
             "Upstream channel list returned status {}",
             resp.status
-        )));
+        ))));
     }
 
     let response = resp.body;
@@ -320,6 +326,9 @@ pub(crate) async fn load_all_channels(
             },
         )
         .await;
+    crate::metrics::CHANNEL_CACHE_ENTRIES
+        .with_label_values(&[provider_id, "channels"])
+        .set(state.channel_cache.channels.entry_count() as i64);
 
     Ok(channels)
 }
@@ -337,16 +346,19 @@ fn get_items_array<'a>(
     match items_path {
         Some(path) => {
             let node = select_json_path_value(response, path).ok_or_else(|| {
-                AppError::Internal(format!("items_path '{path}' not found in response"))
+                AppError::Internal(InternalSource(format!(
+                    "items_path '{path}' not found in response"
+                )))
             })?;
-            node.as_array()
-                .map(Vec::as_slice)
-                .ok_or_else(|| AppError::Internal(format!("items_path '{path}' is not an array")))
+            node.as_array().map(Vec::as_slice).ok_or_else(|| {
+                AppError::Internal(InternalSource(format!(
+                    "items_path '{path}' is not an array"
+                )))
+            })
         }
-        None => response
-            .as_array()
-            .map(Vec::as_slice)
-            .ok_or_else(|| AppError::Internal("Response root is not an array".into())),
+        None => response.as_array().map(Vec::as_slice).ok_or_else(|| {
+            AppError::Internal(InternalSource("Response root is not an array".into()))
+        }),
     }
 }
 

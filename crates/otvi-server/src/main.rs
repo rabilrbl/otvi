@@ -86,6 +86,10 @@ async fn main() -> anyhow::Result<()> {
     // ── Rate limiting ───────────────────────────────────────────────────────
     let rate_limit = RateLimitConfig::from_env();
 
+    // ── Prometheus metrics ─────────────────────────────────────────────────
+    otvi_server::metrics::register();
+    tracing::info!("Prometheus metrics registered at /metrics");
+
     // ── Routes ──────────────────────────────────────────────────────────────
     let state = Arc::new(app_state);
 
@@ -94,6 +98,30 @@ async fn main() -> anyhow::Result<()> {
     // provider map in-place without restarting the server.
     watcher::spawn(state.clone(), providers_dir.clone());
     tracing::info!(dir = %providers_dir, "Provider hot-reload enabled");
+
+    // ── Stale refresh-lock eviction + gauge updates ──────────────────────────
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(300));
+            loop {
+                interval.tick().await;
+                let evicted = state.evict_stale_refresh_locks();
+                if evicted > 0 {
+                    tracing::debug!(evicted, "Evicted stale refresh locks");
+                }
+                otvi_server::metrics::REFRESH_LOCKS_ACTIVE.set(
+                    state
+                        .refresh_locks
+                        .lock()
+                        .map(|l| l.len() as i64)
+                        .unwrap_or(0),
+                );
+                otvi_server::metrics::PROXY_CONTEXTS_ACTIVE
+                    .set(state.proxy_ctx.entry_count() as i64);
+            }
+        });
+    }
 
     let app = if otvi_server::has_embedded_frontend() {
         tracing::info!("Serving embedded frontend assets from the otvi-server binary");

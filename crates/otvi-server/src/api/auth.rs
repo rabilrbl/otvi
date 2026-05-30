@@ -37,7 +37,7 @@ use crate::api::provider_access::authorize_provider_route;
 use crate::auth_middleware::ActiveClaims;
 use crate::auth_middleware::Claims;
 use crate::db;
-use crate::error::AppError;
+use crate::error::{AppError, InternalSource};
 use crate::provider_client;
 use crate::state::{AppState, ChannelCacheKey};
 
@@ -131,7 +131,7 @@ pub async fn login(
     let uid = session_user_id(&scope, &claims);
     let stored = db::get_provider_session_values(&state.db, &uid, &provider_id)
         .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(|e| AppError::Internal(InternalSource(e.to_string())))?;
 
     let mut context = TemplateContext::new();
     for (k, v) in &transformed_inputs {
@@ -203,7 +203,7 @@ pub async fn login(
 
             db::upsert_provider_session(&state.db, &uid, &provider_id, &new_stored)
                 .await
-                .map_err(|e| AppError::Internal(e.to_string()))?;
+                .map_err(|e| AppError::Internal(InternalSource(e.to_string())))?;
 
             // Invalidate the channel/category cache for this provider + uid so
             // the next listing fetches fresh data with the new credentials.
@@ -302,7 +302,7 @@ pub async fn check_session(
     let uid = session_user_id(&scope, &claims);
     let stored = db::get_provider_session_values(&state.db, &uid, &provider_id)
         .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(|e| AppError::Internal(InternalSource(e.to_string())))?;
 
     let valid = !stored.is_empty();
     Ok(Json(serde_json::json!({ "valid": valid })))
@@ -363,7 +363,7 @@ pub async fn logout(
 
     db::delete_provider_session(&state.db, &uid, &provider_id)
         .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(|e| AppError::Internal(InternalSource(e.to_string())))?;
 
     // Evict any cached channel/category data for this provider + uid.
     // After logout the upstream credentials are gone, so cached data from the
@@ -385,7 +385,7 @@ pub async fn build_provider_context(
 ) -> Result<TemplateContext, AppError> {
     let stored = db::get_provider_session_values(&state.db, user_id, provider_id)
         .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(|e| AppError::Internal(InternalSource(e.to_string())))?;
 
     let mut context = TemplateContext::new();
     for (k, v) in &stored {
@@ -424,8 +424,9 @@ pub async fn execute_refresh(
         .ok_or_else(|| AppError::NotFound("Provider not found".into()))?;
 
     let (refresh_cfg, auth_scope, base_url, default_headers) = provider_data;
-    let refresh =
-        refresh_cfg.ok_or_else(|| AppError::Internal("Provider has no refresh config".into()))?;
+    let refresh = refresh_cfg.ok_or_else(|| {
+        AppError::Internal(InternalSource("Provider has no refresh config".into()))
+    })?;
 
     // Build template context from current stored values.
     let context = build_provider_context(state, user_id, provider_id).await?;
@@ -445,7 +446,7 @@ pub async fn execute_refresh(
             user = %user_id,
             "Token refresh request failed: {e}"
         );
-        AppError::Internal(format!("Token refresh failed: {e}"))
+        AppError::Internal(InternalSource(format!("Token refresh failed: {e}")))
     })?;
 
     // Extract new values from refresh response.
@@ -462,16 +463,16 @@ pub async fn execute_refresh(
             user = %user_id,
             "Token refresh succeeded but extracted no values"
         );
-        return Err(AppError::Internal(
+        return Err(AppError::Internal(InternalSource(
             "Token refresh extracted no values".into(),
-        ));
+        )));
     }
 
     // Merge extracted values into existing stored session (only overwrite
     // keys present in the extraction map).
     let mut stored = db::get_provider_session_values(&state.db, user_id, provider_id)
         .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(|e| AppError::Internal(InternalSource(e.to_string())))?;
     stored.extend(extracted);
 
     // Persist cookies from the refresh response.
@@ -481,7 +482,7 @@ pub async fn execute_refresh(
 
     db::upsert_provider_session(&state.db, user_id, provider_id, &stored)
         .await
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(|e| AppError::Internal(InternalSource(e.to_string())))?;
 
     tracing::info!(
         provider = %provider_id,
@@ -545,9 +546,14 @@ where
     let context = build_provider_context(state, user_id, provider_id).await?;
 
     // First attempt.
-    let response = make_call(context)
-        .await
-        .map_err(|e| AppError::Internal(format!("Upstream provider call failed: {e}")))?;
+    let response = make_call(context).await.map_err(|e| {
+        AppError::Internal(InternalSource(format!(
+            "Upstream provider call failed: {e}"
+        )))
+    })?;
+    crate::metrics::UPSTREAM_REQUESTS_TOTAL
+        .with_label_values(&[provider_id, "GET", &response.status.to_string()])
+        .inc();
 
     // Check whether refresh should be triggered.
     let should_refresh = match &refresh_cfg {
@@ -584,8 +590,13 @@ where
     // Rebuild context with fresh tokens and retry once.
     let fresh_context = build_provider_context(state, user_id, provider_id).await?;
     let retry_response = make_call(fresh_context).await.map_err(|e| {
-        AppError::Internal(format!("Upstream provider call failed after refresh: {e}"))
+        AppError::Internal(InternalSource(format!(
+            "Upstream provider call failed after refresh: {e}"
+        )))
     })?;
+    crate::metrics::UPSTREAM_REQUESTS_TOTAL
+        .with_label_values(&[provider_id, "GET", &retry_response.status.to_string()])
+        .inc();
 
     Ok(retry_response)
 }
