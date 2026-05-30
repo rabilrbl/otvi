@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS users (
     username     TEXT NOT NULL,
     password_hash TEXT NOT NULL,
     role         TEXT NOT NULL DEFAULT 'user',   -- 'admin' | 'user'
+    must_change_password INTEGER NOT NULL DEFAULT 0,
     created_at   TEXT NOT NULL,
     CONSTRAINT uq_users_username UNIQUE (username)
 );

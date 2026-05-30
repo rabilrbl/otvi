@@ -120,22 +120,13 @@ pub async fn init(database_url: &str) -> anyhow::Result<Db> {
 
 async fn run_migrations(pool: &Db) -> anyhow::Result<()> {
     let migrator = Migrator {
-        migrations: Cow::Owned(vec![
-            Migration::new(
-                1,
-                Cow::Borrowed("init"),
-                MigrationType::Simple,
-                Cow::Borrowed(include_str!("../migrations/0001_init.sql")),
-                false,
-            ),
-            Migration::new(
-                2,
-                Cow::Borrowed("must change password"),
-                MigrationType::Simple,
-                Cow::Borrowed(include_str!("../migrations/0002_must_change_password.sql")),
-                false,
-            ),
-        ]),
+        migrations: Cow::Owned(vec![Migration::new(
+            1,
+            Cow::Borrowed("init"),
+            MigrationType::Simple,
+            Cow::Borrowed(include_str!("../migrations/0001_init.sql")),
+            false,
+        )]),
         ignore_missing: false,
         locking: true,
         no_tx: false,
