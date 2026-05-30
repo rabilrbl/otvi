@@ -10,6 +10,7 @@ node_modules/
 .codex/
 .gemini/
 .opencode/
+.codegraph/
 
 # Environment / secrets – keep .env.example but not .env itself
 .env

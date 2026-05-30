@@ -35,6 +35,11 @@ pub fn validate_password(password: &str) -> Result<(), AppError> {
             "Password must contain at least one digit".into(),
         ));
     }
+    if !password.chars().any(|c| !c.is_alphanumeric()) {
+        return Err(AppError::BadRequest(
+            "Password must contain at least one special character".into(),
+        ));
+    }
     Ok(())
 }
 
@@ -312,61 +317,72 @@ fn role_from_db(role: &str) -> UserRole {
 mod tests {
     use super::validate_password;
 
-    fn policy_fixture(has_uppercase: bool, has_digit: bool, len: usize) -> String {
+    fn policy_fixture(
+        has_uppercase: bool,
+        has_digit: bool,
+        has_special: bool,
+        len: usize,
+    ) -> String {
         let mut password = String::new();
         password.push(if has_uppercase { 'A' } else { 'a' });
         password.push(if has_digit { '1' } else { 'b' });
-        password.extend(std::iter::repeat_n('c', len.saturating_sub(password.len())));
+        password.push(if has_special { '!' } else { 'c' });
+        password.extend(std::iter::repeat_n('d', len.saturating_sub(password.len())));
         password
     }
 
     #[test]
     fn password_too_short_rejected() {
-        assert!(validate_password(&policy_fixture(true, true, 6)).is_err());
+        assert!(validate_password(&policy_fixture(true, true, true, 6)).is_err());
     }
 
     #[test]
     fn password_exactly_min_length_passes() {
-        assert!(validate_password(&policy_fixture(true, true, 8)).is_ok());
+        assert!(validate_password(&policy_fixture(true, true, true, 8)).is_ok());
     }
 
     #[test]
     fn password_exactly_max_length_passes() {
-        let password = format!("A1{}", "a".repeat(126));
+        let password = format!("A1!{}", "a".repeat(125));
         assert_eq!(password.chars().count(), 128);
         assert!(validate_password(&password).is_ok());
     }
 
     #[test]
     fn password_over_max_length_rejected() {
-        let password = format!("A1{}", "a".repeat(127));
+        let password = format!("A1!{}", "a".repeat(126));
         assert_eq!(password.chars().count(), 129);
         assert!(validate_password(&password).is_err());
     }
 
     #[test]
     fn password_missing_uppercase_rejected() {
-        assert!(validate_password(&policy_fixture(false, true, 8)).is_err());
+        assert!(validate_password(&policy_fixture(false, true, true, 8)).is_err());
     }
 
     #[test]
     fn password_missing_digit_rejected() {
-        assert!(validate_password(&policy_fixture(true, false, 11)).is_err());
+        assert!(validate_password(&policy_fixture(true, false, true, 11)).is_err());
+    }
+
+    #[test]
+    fn password_missing_special_char_rejected() {
+        assert!(validate_password(&policy_fixture(true, true, false, 10)).is_err());
     }
 
     #[test]
     fn password_valid_passes() {
-        assert!(validate_password(&policy_fixture(true, true, 10)).is_ok());
+        assert!(validate_password(&policy_fixture(true, true, true, 10)).is_ok());
     }
 
     #[test]
     fn password_max_length_is_char_count_not_bytes() {
-        let password = format!("A1{}", "Á".repeat(126));
+        let password = format!("A1!{}", "Á".repeat(125));
         assert_eq!(password.chars().count(), 128);
         assert!(password.len() > 128, "sanity: byte count exceeds 128");
         assert!(validate_password(&password).is_ok());
 
-        let too_long = format!("A1{}", "Á".repeat(127));
+        let too_long = format!("A1!{}", "Á".repeat(126));
         assert_eq!(too_long.chars().count(), 129);
         assert!(validate_password(&too_long).is_err());
     }

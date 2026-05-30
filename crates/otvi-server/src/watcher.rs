@@ -112,20 +112,31 @@ fn reload_providers(state: &AppState, dir: &str) {
         }
     };
 
-    // Atomically swap the map using the write lock.
-    match state.providers_rw.write() {
-        Ok(mut guard) => {
+    // Compute diff under a short-lived read lock, then swap under a write lock.
+    // This minimises write-lock hold time — only the pointer swap, not the diff
+    // computation or YAML parsing.
+    let (added, removed) = match state.providers_rw.read() {
+        Ok(old) => {
             let added: Vec<_> = new_providers
                 .keys()
-                .filter(|id| !guard.contains_key(*id))
+                .filter(|id| !old.contains_key(*id))
                 .cloned()
                 .collect();
-            let removed: Vec<_> = guard
+            let removed: Vec<_> = old
                 .keys()
                 .filter(|id| !new_providers.contains_key(*id))
                 .cloned()
                 .collect();
+            (added, removed)
+        }
+        Err(e) => {
+            tracing::error!("Provider hot-reload: RwLock read poisoned: {e}");
+            return;
+        }
+    };
 
+    match state.providers_rw.write() {
+        Ok(mut guard) => {
             *guard = new_providers;
 
             if !added.is_empty() {

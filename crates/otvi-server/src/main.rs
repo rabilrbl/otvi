@@ -95,6 +95,21 @@ async fn main() -> anyhow::Result<()> {
     watcher::spawn(state.clone(), providers_dir.clone());
     tracing::info!(dir = %providers_dir, "Provider hot-reload enabled");
 
+    // ── Stale refresh-lock eviction ──────────────────────────────────────────
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(300));
+            loop {
+                interval.tick().await;
+                let evicted = state.evict_stale_refresh_locks();
+                if evicted > 0 {
+                    tracing::debug!(evicted, "Evicted stale refresh locks");
+                }
+            }
+        });
+    }
+
     let app = if otvi_server::has_embedded_frontend() {
         tracing::info!("Serving embedded frontend assets from the otvi-server binary");
         otvi_server::build_router(state, rate_limit).fallback(otvi_server::serve_embedded_frontend)

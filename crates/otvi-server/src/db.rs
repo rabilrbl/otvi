@@ -70,9 +70,12 @@ pub async fn init(database_url: &str) -> anyhow::Result<Db> {
 
     // DB_MAX_CONNECTIONS env var (default: 10).
     let max_connections: u32 = crate::parse_env_or_warn("DB_MAX_CONNECTIONS", 10, "10");
+    // DB_ACQUIRE_TIMEOUT_SECS env var (default: 30).
+    let acquire_timeout_secs: u64 = crate::parse_env_or_warn("DB_ACQUIRE_TIMEOUT_SECS", 30, "30 s");
 
     let pool = AnyPoolOptions::new()
         .max_connections(max_connections)
+        .acquire_timeout(std::time::Duration::from_secs(acquire_timeout_secs))
         .connect_with(opts)
         .await
         .with_context(|| format!("Failed to connect to database: {database_url}"))?;
@@ -400,44 +403,36 @@ pub async fn upsert_provider_session(
 ) -> anyhow::Result<String> {
     let now = Utc::now().to_rfc3339();
     let json = serde_json::to_string(stored_values)?;
-    let mut tx = db.begin().await?;
+    let id = Uuid::new_v4().to_string();
 
-    // Check for existing session
-    let existing =
-        sqlx::query("SELECT id FROM provider_sessions WHERE user_id = ? AND provider_id = ?")
-            .bind(user_id)
-            .bind(provider_id)
-            .fetch_optional(&mut *tx)
-            .await?;
+    // Single UPSERT — avoids the SELECT + conditional INSERT/UPDATE round-trip.
+    // Both SQLite (>= 3.24) and PostgreSQL support ON CONFLICT.
+    // The UNIQUE constraint on (user_id, provider_id) drives the conflict detection.
+    // On conflict, we preserve the existing id and only update the data columns.
+    sqlx::query(
+        "INSERT INTO provider_sessions \
+         (id, user_id, provider_id, stored_values, created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?) \
+         ON CONFLICT (user_id, provider_id) DO UPDATE SET \
+         stored_values = excluded.stored_values, \
+         updated_at = excluded.updated_at",
+    )
+    .bind(&id)
+    .bind(user_id)
+    .bind(provider_id)
+    .bind(&json)
+    .bind(&now)
+    .bind(&now)
+    .execute(db)
+    .await?;
 
-    if let Some(row) = existing {
-        let id: String = row.get("id");
-        sqlx::query("UPDATE provider_sessions SET stored_values = ?, updated_at = ? WHERE id = ?")
-            .bind(&json)
-            .bind(&now)
-            .bind(&id)
-            .execute(&mut *tx)
-            .await?;
-        tx.commit().await?;
-        Ok(id)
-    } else {
-        let id = Uuid::new_v4().to_string();
-        sqlx::query(
-            "INSERT INTO provider_sessions \
-             (id, user_id, provider_id, stored_values, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&id)
+    // Fetch the id back — it's the original id on conflict, or the new id on insert.
+    let row = sqlx::query("SELECT id FROM provider_sessions WHERE user_id = ? AND provider_id = ?")
         .bind(user_id)
         .bind(provider_id)
-        .bind(&json)
-        .bind(&now)
-        .bind(&now)
-        .execute(&mut *tx)
+        .fetch_one(db)
         .await?;
-        tx.commit().await?;
-        Ok(id)
-    }
+    Ok(row.get("id"))
 }
 
 pub async fn delete_provider_session(
