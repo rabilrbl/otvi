@@ -326,6 +326,9 @@ pub(crate) async fn load_all_channels(
             },
         )
         .await;
+    crate::metrics::CHANNEL_CACHE_ENTRIES
+        .with_label_values(&[provider_id, "channels"])
+        .set(state.channel_cache.channels.entry_count() as i64);
 
     Ok(channels)
 }

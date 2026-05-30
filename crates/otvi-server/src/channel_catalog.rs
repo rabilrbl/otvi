@@ -163,6 +163,9 @@ pub async fn list_categories(
                 },
             )
             .await;
+        crate::metrics::CHANNEL_CACHE_ENTRIES
+            .with_label_values(&[provider_id, "categories"])
+            .set(state.channel_cache.categories.entry_count() as i64);
         mapped
     };
 

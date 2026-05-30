@@ -79,14 +79,6 @@ pub static UPSTREAM_REQUESTS_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
     m
 });
 
-// ── DB pool ──────────────────────────────────────────────────────────────
-pub static DB_POOL_CONNECTIONS: LazyLock<IntGaugeVec> = LazyLock::new(|| {
-    let opts = Opts::new("otvi_db_pool_connections", "DB pool connections");
-    let m = IntGaugeVec::new(opts, &["state"]).unwrap();
-    REGISTRY.register(Box::new(m.clone())).unwrap();
-    m
-});
-
 // ── Refresh locks ────────────────────────────────────────────────────────
 pub static REFRESH_LOCKS_ACTIVE: LazyLock<IntGauge> = LazyLock::new(|| {
     metric!(
@@ -104,7 +96,6 @@ pub fn register() {
     let _ = &*CHANNEL_CACHE_HITS_TOTAL;
     let _ = &*CHANNEL_CACHE_MISSES_TOTAL;
     let _ = &*UPSTREAM_REQUESTS_TOTAL;
-    let _ = &*DB_POOL_CONNECTIONS;
     let _ = &*REFRESH_LOCKS_ACTIVE;
 }
 
