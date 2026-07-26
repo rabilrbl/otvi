@@ -92,6 +92,7 @@ jobs:
         with:
           name: coverage-report
           path: coverage-summary.txt
+          retention-days: 1
       - name: Post coverage comment
         uses: actions/github-script@v9
         with:
