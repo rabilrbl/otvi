@@ -103,7 +103,7 @@ jobs:
           bun-version: latest
 
       - name: Install Trunk
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@v2.85.5
         with:
           tool: trunk
 
