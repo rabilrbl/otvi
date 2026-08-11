@@ -30,7 +30,7 @@ jobs:
       IS_TAG_RELEASE: ${{ startsWith(github.ref, 'refs/tags/') }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.ref }}
           fetch-depth: 0
@@ -217,7 +217,7 @@ jobs:
       IS_TAG_RELEASE: ${{ startsWith(github.ref, 'refs/tags/') }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.ref }}
           fetch-depth: 0
