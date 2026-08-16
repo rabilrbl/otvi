@@ -47,7 +47,7 @@ dotenvy = "0.15"
 argon2 = "0.5"
 
 # JWT
-jsonwebtoken = { version = "10", features = ["aws_lc_rs"] }
+jsonwebtoken = { version = "11", features = ["aws_lc_rs"] }
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }
