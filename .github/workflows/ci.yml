@@ -74,7 +74,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@v2.85.5
+        uses: taiki-e/install-action@v2.86.4
         with:
           tool: cargo-llvm-cov
       - name: Wait for httpbin
@@ -176,7 +176,7 @@ jobs:
       - name: Install wasm target
         run: rustup target add wasm32-unknown-unknown
       - name: Install wasm-pack
-        uses: taiki-e/install-action@v2.85.5
+        uses: taiki-e/install-action@v2.86.4
         with:
           tool: wasm-pack
       - name: Run frontend UI tests
