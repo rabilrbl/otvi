@@ -1,10 +1,10 @@
 # ── Stage 1: Prepare cargo-chef recipe ──────────────────────────────────────
-FROM rust:1.96-bookworm AS chef
+FROM rust:1.98-bookworm AS chef
 RUN cargo install cargo-chef --locked
 WORKDIR /app
 
 # ── Stage 2: Build the WASM frontend ─────────────────────────────────────────
-FROM rust:1.96-bookworm AS build-web
+FROM rust:1.98-bookworm AS build-web
 
 ARG TRUNK_VERSION=0.21.14
 ARG TARGETARCH
@@ -52,7 +52,7 @@ COPY vendor vendor
 RUN cargo chef cook --release --recipe-path recipe.json -p otvi-server
 
 # ── Stage 5: Build the server binary ─────────────────────────────────────────
-FROM rust:1.96-bookworm AS build-server
+FROM rust:1.98-bookworm AS build-server
 
 WORKDIR /app
 # Copy over the cached dependencies
