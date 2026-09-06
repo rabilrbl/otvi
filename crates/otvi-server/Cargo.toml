@@ -44,7 +44,7 @@ sqlx = { version = "0.8", features = [
 dotenvy = "0.15"
 
 # Password hashing
-argon2 = "0.5"
+argon2 = "0.6"
 
 # JWT
 jsonwebtoken = { version = "11", features = ["aws_lc_rs"] }
